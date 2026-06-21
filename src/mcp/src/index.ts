@@ -76,14 +76,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_balance": {
         const res = await fetch(`${POLYTRADER_API_URL}/portfolio?userId=${AGENT_USER_ID}`);
         if (!res.ok) throw new Error(`API returned ${res.status}`);
-        const data = await res.json();
+        const data = await res.json() as any;
         return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
       }
 
       case "search_markets": {
         const res = await fetch(`${GAMMA_API_URL}/events?query=${encodeURIComponent(args?.query as string)}`);
         if (!res.ok) throw new Error(`API returned ${res.status}`);
-        const data = await res.json();
+        const data = await res.json() as any;
         return { content: [{ type: "text", text: JSON.stringify(data.slice(0, args?.limit || 5), null, 2) }] };
       }
 
@@ -100,13 +100,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             price: 0.50 
           })
         });
-        const data = await res.json();
+        const data = await res.json() as any;
         return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
       }
 
       case "portfolio": {
         const res = await fetch(`${POLYTRADER_API_URL}/portfolio?userId=${AGENT_USER_ID}`);
-        const data = await res.json();
+        const data = await res.json() as any;
         return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
       }
 
