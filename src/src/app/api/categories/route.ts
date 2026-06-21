@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getDb, eventCache } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const db = getDb();
