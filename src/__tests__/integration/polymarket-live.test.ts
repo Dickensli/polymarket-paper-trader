@@ -11,7 +11,7 @@
 //       be run as part of a CI smoke suite, not on every commit.
 // =============================================================================
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import {
   getMarkets,
   getMarket,

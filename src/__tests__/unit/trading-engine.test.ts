@@ -92,8 +92,7 @@ describe('Trading Engine Core', () => {
         shares: '200',
         isOpen: true,
       });
-
-      await closePosition('user1', 'pos1', 0.5, 'idemp-123');
+      await closePosition('user1', 'pos1', 0.5);
       expect(mockDb.transaction).toHaveBeenCalled();
     });
   });
