@@ -149,7 +149,7 @@ export const paperTrades = pgTable(
     index('paper_trades_portfolio_idx').on(table.portfolioId),
     index('paper_trades_market_idx').on(table.marketId),
     index('paper_trades_executed_idx').on(table.executedAt),
-    uniqueIndex('paper_trades_idempotency_idx').on(table.idempotencyKey),
+    index('paper_trades_idempotency_idx').on(table.idempotencyKey),
   ],
 );
 
@@ -209,6 +209,37 @@ export const ledgerEntries = pgTable(
   ],
 );
 
+// ─── Event Cache ────────────────────────────────────────────
+
+/** Locally cached Polymarket events to represent groupings/cards */
+export const eventCache = pgTable(
+  'event_cache',
+  {
+    id: varchar('id', { length: 255 }).primaryKey(), // Polymarket event ID
+    ticker: varchar('ticker', { length: 255 }),
+    slug: varchar('slug', { length: 255 }),
+    title: text('title'),
+    description: text('description'),
+    startDate: timestamp('start_date', { withTimezone: true }),
+    creationDate: timestamp('creation_date', { withTimezone: true }),
+    endDate: timestamp('end_date', { withTimezone: true }),
+    image: text('image'),
+    icon: text('icon'),
+    active: boolean('active').default(true),
+    closed: boolean('closed').default(false),
+    archived: boolean('archived').default(false),
+    mutuallyExclusive: boolean('mutually_exclusive').default(false),
+    category: varchar('category', { length: 255 }),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('event_cache_category_idx').on(table.category),
+    index('event_cache_slug_idx').on(table.slug),
+    index('event_cache_synced_idx').on(table.lastSyncedAt),
+  ]
+);
+
 // ─── Market Cache ───────────────────────────────────────────
 
 /** Locally cached Polymarket market data to reduce API calls */
@@ -216,6 +247,8 @@ export const marketCache = pgTable(
   'market_cache',
   {
     id: varchar('id', { length: 255 }).primaryKey(), // Polymarket market ID
+    eventId: varchar('event_id', { length: 255 })
+      .references(() => eventCache.id, { onDelete: 'cascade' }),
     question: text('question'),
     conditionId: varchar('condition_id', { length: 255 }),
     outcomes: jsonb('outcomes'), // ['Yes', 'No']
