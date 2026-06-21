@@ -135,89 +135,15 @@ function parsePriceArray(raw: unknown): number[] {
 // Normalization helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Maps granular event tags/categories to one of the 5 top-level categories
- * expected by the frontend: politics, sports, crypto, culture, science.
- */
 function normalizeCategory(eventCategory: string, tags: { label: string }[] = []): string {
-  const text = [
-    eventCategory,
-    ...tags.map((t) => t.label),
-  ].join(' ').toLowerCase();
-
-  if (
-    text.includes('politics') ||
-    text.includes('election') ||
-    text.includes('senate') ||
-    text.includes('midterm') ||
-    text.includes('trump') ||
-    text.includes('biden') ||
-    text.includes('government') ||
-    text.includes('presidency') ||
-    text.includes('elections')
-  ) {
-    return 'politics';
+  const category = eventCategory?.trim();
+  if (category && category !== 'None') return category;
+  
+  if (tags && tags.length > 0) {
+    return tags[0].label.trim();
   }
-
-  if (
-    text.includes('crypto') ||
-    text.includes('bitcoin') ||
-    text.includes('ethereum') ||
-    text.includes('stablecoin') ||
-    text.includes('airdrop') ||
-    text.includes('solana')
-  ) {
-    return 'crypto';
-  }
-
-  if (
-    text.includes('sports') ||
-    text.includes('soccer') ||
-    text.includes('football') ||
-    text.includes('basketball') ||
-    text.includes('nba') ||
-    text.includes('nfl') ||
-    text.includes('cricket') ||
-    text.includes('tennis') ||
-    text.includes('ufc')
-  ) {
-    return 'sports';
-  }
-
-  if (
-    text.includes('tech') ||
-    text.includes('ai') ||
-    text.includes('openai') ||
-    text.includes('software') ||
-    text.includes('apple') ||
-    text.includes('elon')
-  ) {
-    return 'tech';
-  }
-
-  if (
-    text.includes('science') ||
-    text.includes('space') ||
-    text.includes('nuclear') ||
-    text.includes('physics') ||
-    text.includes('climate')
-  ) {
-    return 'science';
-  }
-
-  if (
-    text.includes('econom') ||
-    text.includes('business') ||
-    text.includes('finance') ||
-    text.includes('inflation') ||
-    text.includes('rate') ||
-    text.includes('fed')
-  ) {
-    return 'economics';
-  }
-
-  // Fallback to culture (covers pop culture, music, movies, news, etc.)
-  return 'culture';
+  
+  return 'Other';
 }
 
 /**

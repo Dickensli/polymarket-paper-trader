@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
         or(
           ilike(eventCache.title, `%${search}%`),
           ilike(eventCache.description, `%${search}%`)
-        )
+        ) as any
       );
     }
 

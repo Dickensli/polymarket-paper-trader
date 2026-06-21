@@ -30,7 +30,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
     Resend({
       from: process.env.EMAIL_FROM || 'noreply@polymarkettraders.com',
-      // By default, this uses the process.env.AUTH_RESEND_KEY variable.
+      apiKey: process.env.RESEND_API_KEY || process.env.AUTH_RESEND_KEY,
     }),
   ],
   session: {
