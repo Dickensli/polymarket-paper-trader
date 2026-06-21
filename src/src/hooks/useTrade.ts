@@ -41,10 +41,18 @@ export function useTrade(): UseTradeReturn {
 
   const mutation = useMutation({
     mutationFn: async (req: TradeRequest) => {
-      const res = await fetch('/api/trade', {
+      const idempotencyKey = crypto.randomUUID();
+      const res = await fetch('/api/trade/buy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...req, side: 'BUY' }),
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-idempotency-key': idempotencyKey,
+        },
+        body: JSON.stringify({
+          marketConditionId: req.marketId,
+          side: req.outcome,
+          amount: req.shares * req.price,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Trade failed');
