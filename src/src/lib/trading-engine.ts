@@ -43,6 +43,19 @@ function roundTo(n: number, decimals: number): number {
 }
 
 /**
+ * Calculate the trading fee using the exact Polymarket formula.
+ * Formula: (fee_rate_bps / 10_000) * min(price, 1 - price) * size
+ */
+function calculateFee(price: number, shares: number, feeRateBps = 200): number {
+  if (feeRateBps === 0) return 0;
+  let fee = (feeRateBps / 10000) * Math.min(price, 1.0 - price) * shares;
+  if (fee > 0) {
+    fee = Math.max(fee, 0.0001);
+  }
+  return roundTo(fee, 6);
+}
+
+/**
  * Get the current portfolio snapshot for a user.
  * Auto-creates a portfolio if it does not exist.
  */
@@ -174,7 +187,10 @@ export async function executeTrade(
     );
   }
 
-  const total = roundTo(shares * price, 2);
+  const subtotal = roundTo(shares * price, 2);
+  const fee = calculateFee(price, shares);
+  const total = roundTo(subtotal + fee, 2);
+
   if (total < MIN_TRADE_AMOUNT && side === 'BUY') {
     throw new TradingError(
       `Minimum trade amount is $${MIN_TRADE_AMOUNT}.`,
@@ -201,7 +217,7 @@ export async function executeTrade(
     if (side === 'BUY') {
       if (total > currentBalance) {
         throw new TradingError(
-          `Insufficient balance. Need $${total}, have $${currentBalance}`,
+          `Insufficient balance. Need $${total} (includes $${fee} fee), have $${currentBalance}`,
           'INSUFFICIENT_BALANCE',
         );
       }
@@ -350,8 +366,10 @@ export async function executeTrade(
       }
 
       const sellShares = Math.min(shares, heldShares);
-      const sellTotal = roundTo(sellShares * price, 2);
-      const newBalance = roundTo(currentBalance + sellTotal, 2);
+      const subtotal = roundTo(sellShares * price, 2);
+      const fee = calculateFee(price, sellShares);
+      const receiveAmount = roundTo(subtotal - fee, 2);
+      const newBalance = roundTo(currentBalance + receiveAmount, 2);
 
       // Update balance
       await tx
@@ -394,7 +412,7 @@ export async function executeTrade(
           action: 'SELL',
           shares: sellShares.toFixed(6),
           pricePerShare: price.toFixed(6),
-          totalCost: sellTotal.toFixed(2),
+          totalCost: receiveAmount.toFixed(2),
           idempotencyKey: idempotencyKey ?? '',
           slippageApplied: (slippageApplied ?? 0).toFixed(6),
           status: 'FILLED',
@@ -407,15 +425,15 @@ export async function executeTrade(
           userId,
           tradeId: tradeRecord.id,
           accountType: 'CASH',
-          amount: sellTotal.toFixed(6),
+          amount: receiveAmount.toFixed(6),
           balanceAfter: newBalance.toFixed(6),
-          description: `Sell trade: ${sellShares} shares of ${outcome} for ${marketQuestion}`,
+          description: `Sell trade: ${sellShares} shares of ${outcome} (minus $${fee} fee)`,
         },
         {
           userId,
           tradeId: tradeRecord.id,
           accountType: 'POSITION',
-          amount: (-sellTotal).toFixed(6),
+          amount: (-receiveAmount).toFixed(6),
           description: `Reduce position asset value for ${outcome} tokens`,
         },
       ]);
@@ -429,7 +447,7 @@ export async function executeTrade(
         side: 'SELL',
         shares: sellShares,
         price,
-        total: sellTotal,
+        total: receiveAmount,
         timestamp: tradeRecord.executedAt.toISOString(),
       };
     }
