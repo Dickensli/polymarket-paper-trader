@@ -6,15 +6,31 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 
 export default function SignInPage() {
   const [loading, setLoading] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [emailSent, setEmailSent] = useState(false);
 
   const handleSignIn = async () => {
     try {
       setLoading(true);
-      // Direct user to Google sign in, redirect back to the home page on success
       await signIn('google', { callbackUrl: '/' });
     } catch (err) {
       console.error('Sign in failed:', err);
       setLoading(false);
+    }
+  };
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) return;
+    try {
+      setEmailLoading(true);
+      await signIn('resend', { email, redirect: false, callbackUrl: '/' });
+      setEmailSent(true);
+    } catch (err) {
+      console.error('Email sign in failed:', err);
+    } finally {
+      setEmailLoading(false);
     }
   };
 
@@ -47,10 +63,46 @@ export default function SignInPage() {
             PolyTrader
           </h2>
           <p className="mt-2 text-center text-sm text-foreground-muted max-w-xs">
-            Paper Trading for Prediction Markets. Practice trading with virtual money. Zero risk, real-time data.
+            Practice trading with virtual money. Zero risk, real-time data.
           </p>
 
-          <div className="mt-8 w-full">
+          <div className="mt-8 w-full space-y-6">
+            {emailSent ? (
+              <div className="rounded-xl bg-profit/10 border border-profit/20 p-4 text-center">
+                <p className="text-profit-light font-medium">Check your email</p>
+                <p className="text-sm text-profit-light/80 mt-1">
+                  A magic sign-in link has been sent to {email}
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleEmailSignIn} className="space-y-3">
+                <input
+                  type="email"
+                  required
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-3 bg-[#0a0b0f] border border-white/[0.08] rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={emailLoading || !email}
+                  className="w-full flex items-center justify-center py-3 bg-primary hover:bg-primary-light text-white rounded-xl text-sm font-semibold transition-all disabled:opacity-50"
+                >
+                  {emailLoading ? <LoadingSpinner size="sm" /> : 'Continue with Email'}
+                </button>
+              </form>
+            )}
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-white/[0.08]" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-[#12131a] text-foreground-muted">Or continue with</span>
+              </div>
+            </div>
+
             <button
               onClick={handleSignIn}
               disabled={loading}

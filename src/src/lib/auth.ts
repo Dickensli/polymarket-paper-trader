@@ -5,6 +5,8 @@ import { getDb } from '@/lib/db';
 
 import { accounts, sessions, users, verificationTokens } from '@/lib/db/schema';
 
+import Resend from 'next-auth/providers/resend';
+
 // Only initialize with database adapter when DATABASE_URL is available
 const adapter = process.env.DATABASE_URL
   ? DrizzleAdapter(getDb(), {
@@ -17,10 +19,6 @@ const adapter = process.env.DATABASE_URL
 
 /**
  * NextAuth.js v5 configuration.
- *
- * - Uses Drizzle adapter when DATABASE_URL is present, falls back to JWT sessions otherwise.
- * - Google OAuth provider configured via AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET env vars.
- * - Session callback injects `user.id` into the session object for downstream use.
  */
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter,
@@ -28,6 +26,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Google({
       clientId: process.env.AUTH_GOOGLE_ID ?? '',
       clientSecret: process.env.AUTH_GOOGLE_SECRET ?? '',
+      allowDangerousEmailAccountLinking: true,
+    }),
+    Resend({
+      from: process.env.EMAIL_FROM || 'noreply@polymarkettraders.com',
+      // By default, this uses the process.env.AUTH_RESEND_KEY variable.
     }),
   ],
   session: {

@@ -326,6 +326,9 @@ export async function getMarkets(
     url.searchParams.set('closed', String(closed));
     url.searchParams.set('limit', '100');
     url.searchParams.set('offset', String(i * 100));
+    // CRITICAL: Sort by volume24hr descending to get trending and top markets
+    url.searchParams.set('order', 'volume24hr');
+    url.searchParams.set('ascending', 'false');
     return fetchJson<RawPolymarketEvent[]>(url.toString());
   });
 
