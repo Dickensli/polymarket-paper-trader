@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb, eventCache, marketCache } from '@/lib/db';
 import { getEvents } from '@/lib/polymarket';
+import { eq, and, notInArray } from 'drizzle-orm';
 
 /**
  * Sync active events and their nested markets from Polymarket to Supabase.
@@ -109,6 +110,34 @@ export async function GET() {
           }
         })
       );
+    }
+    
+    // 3. Mark events and markets as closed if they are not in the active list anymore
+    const activeEventIds = events.map((e) => e.id);
+    if (activeEventIds.length > 0) {
+      // Mark events as closed
+      const closedEventsResult = await db
+        .update(eventCache)
+        .set({ closed: true })
+        .where(
+          and(
+            eq(eventCache.closed, false),
+            notInArray(eventCache.id, activeEventIds)
+          )
+        );
+
+      // Mark nested markets of those events as closed
+      await db
+        .update(marketCache)
+        .set({ closed: true })
+        .where(
+          and(
+            eq(marketCache.closed, false),
+            notInArray(marketCache.eventId, activeEventIds)
+          )
+        );
+      
+      console.log(`Auto-closed events and markets that are no longer active on Polymarket.`);
     }
 
     return NextResponse.json({
