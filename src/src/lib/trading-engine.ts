@@ -5,6 +5,7 @@ import {
   paperTrades,
   positions,
   ledgerEntries,
+  marketCache,
 } from '@/lib/db/schema';
 import type {
   Portfolio,
@@ -141,21 +142,43 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
       1000
     );
 
-    // Apply updated prices to DB and local array if we didn't timeout
+    // Build a map of resolved live prices
+    const resolvedPrices: Record<string, number> = {};
     if (updatedPrices) {
       for (const { tokenId, price } of updatedPrices) {
-        if (price === null) continue;
+        if (price !== null) {
+          resolvedPrices[tokenId] = price;
+        }
+      }
+    }
+
+    // Apply resolved prices or DB cache fallback
+    for (const pos of rawPositions) {
+      let price = resolvedPrices[pos.tokenId] ?? null;
+
+      if (price === null) {
+        // Fallback to database marketCache outcomePrices
+        const market = await db.query.marketCache.findFirst({
+          where: eq(marketCache.id, pos.marketId),
+        });
         
+        if (market) {
+          const tIds = (market.tokenIds as string[]) || [];
+          const oPrices = (market.outcomePrices as (string | number)[]) || [];
+          const idx = tIds.indexOf(pos.tokenId);
+          if (idx !== -1 && oPrices[idx] !== undefined) {
+            price = Number(oPrices[idx]);
+          }
+        }
+      }
+
+      if (price !== null && !isNaN(price)) {
         await db
           .update(positions)
           .set({ currentPrice: price.toFixed(6), updatedAt: new Date() })
-          .where(eq(positions.tokenId, tokenId));
+          .where(eq(positions.id, pos.id));
           
-        for (const pos of rawPositions) {
-          if (pos.tokenId === tokenId) {
-            pos.currentPrice = price.toFixed(6);
-          }
-        }
+        pos.currentPrice = price.toFixed(6);
       }
     }
   }

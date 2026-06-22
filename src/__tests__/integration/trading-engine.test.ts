@@ -32,7 +32,7 @@ import {
   TradingError,
 } from '@/lib/trading-engine';
 import { getDb } from '@/lib/db';
-import { users, ledgerEntries, portfolios, paperTrades, positions } from '@/lib/db/schema';
+import { users, ledgerEntries, portfolios, paperTrades, positions, marketCache } from '@/lib/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import * as polymarket from '@/lib/polymarket';
 
@@ -762,5 +762,56 @@ describe('Portfolio price refresh timeout', () => {
     expect(pos?.currentPrice).toBe(0.5);
 
     spy.mockRestore();
+  });
+});
+
+describe('Portfolio price refresh database cache fallback', () => {
+  it('falls back to database marketCache prices if live price fetch fails or returns null', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    const testMarketId = `fallback-market-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `fallback-token-${randomUUID().slice(0, 8)}`;
+
+    // Populate marketCache table with the outcome price of the token
+    const db = getDb();
+    await db.insert(marketCache).values({
+      id: testMarketId,
+      question: 'Will fallback work?',
+      tokenIds: [testTokenId, 'other-token'],
+      outcomePrices: ['0.75', '0.25'],
+    });
+
+    // Buy the token to create an active position with entry price 0.5
+    await executeTrade(
+      userId,
+      validBuyParams({
+        marketId: testMarketId,
+        tokenId: testTokenId,
+        shares: 100,
+        price: 0.5,
+      }),
+    );
+
+    // Mock getMidpoint to fail (throw error/return null)
+    const spy = vi.spyOn(polymarket, 'getMidpoint').mockImplementation(
+      () => Promise.reject(new Error('CLOB 404'))
+    );
+
+    const portfolio = await getPortfolio(userId);
+
+    // It should fallback to database cache price (0.75) instead of remaining at buy price (0.5)
+    const pos = portfolio.positions.find((p) => p.tokenId === testTokenId);
+    expect(pos).toBeDefined();
+    expect(pos?.currentPrice).toBe(0.75);
+
+    // P&L should be calculated using the fallback price: 100 * (0.75 - 0.5) = $25.00
+    expect(pos?.unrealizedPnL).toBe(25.00);
+
+    spy.mockRestore();
+
+    // Clean up test market from cache
+    await db.delete(marketCache).where(eq(marketCache.id, testMarketId));
   });
 });
