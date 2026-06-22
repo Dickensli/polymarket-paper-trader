@@ -44,6 +44,21 @@ function roundTo(n: number, decimals: number): number {
   return Math.round(n * factor) / factor;
 }
 
+/** Wrap a promise with a timeout. Resolves to null if timeout is reached. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timeoutId: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([
+    promise.then((res) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      return res;
+    }),
+    timeoutPromise,
+  ]);
+}
+
 /**
  * Calculate the trading fee using the exact Polymarket formula.
  * Formula: (fee_rate_bps / 10_000) * min(price, 1 - price) * size
@@ -101,40 +116,45 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
       redis = Redis.fromEnv();
     } catch {}
 
-    const updatedPrices = await Promise.all(
-      tokenIds.map(async (tokenId) => {
-        let cachedPrice: number | null = null;
-        if (redis) {
-          const val = await redis.get(`price:${tokenId}`).catch(() => null);
-          if (val !== null) {
-            cachedPrice = Number(val);
+    const updatedPrices = await withTimeout(
+      Promise.all(
+        tokenIds.map(async (tokenId) => {
+          let cachedPrice: number | null = null;
+          if (redis) {
+            const val = await redis.get(`price:${tokenId}`).catch(() => null);
+            if (val !== null) {
+              cachedPrice = Number(val);
+            }
           }
-        }
 
-        if (cachedPrice !== null) {
-          return { tokenId, price: cachedPrice };
-        }
+          if (cachedPrice !== null) {
+            return { tokenId, price: cachedPrice };
+          }
 
-        const livePrice = await getMidpoint(tokenId).catch(() => null);
-        if (livePrice !== null && redis) {
-          await redis.set(`price:${tokenId}`, livePrice, { ex: 15 }).catch(() => {});
-        }
-        return { tokenId, price: livePrice };
-      })
+          const livePrice = await getMidpoint(tokenId).catch(() => null);
+          if (livePrice !== null && redis) {
+            await redis.set(`price:${tokenId}`, livePrice, { ex: 15 }).catch(() => {});
+          }
+          return { tokenId, price: livePrice };
+        })
+      ),
+      1000
     );
 
-    // Apply updated prices to DB and local array
-    for (const { tokenId, price } of updatedPrices) {
-      if (price === null) continue;
-      
-      await db
-        .update(positions)
-        .set({ currentPrice: price.toFixed(6), updatedAt: new Date() })
-        .where(eq(positions.tokenId, tokenId));
+    // Apply updated prices to DB and local array if we didn't timeout
+    if (updatedPrices) {
+      for (const { tokenId, price } of updatedPrices) {
+        if (price === null) continue;
         
-      for (const pos of rawPositions) {
-        if (pos.tokenId === tokenId) {
-          pos.currentPrice = price.toFixed(6);
+        await db
+          .update(positions)
+          .set({ currentPrice: price.toFixed(6), updatedAt: new Date() })
+          .where(eq(positions.tokenId, tokenId));
+          
+        for (const pos of rawPositions) {
+          if (pos.tokenId === tokenId) {
+            pos.currentPrice = price.toFixed(6);
+          }
         }
       }
     }

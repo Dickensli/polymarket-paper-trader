@@ -21,7 +21,7 @@
 //  - Concurrent trade race conditions
 // =============================================================================
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { randomUUID } from 'crypto';
 import {
   getPortfolio,
@@ -34,6 +34,7 @@ import {
 import { getDb } from '@/lib/db';
 import { users, ledgerEntries, portfolios, paperTrades, positions } from '@/lib/db/schema';
 import { eq, sql } from 'drizzle-orm';
+import * as polymarket from '@/lib/polymarket';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -724,5 +725,42 @@ describe('Concurrent trade safety', () => {
     const err = (rejected[0] as PromiseRejectedResult).reason;
     expect(err).toBeInstanceOf(TradingError);
     expect(err.code).toBe('INSUFFICIENT_BALANCE');
+  });
+});
+
+describe('Portfolio price refresh timeout', () => {
+  it('does not block getPortfolio and falls back to cached prices if live price fetch hangs', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    // Buy a token to create an active position
+    await executeTrade(
+      userId,
+      validBuyParams({
+        shares: 100,
+        price: 0.5,
+        tokenId: 'hang-token-id',
+      }),
+    );
+
+    // Mock getMidpoint to hang indefinitely (resolve after 3 seconds)
+    const spy = vi.spyOn(polymarket, 'getMidpoint').mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(0.9), 3000))
+    );
+
+    const startTime = Date.now();
+    const portfolio = await getPortfolio(userId);
+    const duration = Date.now() - startTime;
+
+    // It should resolve fast (under 1.5 seconds) due to 1s timeout
+    expect(duration).toBeLessThan(1500);
+
+    // And it should return the cached price of the position (which is 0.5, not the hung 0.9)
+    const pos = portfolio.positions.find((p) => p.tokenId === 'hang-token-id');
+    expect(pos).toBeDefined();
+    expect(pos?.currentPrice).toBe(0.5);
+
+    spy.mockRestore();
   });
 });
