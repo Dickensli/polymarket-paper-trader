@@ -7,7 +7,7 @@ import PriceBar from './PriceBar';
 import LoadingSpinner from './LoadingSpinner';
 
 interface TradeModalProps {
-  market: Market;
+  market: Market & { midpoints?: { YES: number | null; NO: number | null } };
   onClose: () => void;
   onSuccess?: () => void;
 }
@@ -18,8 +18,8 @@ export default function TradeModal({ market, onClose, onSuccess }: TradeModalPro
   const [showSuccess, setShowSuccess] = useState(false);
   const { executeTrade, isLoading, error } = useTrade();
 
-  const yesPrice = market.outcomePrices[0] ?? 0.5;
-  const noPrice = market.outcomePrices[1] ?? 0.5;
+  const yesPrice = market.midpoints?.YES ?? market.outcomePrices[0] ?? 0.5;
+  const noPrice = market.midpoints?.NO ?? market.outcomePrices[1] ?? 0.5;
   const price = outcome === 'YES' ? yesPrice : noPrice;
   const cost = shares * price;
   const potentialPayout = shares;

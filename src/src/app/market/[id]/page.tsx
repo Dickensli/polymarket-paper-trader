@@ -54,8 +54,8 @@ export default function MarketDetailPage() {
     );
   }
 
-  const yesPrice = market.outcomePrices[0] ?? 0.5;
-  const noPrice = market.outcomePrices[1] ?? 0.5;
+  const yesPrice = market.midpoints?.YES ?? market.outcomePrices[0] ?? 0.5;
+  const noPrice = market.midpoints?.NO ?? market.outcomePrices[1] ?? 0.5;
   const yesPct = Math.round(yesPrice * 100);
   const noPct = Math.round(noPrice * 100);
 
