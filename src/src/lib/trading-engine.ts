@@ -13,6 +13,8 @@ import type {
   TradeParams,
   OutcomeLabel,
 } from '@/lib/types';
+import { Redis } from '@upstash/redis';
+import { getMidpoint } from '@/lib/polymarket';
 
 // Constants
 const DEFAULT_BALANCE = 10000;
@@ -89,6 +91,54 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
   const rawPositions = await db.query.positions.findMany({
     where: and(eq(positions.userId, userId), eq(positions.isOpen, true)),
   });
+
+  if (rawPositions.length > 0) {
+    // 2.1 Refresh prices on the fly
+    const tokenIds = Array.from(new Set(rawPositions.map((p) => p.tokenId)));
+    
+    let redis: Redis | null = null;
+    try {
+      redis = Redis.fromEnv();
+    } catch {}
+
+    const updatedPrices = await Promise.all(
+      tokenIds.map(async (tokenId) => {
+        let cachedPrice: number | null = null;
+        if (redis) {
+          const val = await redis.get(`price:${tokenId}`).catch(() => null);
+          if (val !== null) {
+            cachedPrice = Number(val);
+          }
+        }
+
+        if (cachedPrice !== null) {
+          return { tokenId, price: cachedPrice };
+        }
+
+        const livePrice = await getMidpoint(tokenId).catch(() => null);
+        if (livePrice !== null && redis) {
+          await redis.set(`price:${tokenId}`, livePrice, { ex: 15 }).catch(() => {});
+        }
+        return { tokenId, price: livePrice };
+      })
+    );
+
+    // Apply updated prices to DB and local array
+    for (const { tokenId, price } of updatedPrices) {
+      if (price === null) continue;
+      
+      await db
+        .update(positions)
+        .set({ currentPrice: price.toFixed(6), updatedAt: new Date() })
+        .where(eq(positions.tokenId, tokenId));
+        
+      for (const pos of rawPositions) {
+        if (pos.tokenId === tokenId) {
+          pos.currentPrice = price.toFixed(6);
+        }
+      }
+    }
+  }
 
   const activePositions: Position[] = rawPositions.map((pos) => {
     const shares = Number(pos.shares);
