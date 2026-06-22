@@ -15,7 +15,7 @@ import type {
   OutcomeLabel,
 } from '@/lib/types';
 import { Redis } from '@upstash/redis';
-import { getMidpoint } from '@/lib/polymarket';
+import { getMidpoint, getMarket } from '@/lib/polymarket';
 
 // Constants
 const DEFAULT_BALANCE = 10000;
@@ -158,9 +158,47 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
 
       if (price === null) {
         // Fallback to database marketCache outcomePrices
-        const market = await db.query.marketCache.findFirst({
+        let market = await db.query.marketCache.findFirst({
           where: eq(marketCache.id, pos.marketId),
         });
+        
+        // If not found in database cache, pull directly from Polymarket Gamma API on the fly
+        if (!market) {
+          try {
+            const rawMarket = await getMarket(pos.marketId);
+            if (rawMarket) {
+              await db.insert(marketCache).values({
+                id: rawMarket.id,
+                eventId: null, // Nullable, avoids foreign key constraint violation if event not cached
+                question: rawMarket.question,
+                conditionId: rawMarket.conditionId,
+                tokenIds: rawMarket.tokenIds,
+                outcomePrices: rawMarket.outcomePrices,
+                closed: rawMarket.closed,
+                endDate: rawMarket.endDate ? new Date(rawMarket.endDate) : null,
+                lastSyncedAt: new Date(),
+              }).onConflictDoUpdate({
+                target: marketCache.id,
+                set: {
+                  question: rawMarket.question,
+                  tokenIds: rawMarket.tokenIds,
+                  outcomePrices: rawMarket.outcomePrices,
+                  closed: rawMarket.closed,
+                  endDate: rawMarket.endDate ? new Date(rawMarket.endDate) : null,
+                  lastSyncedAt: new Date(),
+                }
+              });
+
+              market = {
+                id: rawMarket.id,
+                tokenIds: rawMarket.tokenIds,
+                outcomePrices: rawMarket.outcomePrices,
+              } as any;
+            }
+          } catch (err) {
+            console.error(`[getPortfolio] Failed to fetch market ${pos.marketId} on-demand from Gamma API:`, err);
+          }
+        }
         
         if (market) {
           const tIds = (market.tokenIds as string[]) || [];

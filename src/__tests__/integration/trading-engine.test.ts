@@ -814,4 +814,84 @@ describe('Portfolio price refresh database cache fallback', () => {
     // Clean up test market from cache
     await db.delete(marketCache).where(eq(marketCache.id, testMarketId));
   });
+
+  it('falls back to direct getMarket Gamma API query if live price fetch fails AND database marketCache is missing', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    const testMarketId = `api-market-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `api-token-${randomUUID().slice(0, 8)}`;
+
+    // Buy the token to create an active position with entry price 0.4
+    await executeTrade(
+      userId,
+      validBuyParams({
+        marketId: testMarketId,
+        tokenId: testTokenId,
+        shares: 100,
+        price: 0.4,
+      }),
+    );
+
+    // Verify database marketCache does not have this market
+    const db = getDb();
+    await db.delete(marketCache).where(eq(marketCache.id, testMarketId));
+
+    // Mock getMidpoint to fail (throw error/return null)
+    const midpointSpy = vi.spyOn(polymarket, 'getMidpoint').mockImplementation(
+      () => Promise.reject(new Error('CLOB 404'))
+    );
+
+    // Mock getMarket to return mock data from the Gamma API
+    const marketSpy = vi.spyOn(polymarket, 'getMarket').mockImplementation(
+      (id) => Promise.resolve({
+        id,
+        question: 'Will Gamma fallback work?',
+        conditionId: 'mock-condition-id',
+        tokenIds: [testTokenId, 'other-token'],
+        outcomePrices: [0.85, 0.15],
+        closed: false,
+        endDate: new Date().toISOString(),
+        slug: 'mock-slug',
+        outcomes: ['Yes', 'No'],
+        lastTradePrice: 0.85,
+        bestBid: 0.84,
+        bestAsk: 0.86,
+        spread: 0.02,
+        volume24hr: 1000,
+        liquidity: 5000,
+        image: null,
+        icon: null,
+        description: null,
+        category: 'Test',
+        startDate: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    const portfolio = await getPortfolio(userId);
+
+    // It should query Gamma API, cache it, and use the 0.85 price
+    const pos = portfolio.positions.find((p) => p.tokenId === testTokenId);
+    expect(pos).toBeDefined();
+    expect(pos?.currentPrice).toBe(0.85);
+
+    // P&L should be calculated using the fallback price: 100 * (0.85 - 0.40) = $45.00
+    expect(pos?.unrealizedPnL).toBe(45.00);
+
+    // It should have cached the market in the database marketCache
+    const cached = await db.query.marketCache.findFirst({
+      where: eq(marketCache.id, testMarketId),
+    });
+    expect(cached).toBeDefined();
+    expect(cached?.question).toBe('Will Gamma fallback work?');
+
+    midpointSpy.mockRestore();
+    marketSpy.mockRestore();
+
+    // Clean up test market from cache
+    await db.delete(marketCache).where(eq(marketCache.id, testMarketId));
+  });
 });
