@@ -48,9 +48,24 @@ export function useLivePrices(tokenIds: string[]) {
             let hasChanges = false;
             
             data.forEach((update: any) => {
-              if (update.asset_id && update.price !== undefined) {
-                newPrices[update.asset_id] = Number(update.price);
-                hasChanges = true;
+              if (update.asset_id) {
+                let price: number | null = null;
+                
+                const bestBid = update.bids?.[0]?.price ? Number(update.bids[0].price) : null;
+                const bestAsk = update.asks?.[0]?.price ? Number(update.asks[0].price) : null;
+                
+                if (bestBid !== null && bestAsk !== null) {
+                  price = (bestBid + bestAsk) / 2;
+                } else if (update.last_trade_price !== undefined && update.last_trade_price !== null) {
+                  price = Number(update.last_trade_price);
+                } else if (update.price !== undefined && update.price !== null) {
+                  price = Number(update.price);
+                }
+                
+                if (price !== null && !isNaN(price)) {
+                  newPrices[update.asset_id] = price;
+                  hasChanges = true;
+                }
               }
             });
             
