@@ -57,8 +57,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
 
-    const currentPrice = await getMidpoint(position.tokenId);
-    if (currentPrice <= 0 || currentPrice >= 1) {
+    let currentPrice: number;
+    try {
+      currentPrice = await getMidpoint(position.tokenId);
+    } catch (err) {
+      console.warn(`[Close Position] Failed to fetch live midpoint for token ${position.tokenId}, falling back to DB cached price:`, err);
+      currentPrice = Number(position.currentPrice);
+    }
+
+    if (isNaN(currentPrice) || currentPrice < 0 || currentPrice > 1) {
       return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
     }
 
@@ -68,10 +75,7 @@ export async function POST(request: NextRequest) {
     const slippageBps = settings.slippageEnabled ? (settings.slippageBps || 50) : 0;
     const slippageMultiplier = 1 - (slippageBps / 10000); // For sells, execution price is lower
     
-    const executionPrice = currentPrice * slippageMultiplier;
-    if (executionPrice <= 0.0) {
-      return NextResponse.json({ error: 'Price too low with slippage' }, { status: 400 });
-    }
+    const executionPrice = Math.max(0, currentPrice * slippageMultiplier);
 
     const sharesToSell = Number(position.shares);
 
