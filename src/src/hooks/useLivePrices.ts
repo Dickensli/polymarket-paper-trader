@@ -51,8 +51,12 @@ export function useLivePrices(tokenIds: string[]) {
               if (update.asset_id) {
                 let price: number | null = null;
                 
-                const bestBid = update.bids?.[0]?.price ? Number(update.bids[0].price) : null;
-                const bestAsk = update.asks?.[0]?.price ? Number(update.asks[0].price) : null;
+                const bestBid = update.bids && update.bids.length > 0
+                  ? Math.max(...update.bids.map((b: any) => Number(b.price)).filter((p: number) => !isNaN(p)))
+                  : null;
+                const bestAsk = update.asks && update.asks.length > 0
+                  ? Math.min(...update.asks.map((a: any) => Number(a.price)).filter((p: number) => !isNaN(p)))
+                  : null;
                 
                 if (bestBid !== null && bestAsk !== null) {
                   price = (bestBid + bestAsk) / 2;
