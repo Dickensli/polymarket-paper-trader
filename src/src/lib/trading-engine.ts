@@ -46,7 +46,7 @@ function roundTo(n: number, decimals: number): number {
  * Calculate the trading fee using the exact Polymarket formula.
  * Formula: (fee_rate_bps / 10_000) * min(price, 1 - price) * size
  */
-function calculateFee(price: number, shares: number, feeRateBps = 200): number {
+function calculateFee(price: number, shares: number, feeRateBps = 0): number {
   if (feeRateBps === 0) return 0;
   let fee = (feeRateBps / 10000) * Math.min(price, 1.0 - price) * shares;
   if (fee > 0) {

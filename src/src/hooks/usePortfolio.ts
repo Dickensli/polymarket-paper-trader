@@ -75,12 +75,19 @@ export function usePortfolio(): UsePortfolioReturn {
 
   const closeMutation = useMutation({
     mutationFn: async (positionId: string) => {
-      const res = await fetch('/api/trade', {
+      const idempotencyKey = crypto.randomUUID();
+      const res = await fetch('/api/trade/close', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ closePositionId: positionId }),
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-idempotency-key': idempotencyKey,
+        },
+        body: JSON.stringify({ positionId }),
       });
-      if (!res.ok) throw new Error('Failed to close position');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to close position');
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['portfolio'] });
