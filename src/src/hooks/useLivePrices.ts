@@ -60,9 +60,9 @@ export function useLivePrices(tokenIds: string[]) {
                 
                 if (bestBid !== null && bestAsk !== null) {
                   price = (bestBid + bestAsk) / 2;
-                } else if (update.last_trade_price !== undefined && update.last_trade_price !== null) {
+                } else if (update.last_trade_price !== undefined && update.last_trade_price !== null && update.last_trade_price !== '') {
                   price = Number(update.last_trade_price);
-                } else if (update.price !== undefined && update.price !== null) {
+                } else if (update.price !== undefined && update.price !== null && update.price !== '') {
                   price = Number(update.price);
                 }
                 
