@@ -43,10 +43,12 @@ export async function GET(request: NextRequest) {
     let markets: any[] = [];
     
     if (eventIds.length > 0) {
-      // In Drizzle, we can use an 'inArray' or just fetch them all and map
-      // Since it's a small page size, we can fetch all markets for these events
       markets = await db.query.marketCache.findMany({
-        where: (fields, { inArray }) => inArray(fields.eventId, eventIds),
+        where: (fields, { and, eq, inArray }) => and(
+          inArray(fields.eventId, eventIds),
+          eq(fields.active, true),
+          eq(fields.closed, false)
+        ),
       });
     }
 

@@ -12,5 +12,11 @@
         { "key": "X-Frame-Options", "value": "DENY" }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "0 0 * * *"
+    }
   ]
 }

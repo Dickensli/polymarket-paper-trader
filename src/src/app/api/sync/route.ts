@@ -86,6 +86,7 @@ export async function GET() {
                   volume24hr: market.volume24hr?.toString(),
                   liquidity: market.liquidity?.toString(),
                   closed: market.closed,
+                  active: market.active,
                   tokenIds: market.tokenIds || [],
                   lastSyncedAt: new Date(),
                 })
@@ -101,6 +102,7 @@ export async function GET() {
                     volume24hr: market.volume24hr?.toString(),
                     liquidity: market.liquidity?.toString(),
                     closed: market.closed,
+                    active: market.active,
                     tokenIds: market.tokenIds || [],
                     lastSyncedAt: new Date(),
                   }

@@ -21,12 +21,7 @@ export async function runPriceRefresh() {
   const tokenIds = Array.from(new Set(openPositions.map(p => p.tokenId)));
   if (tokenIds.length === 0) return 0;
 
-  let redis: Redis | null = null;
-  try {
-    redis = Redis.fromEnv();
-  } catch {
-    // If Redis is not configured (e.g. testing), we skip caching
-  }
+  const redis = process.env.UPSTASH_REDIS_REST_URL ? Redis.fromEnv() : null;
   
   // 2. Fetch prices
   const prices = await Promise.all(

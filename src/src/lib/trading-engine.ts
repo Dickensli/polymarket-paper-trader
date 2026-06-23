@@ -120,10 +120,7 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
     // 2.1 Refresh prices on the fly
     const tokenIds = Array.from(new Set(rawPositions.map((p) => p.tokenId)));
     
-    let redis: Redis | null = null;
-    try {
-      redis = Redis.fromEnv();
-    } catch {}
+    const redis = process.env.UPSTASH_REDIS_REST_URL ? Redis.fromEnv() : null;
 
     const updatedPrices = await withTimeout(
       Promise.all(
@@ -183,6 +180,7 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
                 tokenIds: rawMarket.tokenIds,
                 outcomePrices: rawMarket.outcomePrices,
                 closed: rawMarket.closed,
+                active: rawMarket.active,
                 endDate: rawMarket.endDate ? new Date(rawMarket.endDate) : null,
                 lastSyncedAt: new Date(),
               }).onConflictDoUpdate({
@@ -192,6 +190,7 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
                   tokenIds: rawMarket.tokenIds,
                   outcomePrices: rawMarket.outcomePrices,
                   closed: rawMarket.closed,
+                  active: rawMarket.active,
                   endDate: rawMarket.endDate ? new Date(rawMarket.endDate) : null,
                   lastSyncedAt: new Date(),
                 }

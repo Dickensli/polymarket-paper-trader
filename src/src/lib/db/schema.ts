@@ -262,6 +262,7 @@ export const marketCache = pgTable(
     image: text('image'),
     icon: text('icon'),
     closed: boolean('closed').default(false),
+    active: boolean('active').default(true),
     endDate: timestamp('end_date', { withTimezone: true }),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -129,6 +129,7 @@ export interface NormalizedMarket {
   description: string | null;
   category: string | null;
   closed: boolean;
+  active: boolean;
   startDate: string | null;
   endDate: string | null;
   createdAt: string;

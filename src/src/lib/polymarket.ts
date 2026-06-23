@@ -170,6 +170,7 @@ function normalizeMarket(raw: RawPolymarketMarket, eventCategory?: string): Norm
     description: raw.description ?? null,
     category: eventCategory ?? raw.category ?? null,
     closed: raw.closed ?? false,
+    active: raw.active ?? true,
     startDate: raw.startDate ?? null,
     endDate: raw.endDate ?? null,
     createdAt: raw.createdAt,
