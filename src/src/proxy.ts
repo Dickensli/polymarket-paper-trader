@@ -39,8 +39,9 @@ export default async function proxy(request: NextRequest) {
     request.cookies.get("authjs.session-token")?.value || 
     request.cookies.get("__Secure-authjs.session-token")?.value;
 
-  const agentSecret = request.headers.get("x-agent-secret");
-  const isAgentRequest = agentSecret && agentSecret === (process.env.AGENT_SECRET || "default_secret_key_123");
+  const isProd = process.env.NODE_ENV === "production";
+  const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
+  const isAgentRequest = !!(agentSecret && expectedSecret && agentSecret === expectedSecret);
 
   // 1. Edge Authentication Filter
   if ((isTradeRoute || isPortfolioRoute || isUserRoute) && !sessionToken && !isAgentRequest) {

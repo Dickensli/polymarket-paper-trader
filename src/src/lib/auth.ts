@@ -68,7 +68,10 @@ export const auth = async (...args: any[]) => {
     const agentSecret = reqHeaders.get('x-agent-secret');
     let targetUserId = reqHeaders.get('x-agent-user-id') || '815c03ff-dad9-4535-a427-20422812424a';
 
-    if (agentSecret && agentSecret === (process.env.AGENT_SECRET || "default_secret_key_123")) {
+    const isProd = process.env.NODE_ENV === 'production';
+    const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
+
+    if (agentSecret && expectedSecret && agentSecret === expectedSecret) {
       const db = getDb();
       // Ensure the agent user exists in the database to satisfy foreign keys
       let dbUser = await db.query.users.findFirst({ where: eq(users.id, targetUserId) });
