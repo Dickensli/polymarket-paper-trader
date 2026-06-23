@@ -9,11 +9,13 @@ const CLOB_API_URL = "https://clob.polymarket.com";
 // A unique user ID and secret for agent session authentication bypass
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
-function getAgentHeaders() {
+function getAgentHeaders(args) {
+    const accountName = typeof args?.account === "string" ? args.account : "default";
     return {
         "Content-Type": "application/json",
         "x-agent-secret": AGENT_SECRET,
-        "x-agent-user-id": AGENT_USER_ID
+        "x-agent-user-id": AGENT_USER_ID,
+        "x-agent-account": accountName
     };
 }
 function generateIdempotencyKey() {
@@ -449,7 +451,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const balance = args?.balance || 10000;
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio?balance=${balance}`, {
                     method: "DELETE",
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 if (!res.ok)
                     throw new Error(`API returned ${res.status}`);
@@ -470,7 +472,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "get_balance": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 if (!res.ok)
                     throw new Error(`API returned ${res.status}`);
@@ -496,7 +498,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case "reset_account": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
                     method: "DELETE",
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 if (!res.ok)
                     throw new Error(`API returned ${res.status}`);
@@ -719,7 +721,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const res = await fetch(`${POLYTRADER_API_URL}/trade/buy`, {
                     method: "POST",
                     headers: {
-                        ...getAgentHeaders(),
+                        ...getAgentHeaders(args),
                         "X-Idempotency-Key": idempotencyKey,
                     },
                     body: JSON.stringify({
@@ -766,7 +768,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const resolved = await resolveMarketAndToken(slugOrId, outcome);
                 // Fetch portfolio to find the corresponding position ID
                 const portRes = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 if (!portRes.ok)
                     throw new Error("Could not retrieve portfolio for position lookup.");
@@ -780,7 +782,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const res = await fetch(`${POLYTRADER_API_URL}/trade/sell`, {
                     method: "POST",
                     headers: {
-                        ...getAgentHeaders(),
+                        ...getAgentHeaders(args),
                         "X-Idempotency-Key": idempotencyKey,
                     },
                     body: JSON.stringify({
@@ -821,7 +823,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // ── Portfolios & Trades ───────────────────────────────────────
             case "portfolio": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const portfolio = data.data || data;
@@ -855,7 +857,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case "history": {
                 const limit = args?.limit || 50;
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const portfolio = data.data || data;
@@ -883,7 +885,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const resolved = await resolveMarketAndToken(slugOrId, outcome);
                 const res = await fetch(`${POLYTRADER_API_URL}/orders`, {
                     method: "POST",
-                    headers: getAgentHeaders(),
+                    headers: getAgentHeaders(args),
                     body: JSON.stringify({
                         marketId: resolved.marketId,
                         tokenId: resolved.tokenId,
@@ -903,7 +905,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "list_orders": {
                 const res = await fetch(`${POLYTRADER_API_URL}/orders`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const orders = data.data || data;
@@ -929,7 +931,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const orderId = args?.order_id;
                 const res = await fetch(`${POLYTRADER_API_URL}/orders/${encodeURIComponent(orderId)}`, {
                     method: "DELETE",
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 if (!res.ok) {
@@ -939,7 +941,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "cancel_all_orders": {
                 const listRes = await fetch(`${POLYTRADER_API_URL}/orders`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const listData = await listRes.json();
                 const orders = listData.data || listData;
@@ -947,7 +949,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const results = await Promise.all(pending.map(async (o) => {
                     const cancelRes = await fetch(`${POLYTRADER_API_URL}/orders/${encodeURIComponent(o.id)}`, {
                         method: "DELETE",
-                        headers: getAgentHeaders()
+                        headers: getAgentHeaders(args)
                     });
                     return { order_id: o.id, cancelled: cancelRes.ok };
                 }));
@@ -956,7 +958,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case "check_orders": {
                 const res = await fetch(`${POLYTRADER_API_URL}/orders/check`, {
                     method: "POST",
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 return { content: [{ type: "text", text: JSON.stringify({ ok: true, data }, null, 2) }] };
@@ -965,14 +967,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case "resolve": {
                 // Resolve a single market on-demand (triggers resolve_all check in backend)
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 return { content: [{ type: "text", text: JSON.stringify({ ok: true, data: { resolved: true } }, null, 2) }] };
             }
             case "resolve_all": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const portfolio = data.data || data;
@@ -992,7 +994,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "stats": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const portfolio = data.data || data;
@@ -1017,7 +1019,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "stats_card": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const portfolio = data.data || data;
@@ -1033,7 +1035,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "leaderboard_entry": {
                 const res = await fetch(`${POLYTRADER_API_URL}/leaderboard`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 if (!res.ok)
                     throw new Error("Leaderboard query failed.");
@@ -1044,7 +1046,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "share_content": {
                 const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const portfolio = data.data || data;
@@ -1060,7 +1062,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "leaderboard_card": {
                 const res = await fetch(`${POLYTRADER_API_URL}/leaderboard`, {
-                    headers: getAgentHeaders()
+                    headers: getAgentHeaders(args)
                 });
                 const data = await res.json();
                 const entries = data.data || data || [];

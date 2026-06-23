@@ -2,6 +2,18 @@ import NextAuth from 'next-auth';
 import Google from 'next-auth/providers/google';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { getDb } from '@/lib/db';
+import crypto from 'crypto';
+
+function getDeterministicUuid(userId: string, accountName: string): string {
+  const hash = crypto.createHash('sha256').update(`${userId}:${accountName}`).digest('hex');
+  return [
+    hash.substring(0, 8),
+    hash.substring(8, 12),
+    '4' + hash.substring(13, 16),
+    ((parseInt(hash.substring(16, 18), 16) & 0x3f) | 0x80).toString(16) + hash.substring(18, 20),
+    hash.substring(20, 32)
+  ].join('-');
+}
 
 import { accounts, sessions, users, verificationTokens } from '@/lib/db/schema';
 
@@ -67,25 +79,33 @@ export const auth = async (...args: any[]) => {
     const reqHeaders = await headers();
     const agentSecret = reqHeaders.get('x-agent-secret');
     let targetUserId = reqHeaders.get('x-agent-user-id') || '815c03ff-dad9-4535-a427-20422812424a';
+    const agentAccount = reqHeaders.get('x-agent-account') || 'default';
 
     const isProd = process.env.NODE_ENV === 'production';
     const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
 
     if (agentSecret && expectedSecret && agentSecret === expectedSecret) {
+      if (agentAccount !== 'default') {
+        targetUserId = getDeterministicUuid(targetUserId, agentAccount);
+      }
+
       const db = getDb();
+      const strategyName = agentAccount === 'default' ? 'AI Agent' : `AI Agent (${agentAccount})`;
+      const strategyEmail = agentAccount === 'default' ? 'agent@polymarkettraders.com' : `agent+${agentAccount}@polymarkettraders.com`;
+
       // Ensure the agent user exists in the database to satisfy foreign keys
       let dbUser = await db.query.users.findFirst({ where: eq(users.id, targetUserId) });
       if (!dbUser) {
         // Fallback to agent email lookup in case of ID mismatch
-        dbUser = await db.query.users.findFirst({ where: eq(users.email, 'agent@polymarkettraders.com') });
+        dbUser = await db.query.users.findFirst({ where: eq(users.email, strategyEmail) });
         if (dbUser) {
           targetUserId = dbUser.id;
         } else {
           // Auto-create agent user row
           await db.insert(users).values({
             id: targetUserId,
-            email: 'agent@polymarkettraders.com',
-            name: 'AI Agent',
+            email: strategyEmail,
+            name: strategyName,
           });
         }
       }
@@ -93,8 +113,8 @@ export const auth = async (...args: any[]) => {
       return {
         user: {
           id: targetUserId,
-          email: 'agent@polymarkettraders.com',
-          name: 'AI Agent',
+          email: strategyEmail,
+          name: strategyName,
         },
         expires: new Date(Date.now() + 3600 * 1000).toISOString(),
       };
