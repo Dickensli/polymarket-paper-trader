@@ -17,10 +17,11 @@ const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 
 function getAgentHeaders(args?: any) {
   const accountName = typeof args?.account === "string" ? args.account : "default";
+  const userId = typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID;
   return {
     "Content-Type": "application/json",
     "x-agent-secret": AGENT_SECRET,
-    "x-agent-user-id": AGENT_USER_ID,
+    "x-agent-user-id": userId,
     "x-agent-account": accountName
   };
 }
@@ -120,7 +121,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             balance: { type: "number", description: "Starting USD balance (default: 10,000)" },
-            account: { type: "string", description: "Account profile identifier (default: 'default')" }
+            account: { type: "string", description: "Account profile identifier (default: 'default')" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -130,7 +132,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier (default: 'default')" }
+            account: { type: "string", description: "Account identifier (default: 'default')" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -140,7 +143,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier (default: 'default')" }
+            account: { type: "string", description: "Account identifier (default: 'default')" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -244,7 +248,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             outcome: { type: "string", description: "Outcome to buy ('YES', 'NO', 'OVER', 'UNDER')" },
             amount_usd: { type: "number", description: "USD cash amount to spend" },
             order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
-            account: { type: "string", description: "Account profile identifier (default: 'default')" }
+            account: { type: "string", description: "Account profile identifier (default: 'default')" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           },
           required: ["slug_or_id", "outcome", "amount_usd"]
         }
@@ -259,7 +264,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             outcome: { type: "string", description: "Outcome to sell ('YES', 'NO')" },
             shares: { type: "number", description: "Number of shares to sell" },
             order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
-            account: { type: "string", description: "Account profile identifier (default: 'default')" }
+            account: { type: "string", description: "Account profile identifier (default: 'default')" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           },
           required: ["slug_or_id", "outcome", "shares"]
         }
@@ -272,7 +278,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -283,7 +290,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             limit: { type: "number", description: "Max history rows (default: 50)" },
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -302,7 +310,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             limit_price: { type: "number", description: "Target price limit (0.01 - 0.99)" },
             order_type: { type: "string", enum: ["gtc", "gtd"], description: "GTC or GTD (default: gtc)" },
             expires_at: { type: "string", description: "ISO 8601 expiry datetime (required for GTD orders)" },
-            account: { type: "string", description: "Account profile identifier" }
+            account: { type: "string", description: "Account profile identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           },
           required: ["slug_or_id", "outcome", "side", "amount", "limit_price"]
         }
@@ -313,7 +322,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -324,7 +334,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             order_id: { type: "string", description: "The UUID of the order" },
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           },
           required: ["order_id"]
         }
@@ -335,7 +346,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -345,7 +357,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -358,7 +371,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             slug_or_id: { type: "string", description: "Market slug, ID or condition ID" },
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           },
           required: ["slug_or_id"]
         }
@@ -369,7 +383,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -379,7 +394,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -390,6 +406,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
             format: { type: "string", description: "Output format: 'markdown' or 'plain' (default: 'markdown')" }
           }
         }
@@ -400,7 +417,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
@@ -410,7 +428,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            account: { type: "string", description: "Account identifier" }
+            account: { type: "string", description: "Account identifier" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
           }
         }
       },
