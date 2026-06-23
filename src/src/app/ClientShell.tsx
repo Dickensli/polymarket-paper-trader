@@ -13,16 +13,16 @@ export default function ClientShell({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
 
-  const isAuthRoute = pathname?.startsWith('/auth/');
+  const isPublicRoute = pathname?.startsWith('/auth/') || pathname === '/privacy';
 
   useEffect(() => {
-    if (status === 'unauthenticated' && !isAuthRoute) {
+    if (status === 'unauthenticated' && !isPublicRoute) {
       router.push('/auth/signin');
     }
-  }, [status, isAuthRoute, router]);
+  }, [status, isPublicRoute, router]);
 
-  // If on auth routes (like signin page), render children directly without the shell layout
-  if (isAuthRoute) {
+  // If on public routes (like signin page or privacy page), render children directly without the shell layout
+  if (isPublicRoute) {
     return <>{children}</>;
   }
 

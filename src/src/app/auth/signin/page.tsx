@@ -2,6 +2,7 @@
 
 import { signIn } from 'next-auth/react';
 import { useState } from 'react';
+import Link from 'next/link';
 import LoadingSpinner from '@/components/LoadingSpinner';
 
 export default function SignInPage() {
@@ -134,6 +135,12 @@ export default function SignInPage() {
                 </>
               )}
             </button>
+
+            <div className="text-center text-xs text-foreground-muted border-t border-white/[0.04] pt-4 mt-6 w-full">
+              <Link href="/privacy" className="text-primary-light hover:underline font-medium">
+                Privacy Policy
+              </Link>
+            </div>
           </div>
         </div>
       </div>
