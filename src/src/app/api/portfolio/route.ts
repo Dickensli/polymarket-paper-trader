@@ -45,14 +45,18 @@ export async function GET() {
  *
  * Returns the fresh portfolio.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const portfolio = await resetPortfolio(session.user.id);
+    const { searchParams } = new URL(request.url);
+    const balanceParam = searchParams.get('balance');
+    const initialBalance = balanceParam ? parseFloat(balanceParam) : undefined;
+
+    const portfolio = await resetPortfolio(session.user.id, initialBalance);
     return NextResponse.json({
       data: portfolio,
       message: 'Portfolio has been reset to initial state.',

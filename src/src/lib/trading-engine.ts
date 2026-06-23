@@ -710,18 +710,17 @@ export async function updatePositionPrices(
   );
 }
 
-/**
- * Reset the portfolio to its initial state for a user.
- */
-export async function resetPortfolio(userId: string): Promise<Portfolio> {
+export async function resetPortfolio(userId: string, initialBalance?: number): Promise<Portfolio> {
   const db = getDb();
+  const balanceVal = initialBalance ?? DEFAULT_BALANCE;
 
   await db.transaction(async (tx) => {
     // 1. Reset balance
     await tx
       .update(portfolios)
       .set({
-        balance: DEFAULT_BALANCE.toFixed(2),
+        balance: balanceVal.toFixed(2),
+        initialBalance: balanceVal.toFixed(2),
         updatedAt: new Date(),
       })
       .where(eq(portfolios.userId, userId));
