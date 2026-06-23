@@ -194,6 +194,7 @@ export interface Position {
   currentPrice: number;
   unrealizedPnL: number;
   unrealizedPnLPercent: number;
+  realizedPnL: number;
   createdAt: string;
 }
 
@@ -226,10 +227,12 @@ export interface TradeParams {
   outcome: OutcomeLabel;
   side: TradeSide;
   shares: number;
-  /** The execution price (midpoint or user-specified). */
+  /** The execution price (midpoint or order book avg fill price). */
   price: number;
   idempotencyKey?: string;
   slippageApplied?: number;
+  /** Fee rate in basis points. If provided, overrides the default. */
+  feeRateBps?: number;
 }
 
 // -----------------------------------------------------------------------------

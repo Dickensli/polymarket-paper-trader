@@ -22,14 +22,18 @@ export async function runLeaderboardCalculation() {
       where: eq(positions.portfolioId, port.id)
     });
 
-    // Calculate total value
+    // Calculate total value including realized PnL from closed positions
     const balance = Number(port.balance);
     const initialBalance = Number(port.initialBalance);
 
     let positionsValue = 0;
+    let closedRealizedPnl = 0;
     for (const pos of userPositions) {
       if (pos.isOpen) {
         positionsValue += Number(pos.shares) * Number(pos.currentPrice);
+      } else {
+        // Include realized PnL from closed/resolved positions
+        closedRealizedPnl += Number(pos.realizedPnl) || 0;
       }
     }
 

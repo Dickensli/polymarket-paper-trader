@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { closeTradeSchema, idempotencyKeySchema } from '@/lib/validations';
 import { executeTrade, TradingError } from '@/lib/trading-engine';
-import { getMidpoint } from '@/lib/polymarket';
+import { getOrderBook, getFeeRate, getMidpoint } from '@/lib/polymarket';
+import { simulateSellFill } from '@/lib/orderbook-simulator';
 import { getDb } from '@/lib/db';
 import { paperTrades, positions, users } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -57,27 +58,59 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
 
-    let currentPrice: number;
-    try {
-      currentPrice = await getMidpoint(position.tokenId);
-    } catch (err) {
-      console.warn(`[Close Position] Failed to fetch live midpoint for token ${position.tokenId}, falling back to DB cached price:`, err);
-      currentPrice = Number(position.currentPrice);
-    }
+    const sharesToSell = Number(position.shares);
 
-    if (isNaN(currentPrice) || currentPrice < 0 || currentPrice > 1) {
-      return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
-    }
-
-    // Slippage calculation
+    // Check user settings for slippage mode
     const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
     const settings = (user?.settings as Record<string, any>) || {};
-    const slippageBps = settings.slippageEnabled ? (settings.slippageBps || 50) : 0;
-    const slippageMultiplier = 1 - (slippageBps / 10000); // For sells, execution price is lower
-    
-    const executionPrice = Math.max(0, currentPrice * slippageMultiplier);
+    const useOrderBookSim = settings.slippageEnabled !== false;
 
-    const sharesToSell = Number(position.shares);
+    let executionPrice: number;
+    let slippageApplied: number;
+
+    if (useOrderBookSim) {
+      try {
+        const [orderBook, feeRateBps] = await Promise.all([
+          getOrderBook(position.tokenId),
+          getFeeRate(position.tokenId),
+        ]);
+
+        const fillResult = simulateSellFill(orderBook, sharesToSell, feeRateBps, 'FAK');
+
+        if (!fillResult.success) {
+          // Fall back to midpoint if order book can't fill
+          const midPrice = await getMidpoint(position.tokenId).catch(() => Number(position.currentPrice));
+          executionPrice = midPrice;
+          slippageApplied = 0;
+        } else {
+          executionPrice = fillResult.avgPrice;
+          slippageApplied = fillResult.slippageBps / 10_000;
+        }
+      } catch (err) {
+        console.warn('[Close] Order book simulation failed, falling back to midpoint:', err);
+        let currentPrice: number;
+        try {
+          currentPrice = await getMidpoint(position.tokenId);
+        } catch {
+          currentPrice = Number(position.currentPrice);
+        }
+        executionPrice = currentPrice;
+        slippageApplied = 0;
+      }
+    } else {
+      let currentPrice: number;
+      try {
+        currentPrice = await getMidpoint(position.tokenId);
+      } catch {
+        currentPrice = Number(position.currentPrice);
+      }
+      executionPrice = currentPrice;
+      slippageApplied = 0;
+    }
+
+    if (isNaN(executionPrice) || executionPrice < 0 || executionPrice > 1) {
+      return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
+    }
 
     const trade = await executeTrade(userId, {
       marketId: position.marketId,
@@ -88,7 +121,7 @@ export async function POST(request: NextRequest) {
       shares: sharesToSell,
       price: executionPrice,
       idempotencyKey: idempParse.data,
-      slippageApplied: currentPrice - executionPrice,
+      slippageApplied,
     });
 
     return NextResponse.json({ data: trade }, { status: 201 });

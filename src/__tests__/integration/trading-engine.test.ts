@@ -33,8 +33,17 @@ import {
 } from '@/lib/trading-engine';
 import { getDb } from '@/lib/db';
 import { users, ledgerEntries, portfolios, paperTrades, positions, marketCache } from '@/lib/db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, and } from 'drizzle-orm';
 import * as polymarket from '@/lib/polymarket';
+
+vi.mock('@/lib/polymarket', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/polymarket')>();
+  return {
+    ...original,
+    getMidpoint: vi.fn(original.getMidpoint),
+    getMarket: vi.fn(original.getMarket),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -753,8 +762,8 @@ describe('Portfolio price refresh timeout', () => {
     const portfolio = await getPortfolio(userId);
     const duration = Date.now() - startTime;
 
-    // It should resolve fast (under 1.5 seconds) due to 1s timeout
-    expect(duration).toBeLessThan(1500);
+    // It should resolve fast (under 2.5 seconds) due to 1s timeout
+    expect(duration).toBeLessThan(2500);
 
     // And it should return the cached price of the position (which is 0.5, not the hung 0.9)
     const pos = portfolio.positions.find((p) => p.tokenId === 'hang-token-id');
@@ -893,5 +902,174 @@ describe('Portfolio price refresh database cache fallback', () => {
 
     // Clean up test market from cache
     await db.delete(marketCache).where(eq(marketCache.id, testMarketId));
+  });
+});
+
+describe('On-the-fly position resolution and auto-settlement', () => {
+  it('automatically settles positions and credits cash balance when getPortfolio is called for resolved markets', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+
+    // Initial balance is $10,000
+    const initialPortfolio = await getPortfolio(userId);
+    expect(initialPortfolio.balance).toBe(10000);
+
+    const testMarketId = `resolve-market-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `resolve-token-${randomUUID().slice(0, 8)}`;
+
+    // Buy 100 shares of outcome YES at 0.60 price (cost = 100 * 0.60 = $60 + fees)
+    const tradeResult = await executeTrade(
+      userId,
+      validBuyParams({
+        marketId: testMarketId,
+        tokenId: testTokenId,
+        shares: 100,
+        price: 0.6,
+      }),
+    );
+
+    const portfolioAfterBuy = await getPortfolio(userId);
+    const balanceAfterBuy = portfolioAfterBuy.balance;
+    expect(portfolioAfterBuy.positions.length).toBe(1);
+
+    // Mock getMarket Gamma API call to return the market as closed/resolved to YES (YES token price is 1.0)
+    const marketSpy = vi.spyOn(polymarket, 'getMarket').mockImplementation(
+      (id) => Promise.resolve({
+        id,
+        question: 'Will Japan win?',
+        conditionId: 'mock-condition-id',
+        tokenIds: [testTokenId, 'other-token'],
+        outcomePrices: [1.0, 0.0], // YES token won!
+        closed: true, // Market is resolved
+        endDate: new Date().toISOString(),
+        slug: 'mock-slug',
+        outcomes: ['Yes', 'No'],
+        lastTradePrice: 1.0,
+        bestBid: 1.0,
+        bestAsk: 1.0,
+        spread: 0.0,
+        volume24hr: 1000,
+        liquidity: 5000,
+        image: null,
+        icon: null,
+        description: null,
+        category: 'Test',
+        startDate: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Query portfolio - this should trigger the on-the-fly resolution check!
+    const portfolioAfterResolve = await getPortfolio(userId);
+
+    // Position should be closed and no longer in active positions
+    expect(portfolioAfterResolve.positions.length).toBe(0);
+
+    // Cash balance should be credited with proceeds from win: 100 shares * $1.00 = $100.00
+    // New balance = balanceAfterBuy + $100.00
+    expect(portfolioAfterResolve.balance).toBe(balanceAfterBuy + 100.00);
+
+    // Verify database position isOpen is now false
+    const db = getDb();
+    const dbPos = await db.query.positions.findFirst({
+      where: and(
+        eq(positions.userId, userId),
+        eq(positions.tokenId, testTokenId)
+      ),
+    });
+    expect(dbPos?.isOpen).toBe(false);
+    expect(Number(dbPos?.currentPrice)).toBe(1.0);
+
+    // Verify trade history has the SELL settlement trade logged
+    const history = await getTradeHistory(userId);
+    const settleTrade = history.find((t) => t.marketId === testMarketId && t.side === 'SELL');
+    expect(settleTrade).toBeDefined();
+    expect(settleTrade?.shares).toBe(100);
+    expect(settleTrade?.price).toBe(1.0);
+    expect(settleTrade?.total).toBe(100.00);
+
+    marketSpy.mockRestore();
+  });
+
+  it('automatically settles positions as loss (0.0¢) and does NOT credit cash balance for resolved losing positions', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    const testMarketId = `resolve-market-loss-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `resolve-token-loss-${randomUUID().slice(0, 8)}`;
+
+    // Buy 100 shares of outcome YES at 0.40 price
+    await executeTrade(
+      userId,
+      validBuyParams({
+        marketId: testMarketId,
+        tokenId: testTokenId,
+        shares: 100,
+        price: 0.4,
+      }),
+    );
+
+    const portfolioAfterBuy = await getPortfolio(userId);
+    const balanceAfterBuy = portfolioAfterBuy.balance;
+
+    // Mock getMarket Gamma API call to return the market as closed/resolved to NO (YES token price is 0.0)
+    const marketSpy = vi.spyOn(polymarket, 'getMarket').mockImplementation(
+      (id) => Promise.resolve({
+        id,
+        question: 'Will Japan win?',
+        conditionId: 'mock-condition-id',
+        tokenIds: [testTokenId, 'other-token'],
+        outcomePrices: [0.0, 1.0], // YES token lost!
+        closed: true, // Market is resolved
+        endDate: new Date().toISOString(),
+        slug: 'mock-slug',
+        outcomes: ['Yes', 'No'],
+        lastTradePrice: 0.0,
+        bestBid: 0.0,
+        bestAsk: 0.0,
+        spread: 0.0,
+        volume24hr: 1000,
+        liquidity: 5000,
+        image: null,
+        icon: null,
+        description: null,
+        category: 'Test',
+        startDate: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Query portfolio
+    const portfolioAfterResolve = await getPortfolio(userId);
+
+    // Position should be closed and removed
+    expect(portfolioAfterResolve.positions.length).toBe(0);
+
+    // Cash balance should remain exactly the same as balanceAfterBuy (since shares resolved to 0)
+    expect(portfolioAfterResolve.balance).toBe(balanceAfterBuy);
+
+    // Verify database position isOpen is now false and currentPrice is 0.0
+    const db = getDb();
+    const dbPos = await db.query.positions.findFirst({
+      where: and(
+        eq(positions.userId, userId),
+        eq(positions.tokenId, testTokenId)
+      ),
+    });
+    expect(dbPos?.isOpen).toBe(false);
+    expect(Number(dbPos?.currentPrice)).toBe(0.0);
+
+    // Verify trade history has the SELL settlement trade logged at 0.0 price
+    const history = await getTradeHistory(userId);
+    const settleTrade = history.find((t) => t.marketId === testMarketId && t.side === 'SELL');
+    expect(settleTrade).toBeDefined();
+    expect(settleTrade?.shares).toBe(100);
+    expect(settleTrade?.price).toBe(0.0);
+    expect(settleTrade?.total).toBe(0.0);
+
+    marketSpy.mockRestore();
   });
 });

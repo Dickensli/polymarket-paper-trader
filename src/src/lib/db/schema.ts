@@ -174,6 +174,8 @@ export const positions = pgTable(
     avgEntryPrice: decimal('avg_entry_price', { precision: 18, scale: 6 }).notNull(),
     currentPrice: decimal('current_price', { precision: 18, scale: 6 }).notNull().default('0.5'),
     isOpen: boolean('is_open').notNull().default(true),
+    realizedPnl: decimal('realized_pnl', { precision: 18, scale: 6 }).notNull().default('0.000000'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -293,4 +295,40 @@ export const leaderboardSnapshots = pgTable(
     index('leaderboard_user_idx').on(table.userId),
     index('leaderboard_rank_idx').on(table.rank),
   ]
+);
+
+// ─── Limit Orders ───────────────────────────────────────────
+
+/** Pending / filled / cancelled limit orders for paper trading */
+export const limitOrders = pgTable(
+  'limit_orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    portfolioId: uuid('portfolio_id')
+      .notNull()
+      .references(() => portfolios.id, { onDelete: 'cascade' }),
+    marketId: varchar('market_id', { length: 255 }).notNull(),
+    marketQuestion: text('market_question'),
+    tokenId: varchar('token_id', { length: 255 }).notNull(),
+    outcome: outcomeEnum('outcome').notNull(),
+    side: tradeActionEnum('side').notNull(),
+    amount: decimal('amount', { precision: 18, scale: 6 }).notNull(),
+    limitPrice: decimal('limit_price', { precision: 18, scale: 6 }).notNull(),
+    orderType: varchar('order_type', { length: 20 }).notNull().default('GTC'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    status: varchar('status', { length: 20 }).notNull().default('PENDING'),
+    filledAt: timestamp('filled_at', { withTimezone: true }),
+    filledTradeId: uuid('filled_trade_id')
+      .references(() => paperTrades.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('limit_orders_user_idx').on(table.userId),
+    index('limit_orders_status_idx').on(table.status),
+    index('limit_orders_market_idx').on(table.marketId),
+  ],
 );

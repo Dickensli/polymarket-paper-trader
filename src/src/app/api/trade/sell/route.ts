@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { sellTradeSchema, idempotencyKeySchema } from '@/lib/validations';
 import { executeTrade, TradingError } from '@/lib/trading-engine';
-import { getMidpoint } from '@/lib/polymarket';
+import { getOrderBook, getFeeRate, getMidpoint } from '@/lib/polymarket';
+import { simulateSellFill } from '@/lib/orderbook-simulator';
 import { getDb } from '@/lib/db';
 import { paperTrades, positions, users } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -57,23 +58,59 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Position not found' }, { status: 404 });
     }
 
-    const currentPrice = await getMidpoint(position.tokenId);
-    if (currentPrice <= 0 || currentPrice >= 1) {
-      return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
-    }
+    const sharesToSell = order.quantity === 'ALL' ? Number(position.shares) : order.quantity;
 
-    // Slippage calculation
+    // Check user settings for slippage mode
     const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
     const settings = (user?.settings as Record<string, any>) || {};
-    const slippageBps = settings.slippageEnabled ? (settings.slippageBps || 50) : 0;
-    const slippageMultiplier = 1 - (slippageBps / 10000); // For sells, execution price is lower
-    
-    const executionPrice = currentPrice * slippageMultiplier;
-    if (executionPrice <= 0.0) {
-      return NextResponse.json({ error: 'Price too low with slippage' }, { status: 400 });
+    const useOrderBookSim = settings.slippageEnabled !== false;
+
+    let executionPrice: number;
+    let slippageApplied: number;
+
+    if (useOrderBookSim) {
+      // Order book simulation: walk the real bid side level-by-level
+      try {
+        const [orderBook, feeRateBps] = await Promise.all([
+          getOrderBook(position.tokenId),
+          getFeeRate(position.tokenId),
+        ]);
+
+        const fillResult = simulateSellFill(orderBook, sharesToSell, feeRateBps, 'FAK');
+
+        if (!fillResult.success) {
+          return NextResponse.json({
+            error: 'Insufficient liquidity to fill sell order. Try selling fewer shares.',
+            details: { sharesRequested: sharesToSell }
+          }, { status: 400 });
+        }
+
+        executionPrice = fillResult.avgPrice;
+        slippageApplied = fillResult.slippageBps / 10_000;
+      } catch (err) {
+        // If order book fetch fails, fall back to midpoint + flat slippage
+        console.warn('[Sell] Order book simulation failed, falling back to midpoint:', err);
+        const currentPrice = await getMidpoint(position.tokenId);
+        if (currentPrice <= 0 || currentPrice >= 1) {
+          return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
+        }
+        const slippageBps = settings.slippageBps || 50;
+        executionPrice = currentPrice * (1 - slippageBps / 10000);
+        slippageApplied = currentPrice - executionPrice;
+      }
+    } else {
+      // Legacy flat mode
+      const currentPrice = await getMidpoint(position.tokenId);
+      if (currentPrice <= 0 || currentPrice >= 1) {
+        return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
+      }
+      executionPrice = currentPrice;
+      slippageApplied = 0;
     }
 
-    const sharesToSell = order.quantity === 'ALL' ? Number(position.shares) : order.quantity;
+    if (executionPrice <= 0.0) {
+      return NextResponse.json({ error: 'Price too low after slippage' }, { status: 400 });
+    }
 
     const trade = await executeTrade(userId, {
       marketId: position.marketId,
@@ -84,7 +121,7 @@ export async function POST(request: NextRequest) {
       shares: sharesToSell,
       price: executionPrice,
       idempotencyKey: idempParse.data,
-      slippageApplied: currentPrice - executionPrice,
+      slippageApplied,
     });
 
     return NextResponse.json({ data: trade }, { status: 201 });

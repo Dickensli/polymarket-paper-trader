@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { buyTradeSchema, idempotencyKeySchema } from '@/lib/validations';
 import { executeTrade, TradingError } from '@/lib/trading-engine';
-import { getMarket, getMidpoint } from '@/lib/polymarket';
+import { getMarket, getOrderBook, getFeeRate, getMidpoint } from '@/lib/polymarket';
+import { simulateBuyFill } from '@/lib/orderbook-simulator';
 import { getDb } from '@/lib/db';
 import { paperTrades, users } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -56,24 +57,61 @@ export async function POST(request: NextRequest) {
        return NextResponse.json({ error: 'Token ID not found' }, { status: 400 });
     }
 
-    const currentPrice = await getMidpoint(tokenId);
-    if (currentPrice <= 0 || currentPrice >= 1) {
-      return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
-    }
-
-    // Slippage calculation
+    // Check user settings for slippage mode
     const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
     const settings = (user?.settings as Record<string, any>) || {};
-    const slippageBps = settings.slippageEnabled ? (settings.slippageBps || 50) : 0;
-    const slippageMultiplier = 1 + (slippageBps / 10000);
-    
-    // For buys, the execution price is higher
-    const executionPrice = currentPrice * slippageMultiplier;
-    if (executionPrice >= 1.0) {
-      return NextResponse.json({ error: 'Price too high with slippage' }, { status: 400 });
-    }
+    const useOrderBookSim = settings.slippageEnabled !== false; // Default to order book sim
 
-    const shares = order.amount / executionPrice;
+    let executionPrice: number;
+    let shares: number;
+    let slippageApplied: number;
+
+    if (useOrderBookSim) {
+      // Order book simulation: walk the real ask side level-by-level
+      try {
+        const [orderBook, feeRateBps] = await Promise.all([
+          getOrderBook(tokenId),
+          getFeeRate(tokenId),
+        ]);
+
+        const fillResult = simulateBuyFill(orderBook, order.amount, feeRateBps, 'FAK');
+
+        if (!fillResult.success) {
+          return NextResponse.json({
+            error: 'Insufficient liquidity to fill order. Try a smaller amount.',
+            details: { amountRequested: order.amount }
+          }, { status: 400 });
+        }
+
+        executionPrice = fillResult.avgPrice;
+        shares = fillResult.totalShares;
+        slippageApplied = fillResult.slippageBps / 10_000; // Convert BPS to decimal
+
+        if (executionPrice >= 1.0) {
+          return NextResponse.json({ error: 'Price too high after order book fill' }, { status: 400 });
+        }
+      } catch (err) {
+        // If order book fetch fails, fall back to midpoint + flat slippage
+        console.warn('[Buy] Order book simulation failed, falling back to midpoint:', err);
+        const currentPrice = await getMidpoint(tokenId);
+        if (currentPrice <= 0 || currentPrice >= 1) {
+          return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
+        }
+        const slippageBps = settings.slippageBps || 50;
+        executionPrice = currentPrice * (1 + slippageBps / 10000);
+        shares = order.amount / executionPrice;
+        slippageApplied = executionPrice - currentPrice;
+      }
+    } else {
+      // Legacy flat slippage mode (when user disables order book sim)
+      const currentPrice = await getMidpoint(tokenId);
+      if (currentPrice <= 0 || currentPrice >= 1) {
+        return NextResponse.json({ error: 'Invalid market price' }, { status: 400 });
+      }
+      executionPrice = currentPrice;
+      shares = order.amount / executionPrice;
+      slippageApplied = 0;
+    }
 
     const trade = await executeTrade(userId, {
       marketId: market.id,
@@ -84,7 +122,7 @@ export async function POST(request: NextRequest) {
       shares,
       price: executionPrice,
       idempotencyKey: idempParse.data,
-      slippageApplied: executionPrice - currentPrice,
+      slippageApplied,
     });
 
     return NextResponse.json({ data: trade }, { status: 201 });

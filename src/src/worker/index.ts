@@ -1,6 +1,7 @@
 import { startPriceRefreshJob } from './jobs/price-refresh';
 import { startResolutionJob } from './jobs/resolution-handler';
 import { startLeaderboardJob } from './jobs/leaderboard';
+import { startOrderCheckerJob } from './jobs/order-checker';
 
 /**
  * Entry point for the background worker process.
@@ -17,6 +18,9 @@ export function startWorker() {
   startLeaderboardJob();
   console.log('[Worker] Registered Leaderboard Calculation Job (Every 15m)');
 
+  startOrderCheckerJob();
+  console.log('[Worker] Registered Order Checker Job (Every 60s)');
+
   console.log('[Worker] All jobs registered and running.');
 }
 
@@ -24,3 +28,4 @@ export function startWorker() {
 if (require.main === module) {
   startWorker();
 }
+

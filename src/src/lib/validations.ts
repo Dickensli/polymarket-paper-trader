@@ -34,7 +34,20 @@ export const marketQuerySchema = z.object({
   search: z.string().optional(),
 });
 
+export const createLimitOrderSchema = z.object({
+  marketId: z.string().min(1).max(255),
+  marketQuestion: z.string().optional(),
+  tokenId: z.string().min(1).max(255),
+  outcome: z.enum(['YES', 'NO']),
+  side: z.enum(['BUY', 'SELL']),
+  amount: z.number().positive().max(10000),
+  limitPrice: z.number().gt(0).lt(1),
+  orderType: z.enum(['GTC', 'GTD']).default('GTC'),
+  expiresAt: z.string().datetime().optional(),
+});
+
 export type BuyTradeInput = z.infer<typeof buyTradeSchema>;
 export type SellTradeInput = z.infer<typeof sellTradeSchema>;
 export type CloseTradeInput = z.infer<typeof closeTradeSchema>;
 export type MarketQueryInput = z.infer<typeof marketQuerySchema>;
+export type CreateLimitOrderInput = z.infer<typeof createLimitOrderSchema>;

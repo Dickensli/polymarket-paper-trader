@@ -433,3 +433,48 @@ export async function getPriceHistory(
     price: p.p,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// CLOB API — Fee Rate
+// ---------------------------------------------------------------------------
+
+/** Default fee rate in basis points if the API call fails. */
+const DEFAULT_FEE_RATE_BPS = 200; // 2%
+
+/** In-memory cache for fee rates (token → { rate, expiry }) */
+const feeRateCache = new Map<string, { rate: number; expiry: number }>();
+
+/**
+ * Fetch the trading fee rate for a token from the CLOB API.
+ *
+ * Polymarket charges a maker/taker fee that varies. The CLOB API
+ * exposes the current rate. We cache for 5 minutes to avoid
+ * excessive API calls.
+ *
+ * @param tokenId - The CLOB token ID.
+ * @returns Fee rate in basis points (e.g. 200 = 2%).
+ */
+export async function getFeeRate(tokenId: string): Promise<number> {
+  // Check cache first
+  const cached = feeRateCache.get(tokenId);
+  if (cached && cached.expiry > Date.now()) {
+    return cached.rate;
+  }
+
+  try {
+    const url = `${CLOB_API_BASE}/fee-rate?token_id=${encodeURIComponent(tokenId)}`;
+    const raw = await fetchJson<{ fee_rate: string }>(url);
+    // The API returns a decimal string like "0.02" (= 200 bps)
+    const rateDecimal = Number(raw.fee_rate);
+    const rateBps = Math.round(rateDecimal * 10_000);
+    const validRate = Number.isFinite(rateBps) && rateBps >= 0 ? rateBps : DEFAULT_FEE_RATE_BPS;
+
+    // Cache for 5 minutes
+    feeRateCache.set(tokenId, { rate: validRate, expiry: Date.now() + 5 * 60 * 1000 });
+    return validRate;
+  } catch {
+    // API might not support this endpoint for all tokens — fall back gracefully
+    return DEFAULT_FEE_RATE_BPS;
+  }
+}
+

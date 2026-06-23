@@ -16,6 +16,7 @@ import type {
 } from '@/lib/types';
 import { Redis } from '@upstash/redis';
 import { getMidpoint, getMarket } from '@/lib/polymarket';
+import { runResolutionCheckForUser } from '@/worker/jobs/resolution-handler';
 
 // Constants
 const DEFAULT_BALANCE = 10000;
@@ -78,6 +79,13 @@ function calculateFee(price: number, shares: number, feeRateBps = 0): number {
  * Auto-creates a portfolio if it does not exist.
  */
 export async function getPortfolio(userId: string): Promise<Portfolio> {
+  // 0. Settle resolved positions on-the-fly to ensure cash balance & positions list are current
+  try {
+    await runResolutionCheckForUser(userId);
+  } catch (err) {
+    console.error(`[getPortfolio] On-the-fly resolution check failed for user ${userId}:`, err);
+  }
+
   const db = getDb();
 
   // 1. Get or create portfolio
@@ -242,6 +250,7 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
       currentPrice,
       unrealizedPnL,
       unrealizedPnLPercent,
+      realizedPnL: Number(pos.realizedPnl) || 0,
       createdAt: pos.createdAt.toISOString(),
     };
   });
@@ -253,8 +262,9 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
   );
   const totalValue = roundTo(balance + positionsValue, 2);
 
-  const totalPnL = roundTo(totalValue - DEFAULT_BALANCE, 2);
-  const totalPnLPercent = roundTo((totalPnL / DEFAULT_BALANCE) * 100, 2);
+  const initialBalance = Number(userPortfolio.initialBalance) || DEFAULT_BALANCE;
+  const totalPnL = roundTo(totalValue - initialBalance, 2);
+  const totalPnLPercent = initialBalance > 0 ? roundTo((totalPnL / initialBalance) * 100, 2) : 0;
 
   // 4. Fetch trade history
   const dbTrades = await db.query.paperTrades.findMany({
@@ -293,7 +303,7 @@ export async function executeTrade(
   userId: string,
   params: TradeParams,
 ): Promise<Trade> {
-  const { marketId, marketQuestion, tokenId, outcome, side, shares, price, idempotencyKey, slippageApplied } =
+  const { marketId, marketQuestion, tokenId, outcome, side, shares, price, idempotencyKey, slippageApplied, feeRateBps } =
     params;
 
   // Validation
@@ -318,8 +328,31 @@ export async function executeTrade(
     );
   }
 
+  // P0 FIX: Check if market is closed/resolved before executing any trade.
+  // When a market resolves, positions should be settled via the resolution handler,
+  // not through normal buy/sell at stale midpoint prices.
+  // Skip this check for internal resolution calls (identified by idempotencyKey prefix).
+  const isResolutionCall = idempotencyKey?.startsWith('resolve_');
+  if (!isResolutionCall) {
+    try {
+      const marketData = await getMarket(marketId);
+      if (marketData.closed) {
+        throw new TradingError(
+          `Market is closed/resolved. Positions are settled automatically.`,
+          'INVALID_TRADE',
+        );
+      }
+    } catch (err) {
+      // If it's already a TradingError (market closed), re-throw it
+      if (err instanceof TradingError) throw err;
+      // For network errors fetching market data, log but allow trade to proceed
+      // (the market data might be temporarily unavailable)
+      console.warn(`[executeTrade] Could not verify market status for ${marketId}:`, err);
+    }
+  }
+
   const subtotal = roundTo(shares * price, 2);
-  const fee = calculateFee(price, shares);
+  const fee = calculateFee(price, shares, feeRateBps);
   const total = roundTo(subtotal + fee, 2);
 
   if (total < MIN_TRADE_AMOUNT && side === 'BUY') {
@@ -396,23 +429,57 @@ export async function executeTrade(
           })
           .where(eq(positions.id, existingPosition.id));
       } else {
-        const [insertedPos] = await tx
-          .insert(positions)
-          .values({
-            userId,
-            portfolioId: userPortfolio.id,
-            marketId,
-            marketQuestion,
-            tokenId,
-            outcome,
-            shares: shares.toFixed(6),
-            avgEntryPrice: price.toFixed(6),
-            currentPrice: price.toFixed(6),
-            isOpen: true,
-          })
-          .returning();
-        
-        positionId = insertedPos.id;
+        // P0 FIX: Check for a previously closed position with same key.
+        // The DB has a unique index on (userId, marketId, outcome), so we
+        // must reopen the existing closed row instead of inserting a new one.
+        const [closedPosition] = await tx
+          .select()
+          .from(positions)
+          .where(
+            and(
+              eq(positions.userId, userId),
+              eq(positions.marketId, marketId),
+              eq(positions.outcome, outcome),
+              eq(positions.isOpen, false),
+            ),
+          )
+          .for('update');
+
+        if (closedPosition) {
+          // Reopen the closed position with fresh values
+          await tx
+            .update(positions)
+            .set({
+              shares: shares.toFixed(6),
+              avgEntryPrice: price.toFixed(6),
+              currentPrice: price.toFixed(6),
+              isOpen: true,
+              tokenId,
+              marketQuestion,
+              portfolioId: userPortfolio.id,
+              updatedAt: new Date(),
+            })
+            .where(eq(positions.id, closedPosition.id));
+          positionId = closedPosition.id;
+        } else {
+          const [insertedPos] = await tx
+            .insert(positions)
+            .values({
+              userId,
+              portfolioId: userPortfolio.id,
+              marketId,
+              marketQuestion,
+              tokenId,
+              outcome,
+              shares: shares.toFixed(6),
+              avgEntryPrice: price.toFixed(6),
+              currentPrice: price.toFixed(6),
+              isOpen: true,
+            })
+            .returning();
+          
+          positionId = insertedPos.id;
+        }
       }
 
       // Insert trade record
@@ -508,6 +575,12 @@ export async function executeTrade(
         .set({ balance: newBalance.toFixed(2), updatedAt: new Date() })
         .where(eq(portfolios.userId, userId));
 
+      // P1 FIX: Track realized PnL on sell
+      const avgEntry = Number(existingPosition.avgEntryPrice);
+      const sellPnl = roundTo((price - avgEntry) * sellShares, 6);
+      const prevRealizedPnl = Number(existingPosition.realizedPnl) || 0;
+      const newRealizedPnl = roundTo(prevRealizedPnl + sellPnl, 6);
+
       // Update or close position
       const remainingShares = roundTo(heldShares - sellShares, 6);
       if (remainingShares <= 0.001) {
@@ -516,6 +589,7 @@ export async function executeTrade(
           .set({
             shares: '0.000000',
             isOpen: false,
+            realizedPnl: newRealizedPnl.toFixed(6),
             updatedAt: new Date(),
           })
           .where(eq(positions.id, existingPosition.id));
@@ -525,6 +599,7 @@ export async function executeTrade(
           .set({
             shares: remainingShares.toFixed(6),
             currentPrice: price.toFixed(6),
+            realizedPnl: newRealizedPnl.toFixed(6),
             updatedAt: new Date(),
           })
           .where(eq(positions.id, existingPosition.id));
