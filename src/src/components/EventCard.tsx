@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import type { PolymarketEvent, Market } from '@/hooks/useEvents';
 import { useLivePrices } from '@/hooks/useLivePrices';
+import { formatProbability } from '@/lib/utils';
 
 interface EventCardProps {
   event: PolymarketEvent;
@@ -53,8 +54,8 @@ export default function EventCard({ event, onTrade }: EventCardProps) {
           const yesPrice = (yesTokenId ? livePrices[yesTokenId] : undefined) ?? (market.outcomePrices?.[0] || 0.5);
           const noPrice = (noTokenId ? livePrices[noTokenId] : undefined) ?? (market.outcomePrices?.[1] || 0.5);
 
-          const yesProb = Math.round(yesPrice * 100);
-          const noProb = Math.round(noPrice * 100);
+          const yesProb = formatProbability(yesPrice);
+          const noProb = formatProbability(noPrice);
 
           return (
             <div key={market.id} className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:bg-white/[0.02] transition-colors">

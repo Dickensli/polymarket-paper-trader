@@ -1,5 +1,7 @@
 'use client';
 
+import { formatProbability } from '@/lib/utils';
+
 interface PriceBarProps {
   yesPrice: number;
   noPrice: number;
@@ -13,8 +15,10 @@ export default function PriceBar({
   showLabels = true,
   height = 'md',
 }: PriceBarProps) {
-  const yesPct = Math.round(yesPrice * 100);
-  const noPct = Math.round(noPrice * 100);
+  const yesPct = yesPrice * 100;
+  const noPct = noPrice * 100;
+  const yesDisplay = formatProbability(yesPrice);
+  const noDisplay = formatProbability(noPrice);
   const barH = { sm: 'h-1.5', md: 'h-2.5', lg: 'h-4' };
 
   return (
@@ -23,10 +27,10 @@ export default function PriceBar({
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs font-semibold text-profit-light flex items-center gap-1">
             YES
-            <span className="text-profit font-bold">{yesPct}¢</span>
+            <span className="text-profit font-bold">{yesDisplay}¢</span>
           </span>
           <span className="text-xs font-semibold text-loss-light flex items-center gap-1">
-            <span className="text-loss font-bold">{noPct}¢</span>
+            <span className="text-loss font-bold">{noDisplay}¢</span>
             NO
           </span>
         </div>

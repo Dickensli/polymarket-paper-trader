@@ -10,6 +10,7 @@ import PriceBar from '@/components/PriceBar';
 import TradeModal from '@/components/TradeModal';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import PriceChart from '@/components/PriceChart';
+import { formatProbability } from '@/lib/utils';
 
 export default function MarketDetailPage() {
   const params = useParams();
@@ -56,8 +57,8 @@ export default function MarketDetailPage() {
 
   const yesPrice = market.midpoints?.YES ?? market.outcomePrices[0] ?? 0.5;
   const noPrice = market.midpoints?.NO ?? market.outcomePrices[1] ?? 0.5;
-  const yesPct = Math.round(yesPrice * 100);
-  const noPct = Math.round(noPrice * 100);
+  const yesPct = formatProbability(yesPrice);
+  const noPct = formatProbability(noPrice);
 
   return (
     <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-6xl mx-auto">
