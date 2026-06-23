@@ -106,6 +106,14 @@ export const auth = async (...args: any[]) => {
             id: targetUserId,
             email: strategyEmail,
             name: strategyName,
+            settings: {
+              strategyName: agentAccount,
+              defaultTradeSize: 100,
+              slippageEnabled: false,
+              slippageBps: 50,
+              theme: "system",
+              notifications: true,
+            }
           });
         }
       }
