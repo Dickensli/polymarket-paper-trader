@@ -81,10 +81,10 @@ export const handlers = {
         });
       }
     }
-    return originalHandlers.GET(req, ctx);
+    return originalHandlers.GET(req);
   },
   POST: async (req: any, ctx: any) => {
-    return originalHandlers.POST(req, ctx);
+    return originalHandlers.POST(req);
   }
 };
 
