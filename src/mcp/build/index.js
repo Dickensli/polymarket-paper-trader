@@ -35,23 +35,30 @@ async function resolveMarketAndToken(slugOrId, outcome) {
         market = await res.json();
     }
     else {
-        // Try to search for the slug by query
-        const searchRes = await fetch(`${GAMMA_API_URL}/events?closed=false&limit=1&query=${encodeURIComponent(slugOrId)}`);
+        // Try to search for the slug by query using public-search API
+        const searchRes = await fetch(`${GAMMA_API_URL}/public-search?q=${encodeURIComponent(slugOrId)}`);
         if (searchRes.ok) {
-            const events = await searchRes.json();
-            if (events[0] && events[0].markets) {
-                market = events[0].markets.find((m) => {
-                    let tokens = [];
-                    try {
-                        tokens = typeof m.clobTokenIds === 'string' ? JSON.parse(m.clobTokenIds) : (m.clobTokenIds || []);
+            const searchData = await searchRes.json();
+            const events = searchData.events || [];
+            for (const event of events) {
+                if (event.markets) {
+                    const found = event.markets.find((m) => {
+                        let tokens = [];
+                        try {
+                            tokens = typeof m.clobTokenIds === 'string' ? JSON.parse(m.clobTokenIds) : (m.clobTokenIds || []);
+                        }
+                        catch { }
+                        return (m.slug === slugOrId ||
+                            m.id === slugOrId ||
+                            m.conditionId === slugOrId ||
+                            m.questionID === slugOrId ||
+                            tokens.includes(slugOrId));
+                    });
+                    if (found) {
+                        market = found;
+                        break;
                     }
-                    catch { }
-                    return (m.slug === slugOrId ||
-                        m.id === slugOrId ||
-                        m.conditionId === slugOrId ||
-                        m.questionID === slugOrId ||
-                        tokens.includes(slugOrId));
-                });
+                }
             }
         }
     }
