@@ -26,42 +26,42 @@ function generateIdempotencyKey() {
         return v.toString(16);
     });
 }
-// Helper to resolve slug_or_id and outcome into conditionId, tokenId, YES/NO outcome
-async function resolveMarketAndToken(slugOrId, outcome) {
+async function resolveMarket(slugOrId) {
     // Try fetching as market ID first
     let res = await fetch(`${GAMMA_API_URL}/markets/${encodeURIComponent(slugOrId)}`);
-    let market;
     if (res.ok) {
-        market = await res.json();
+        return await res.json();
     }
-    else {
-        // Try to search for the slug by query using public-search API
-        const searchRes = await fetch(`${GAMMA_API_URL}/public-search?q=${encodeURIComponent(slugOrId)}`);
-        if (searchRes.ok) {
-            const searchData = await searchRes.json();
-            const events = searchData.events || [];
-            for (const event of events) {
-                if (event.markets) {
-                    const found = event.markets.find((m) => {
-                        let tokens = [];
-                        try {
-                            tokens = typeof m.clobTokenIds === 'string' ? JSON.parse(m.clobTokenIds) : (m.clobTokenIds || []);
-                        }
-                        catch { }
-                        return (m.slug === slugOrId ||
-                            m.id === slugOrId ||
-                            m.conditionId === slugOrId ||
-                            m.questionID === slugOrId ||
-                            tokens.includes(slugOrId));
-                    });
-                    if (found) {
-                        market = found;
-                        break;
+    // Try to search for the slug by query using public-search API
+    const searchRes = await fetch(`${GAMMA_API_URL}/public-search?q=${encodeURIComponent(slugOrId)}`);
+    if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        const events = searchData.events || [];
+        for (const event of events) {
+            if (event.markets) {
+                const found = event.markets.find((m) => {
+                    let tokens = [];
+                    try {
+                        tokens = typeof m.clobTokenIds === 'string' ? JSON.parse(m.clobTokenIds) : (m.clobTokenIds || []);
                     }
+                    catch { }
+                    return (m.slug === slugOrId ||
+                        m.id === slugOrId ||
+                        m.conditionId === slugOrId ||
+                        m.questionID === slugOrId ||
+                        tokens.includes(slugOrId));
+                });
+                if (found) {
+                    return found;
                 }
             }
         }
     }
+    return null;
+}
+// Helper to resolve slug_or_id and outcome into conditionId, tokenId, YES/NO outcome
+async function resolveMarketAndToken(slugOrId, outcome) {
+    const market = await resolveMarket(slugOrId);
     if (!market) {
         throw new Error(`Market not found: ${slugOrId}`);
     }
@@ -550,10 +550,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case "search_markets": {
                 const limit = Math.min(args?.limit || 10, 50);
                 const query = encodeURIComponent(args?.query);
-                const res = await fetch(`${GAMMA_API_URL}/events?closed=false&limit=${limit}&order=volume24hr&ascending=false&query=${query}`);
+                const res = await fetch(`${GAMMA_API_URL}/public-search?q=${query}`);
                 if (!res.ok)
                     throw new Error(`Gamma API returned ${res.status}`);
-                const events = await res.json();
+                const searchData = await res.json();
+                const events = searchData.events || [];
                 const markets = [];
                 for (const event of events.slice(0, limit)) {
                     if (event.markets) {
@@ -625,38 +626,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             case "get_market": {
                 const slugOrId = args?.slug_or_id;
-                const res = await fetch(`${GAMMA_API_URL}/markets/${encodeURIComponent(slugOrId)}`);
-                if (!res.ok) {
-                    // Try fetching by search
-                    const searchRes = await fetch(`${GAMMA_API_URL}/events?closed=false&limit=1&query=${encodeURIComponent(slugOrId)}`);
-                    if (searchRes.ok) {
-                        const events = await searchRes.json();
-                        const m = events[0]?.markets?.find((x) => x.slug === slugOrId || x.id === slugOrId);
-                        if (m) {
-                            return {
-                                content: [{
-                                        type: "text",
-                                        text: JSON.stringify({
-                                            ok: true,
-                                            data: {
-                                                slug: m.slug,
-                                                question: m.question,
-                                                condition_id: m.conditionId,
-                                                outcomes: typeof m.outcomes === 'string' ? JSON.parse(m.outcomes) : m.outcomes,
-                                                outcome_prices: typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices,
-                                                volume: m.volume24hr,
-                                                liquidity: m.liquidityClob,
-                                                closed: m.closed,
-                                                end_date: m.endDate,
-                                            }
-                                        }, null, 2)
-                                    }]
-                            };
-                        }
-                    }
+                const m = await resolveMarket(slugOrId);
+                if (!m) {
                     throw new Error(`Market not found: ${slugOrId}`);
                 }
-                const m = await res.json();
                 return {
                     content: [{
                             type: "text",
@@ -668,8 +641,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                                     condition_id: m.conditionId,
                                     outcomes: typeof m.outcomes === 'string' ? JSON.parse(m.outcomes) : m.outcomes,
                                     outcome_prices: typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices,
-                                    volume: m.volume24hr,
-                                    liquidity: m.liquidityClob,
+                                    volume: m.volume24hr || m.volume,
+                                    liquidity: m.liquidityClob || m.liquidity,
                                     closed: m.closed,
                                     end_date: m.endDate,
                                 }
