@@ -9,18 +9,13 @@ type HistoryPoint = {
   [strategyName: string]: any; // portfolioValue, pnl, rank
 };
 
-const STRATEGY_COLORS: Record<string, string> = {
-  'Dickens Li': '#3b82f6',                        // Bright Blue for main user
-  'dickens_smith (conservative_arb)': '#10b981', // Emerald Green for weather strategy
-  'dickens_smith (dickensli)': '#a855f7',        // Purple for second strategy
-  unknown: '#94a3b8'
-};
+const DEFAULT_COLORS = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
 
-const STRATEGY_LABELS: Record<string, string> = {
-  'Dickens Li': 'Dickens Li',
-  'dickens_smith (conservative_arb)': 'Dickens Smith (Conservative)',
-  'dickens_smith (dickensli)': 'Dickens Smith (Dickensli)',
-};
+function getStrategyColor(name: string, index: number): string {
+  if (name === 'Dickens Li') return '#3b82f6';
+  return DEFAULT_COLORS[index % DEFAULT_COLORS.length] || '#94a3b8';
+}
+
 
 export default function AnalyticsClient() {
   const [data, setData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
@@ -175,16 +170,16 @@ export default function AnalyticsClient() {
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-3xl font-extrabold tracking-tight font-mono">
                 ${(selectedMetric === 'value' 
-                  ? Number(activePoint[activeStrategy || 'conservative_arb'] || 10000)
-                  : Number(activePoint[`${activeStrategy || 'conservative_arb'}_pnl`] || 0)
+                  ? Number(activePoint[activeStrategy || strategies[0]] || 10000)
+                  : Number(activePoint[`${activeStrategy || strategies[0]}_pnl`] || 0)
                 ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                (activePoint[`${activeStrategy || 'conservative_arb'}_pnl`] || 0) >= 0
+                (activePoint[`${activeStrategy || strategies[0]}_pnl`] || 0) >= 0
                   ? 'bg-profit/10 text-profit'
                   : 'bg-loss/10 text-loss'
               }`}>
-                {activeStrategy ? STRATEGY_LABELS[activeStrategy] : 'conservative_arb (Leader)'}
+                {activeStrategy || strategies[0] || 'Leader'}
               </span>
             </div>
           </div>
@@ -281,9 +276,9 @@ export default function AnalyticsClient() {
             })}
 
             {/* Render lines for each strategy */}
-            {strategies.map((strat) => {
+            {strategies.map((strat, stratIdx) => {
               const isFiltered = activeStrategy !== null && activeStrategy !== strat;
-              const color = STRATEGY_COLORS[strat] || STRATEGY_COLORS.unknown;
+              const color = getStrategyColor(strat, stratIdx);
               
               // Map values
               const points = history.map((pt, idx) => {
@@ -361,8 +356,8 @@ export default function AnalyticsClient() {
 
         {/* Strategy Legend Toggles */}
         <div className="flex flex-wrap gap-3 mt-6 border-t border-border/40 pt-4">
-          {strategies.map((strat) => {
-            const color = STRATEGY_COLORS[strat] || STRATEGY_COLORS.unknown;
+          {strategies.map((strat, stratIdx) => {
+            const color = getStrategyColor(strat, stratIdx);
             const isSelected = activeStrategy === strat;
             const isAnySelected = activeStrategy !== null;
             
@@ -384,7 +379,7 @@ export default function AnalyticsClient() {
                 }}
               >
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                <span>{STRATEGY_LABELS[strat] || strat}</span>
+                <span>{strat}</span>
               </button>
             );
           })}
@@ -395,8 +390,8 @@ export default function AnalyticsClient() {
       <div>
         <h2 className="text-xl font-bold text-foreground mb-4">Detailed Metrics</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {strategyStats.map((stats) => {
-            const color = STRATEGY_COLORS[stats.name] || STRATEGY_COLORS.unknown;
+          {strategyStats.map((stats, statsIdx) => {
+            const color = getStrategyColor(stats.name, statsIdx);
             const isProfit = stats.totalPnl >= 0;
             const pnlColor = isProfit ? 'text-profit' : 'text-loss';
             
@@ -411,7 +406,7 @@ export default function AnalyticsClient() {
                 {/* Colored Strategy Ribbon */}
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-background-secondary border border-border/80 text-foreground">
-                    {STRATEGY_LABELS[stats.name] || stats.name}
+                    {stats.name}
                   </span>
                   <span className="w-3.5 h-3.5 rounded-full ring-4 ring-background" style={{ backgroundColor: color }} />
                 </div>
@@ -456,8 +451,8 @@ export default function AnalyticsClient() {
         <div className="glass-card p-6 lg:col-span-2 shadow-md">
           <h3 className="text-sm font-semibold text-foreground-muted uppercase tracking-wider mb-5">Absolute Net Profit Comparison</h3>
           <div className="space-y-4">
-            {strategyStats.map((strat) => {
-              const color = STRATEGY_COLORS[strat.name] || STRATEGY_COLORS.unknown;
+            {strategyStats.map((strat, stratIdx) => {
+              const color = getStrategyColor(strat.name, stratIdx);
               const maxAbsPnl = Math.max(...strategyStats.map(s => Math.abs(s.totalPnl)));
               const ratio = maxAbsPnl > 0 ? (Math.abs(strat.totalPnl) / maxAbsPnl) * 100 : 0;
               const isProfit = strat.totalPnl >= 0;
@@ -465,7 +460,7 @@ export default function AnalyticsClient() {
               return (
                 <div key={strat.name} className="flex items-center gap-3">
                   <span className="w-24 text-xs font-medium text-foreground truncate text-right">
-                    {STRATEGY_LABELS[strat.name] || strat.name}
+                    {strat.name}
                   </span>
                   
                   {/* Visual Bar container */}
@@ -508,25 +503,25 @@ export default function AnalyticsClient() {
               <div className="flex justify-between items-center border-b border-border/20 pb-2">
                 <span className="text-foreground-muted">Top Performing Strategy</span>
                 <span className={`font-semibold font-mono ${topStrat.returnPct >= 0 ? 'text-profit' : 'text-loss'}`}>
-                  {STRATEGY_LABELS[topStrat.name] || topStrat.name} ({topStrat.returnPct >= 0 ? '+' : ''}{topStrat.returnPct.toFixed(1)}%)
+                  {topStrat.name} ({topStrat.returnPct >= 0 ? '+' : ''}{topStrat.returnPct.toFixed(1)}%)
                 </span>
               </div>
               <div className="flex justify-between items-center border-b border-border/20 pb-2">
                 <span className="text-foreground-muted">Highest Drawdown</span>
                 <span className={`font-semibold font-mono ${maxDrawdownStrat.maxDrawdown >= 0 ? 'text-profit' : 'text-loss'}`}>
-                  {STRATEGY_LABELS[maxDrawdownStrat.name] || maxDrawdownStrat.name} ({maxDrawdownStrat.maxDrawdown.toFixed(1)}%)
+                  {maxDrawdownStrat.name} ({maxDrawdownStrat.maxDrawdown.toFixed(1)}%)
                 </span>
               </div>
               <div className="flex justify-between items-center border-b border-border/20 pb-2">
                 <span className="text-foreground-muted">Highest Win Rate (Days)</span>
                 <span className="font-semibold text-foreground font-mono">
-                  {STRATEGY_LABELS[maxWinRateStrat.name] || maxWinRateStrat.name} ({maxWinRateStrat.winRate.toFixed(0)}%)
+                  {maxWinRateStrat.name} ({maxWinRateStrat.winRate.toFixed(0)}%)
                 </span>
               </div>
               <div className="flex justify-between items-center pb-2">
                 <span className="text-foreground-muted">Default Account Name</span>
                 <span className={`font-semibold font-mono ${secondStrat.returnPct >= 0 ? 'text-profit' : 'text-loss'}`}>
-                  {STRATEGY_LABELS[secondStrat.name] || secondStrat.name} ({secondStrat.returnPct >= 0 ? '+' : ''}{secondStrat.returnPct.toFixed(1)}%)
+                  {secondStrat.name} ({secondStrat.returnPct >= 0 ? '+' : ''}{secondStrat.returnPct.toFixed(1)}%)
                 </span>
               </div>
             </div>
