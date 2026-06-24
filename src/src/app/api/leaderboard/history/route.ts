@@ -4,6 +4,8 @@ import { users, portfolios, leaderboardSnapshots } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import crypto from 'crypto';
 
+import { auth } from '@/lib/auth';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -20,16 +22,34 @@ function getDeterministicUuid(userId: string, accountName: string): string {
 
 export async function GET() {
   try {
+    const session = await auth();
+    if (!session || !session.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const userEmail = session.user.email;
+    const userId = session.user.id;
+    const isAdmin = userEmail === 'dickenslihaocheng@gmail.com';
+
     const db = getDb();
 
     // 1. Check if we have history snapshots
     let historySnaps = await db.query.leaderboardSnapshots.findMany({
-      where: eq(leaderboardSnapshots.period, 'HISTORY'),
+      where: isAdmin 
+        ? eq(leaderboardSnapshots.period, 'HISTORY')
+        : and(
+            eq(leaderboardSnapshots.period, 'HISTORY'),
+            eq(leaderboardSnapshots.userId, userId)
+          ),
       orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
     });
 
-    // 2. If history is empty (e.g. brand new db), generate 30 days of mock data
-    if (historySnaps.length < 10) {
+    // 2. If history is empty globally (e.g. brand new db), generate 30 days of mock data
+    const anyHistory = await db.query.leaderboardSnapshots.findFirst({
+      where: eq(leaderboardSnapshots.period, 'HISTORY')
+    });
+
+    if (!anyHistory) {
       console.log("=== Generating Mock Leaderboard History (30 Days) ===");
       
       const strategies = [
@@ -142,9 +162,14 @@ export async function GET() {
         await tx.insert(leaderboardSnapshots).values(batchSnapshots);
       });
 
-      // Refetch history snapshots after mock generation
+      // Refetch history snapshots after mock generation with correct user authorization filter
       historySnaps = await db.query.leaderboardSnapshots.findMany({
-        where: eq(leaderboardSnapshots.period, 'HISTORY'),
+        where: isAdmin 
+          ? eq(leaderboardSnapshots.period, 'HISTORY')
+          : and(
+              eq(leaderboardSnapshots.period, 'HISTORY'),
+              eq(leaderboardSnapshots.userId, userId)
+            ),
         orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
       });
     }
