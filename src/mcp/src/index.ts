@@ -333,7 +333,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             amount_usd: { type: "number", description: "USD cash amount to spend" },
             order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
             account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
+            override_price: { type: "number", description: "Optional exact execution price per share to enforce" },
+            override_shares: { type: "number", description: "Optional exact share quantity to purchase" }
           },
           required: ["slug_or_id", "outcome", "amount_usd"]
         }
@@ -349,7 +351,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             shares: { type: "number", description: "Number of shares to sell" },
             order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
             account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
+            override_price: { type: "number", description: "Optional exact execution price per share to enforce" }
           },
           required: ["slug_or_id", "outcome", "shares"]
         }
@@ -813,6 +816,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const slugOrId = args?.slug_or_id as string;
         const outcome = args?.outcome as string;
         const amountUsd = args?.amount_usd as number;
+        const overridePrice = args?.override_price as number | undefined;
+        const overrideShares = args?.override_shares as number | undefined;
         
         const resolved = await resolveMarketAndToken(slugOrId, outcome);
         const idempotencyKey = generateIdempotencyKey();
@@ -827,6 +832,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             marketConditionId: resolved.marketId,
             side: resolved.outcome,
             amount: amountUsd,
+            overridePrice,
+            overrideShares,
           })
         });
         const data = await res.json() as any;
@@ -877,6 +884,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const slugOrId = args?.slug_or_id as string;
         const outcome = args?.outcome as string;
         const shares = args?.shares as number;
+        const overridePrice = args?.override_price as number | undefined;
         
         const resolved = await resolveMarketAndToken(slugOrId, outcome);
         
@@ -903,6 +911,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           body: JSON.stringify({
             positionId: position.id,
             quantity: shares,
+            overridePrice,
           })
         });
         const data = await res.json() as any;

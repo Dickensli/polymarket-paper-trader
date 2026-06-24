@@ -68,9 +68,13 @@ export async function POST(request: NextRequest) {
     let executionPrice: number;
     let slippageApplied: number;
 
-    if (useOrderBookSim) {
+    if (order.overridePrice) {
+      executionPrice = order.overridePrice;
+      slippageApplied = 0;
+    } else if (useOrderBookSim) {
       // Order book simulation: walk the real bid side level-by-level
       try {
+
         const [orderBook, feeRateBps] = await Promise.all([
           getOrderBook(position.tokenId),
           getFeeRate(position.tokenId),
