@@ -27,13 +27,70 @@ function generateIdempotencyKey() {
     });
 }
 async function resolveMarket(slugOrId) {
-    // Try fetching as market ID first
-    let res = await fetch(`${GAMMA_API_URL}/markets/${encodeURIComponent(slugOrId)}`);
-    if (res.ok) {
-        return await res.json();
+    console.error(`[resolveMarket] slugOrId=${slugOrId}`);
+    const isNumeric = /^\d+$/.test(slugOrId);
+    const isHex = slugOrId.startsWith("0x");
+    // 1. Try numeric ID via Gamma /markets/<id>
+    if (isNumeric) {
+        console.error(`[resolveMarket] trying Gamma /markets/${slugOrId}`);
+        let res = await fetch(`${GAMMA_API_URL}/markets/${encodeURIComponent(slugOrId)}`);
+        console.error(`[resolveMarket] Gamma /markets status=${res.status}`);
+        if (res.ok) {
+            return await res.json();
+        }
     }
-    // Try to search for the slug by query using public-search API
+    // 2. Try condition ID via CLOB /markets/<condition_id>
+    if (isHex) {
+        console.error(`[resolveMarket] trying CLOB /markets/${slugOrId}`);
+        let res = await fetch(`${CLOB_API_URL}/markets/${encodeURIComponent(slugOrId)}`);
+        console.error(`[resolveMarket] CLOB /markets status=${res.status}`);
+        if (res.ok) {
+            const clobData = await res.json();
+            if (clobData && clobData.condition_id) {
+                const slug = clobData.market_slug || clobData.slug;
+                if (slug) {
+                    console.error(`[resolveMarket] CLOB found slug=${slug}, trying Gamma keyset`);
+                    const keysetRes = await fetch(`${GAMMA_API_URL}/markets/keyset?slug=${encodeURIComponent(slug)}`);
+                    if (keysetRes.ok) {
+                        const keysetData = await keysetRes.json();
+                        if (keysetData && keysetData.length > 0) {
+                            return keysetData[0];
+                        }
+                    }
+                }
+                console.error(`[resolveMarket] returning CLOB fallback data`);
+                return {
+                    id: clobData.condition_id,
+                    conditionId: clobData.condition_id,
+                    clobTokenIds: clobData.tokens ? clobData.tokens.map((t) => t.token_id) : [],
+                    outcomes: clobData.tokens ? clobData.tokens.map((t) => t.outcome) : ["Yes", "No"],
+                    slug: clobData.market_slug || clobData.slug,
+                    question: clobData.question,
+                    endDate: clobData.end_date_iso,
+                    closed: clobData.closed,
+                    active: clobData.active,
+                };
+            }
+        }
+    }
+    // 3. Try slug via Gamma /markets/keyset?slug=<slug>
+    if (!isNumeric && !isHex) {
+        console.error(`[resolveMarket] trying Gamma keyset for slug=${slugOrId}`);
+        const keysetRes = await fetch(`${GAMMA_API_URL}/markets/keyset?slug=${encodeURIComponent(slugOrId)}`);
+        console.error(`[resolveMarket] Gamma keyset status=${keysetRes.status}`);
+        if (keysetRes.ok) {
+            const keysetData = await keysetRes.json();
+            const markets = keysetData?.markets || [];
+            console.error(`[resolveMarket] Gamma keyset returned ${markets.length} markets`);
+            if (Array.isArray(markets) && markets.length > 0) {
+                return markets[0];
+            }
+        }
+    }
+    // 4. Fallback to public-search
+    console.error(`[resolveMarket] trying public-search fallback`);
     const searchRes = await fetch(`${GAMMA_API_URL}/public-search?q=${encodeURIComponent(slugOrId)}`);
+    console.error(`[resolveMarket] public-search status=${searchRes.status}`);
     if (searchRes.ok) {
         const searchData = await searchRes.json();
         const events = searchData.events || [];
@@ -52,11 +109,13 @@ async function resolveMarket(slugOrId) {
                         tokens.includes(slugOrId));
                 });
                 if (found) {
+                    console.error(`[resolveMarket] found in public-search event=${event.id}`);
                     return found;
                 }
             }
         }
     }
+    console.error(`[resolveMarket] failed to resolve ${slugOrId}`);
     return null;
 }
 // Helper to resolve slug_or_id and outcome into conditionId, tokenId, YES/NO outcome
