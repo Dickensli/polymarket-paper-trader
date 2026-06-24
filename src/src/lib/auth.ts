@@ -39,6 +39,13 @@ const nextAuthResult = NextAuth({
       clientId: process.env.AUTH_GOOGLE_ID ?? '',
       clientSecret: process.env.AUTH_GOOGLE_SECRET ?? '',
       allowDangerousEmailAccountLinking: true,
+      authorization: {
+        params: {
+          prompt: 'select_account',
+          access_type: 'offline',
+          response_type: 'code',
+        },
+      },
     }),
     Resend({
       from: process.env.EMAIL_FROM || 'noreply@polymarkettraders.com',

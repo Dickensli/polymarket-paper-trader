@@ -12,6 +12,11 @@ export default function ClientShell({ children }: { children: React.ReactNode })
   const { data: session, status } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const isPublicRoute = pathname?.startsWith('/auth/') || pathname === '/privacy';
 
@@ -26,8 +31,8 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     return <>{children}</>;
   }
 
-  // Show a full-screen loading state while checking authentication session
-  if (status === 'loading') {
+  // Show a full-screen loading state while checking authentication session or before client-side hydration completes
+  if (!mounted || status === 'loading') {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[#0a0b0f]">
         <div className="flex flex-col items-center gap-4">
