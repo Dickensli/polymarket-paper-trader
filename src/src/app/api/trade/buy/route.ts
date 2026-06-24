@@ -66,9 +66,14 @@ export async function POST(request: NextRequest) {
     let shares: number;
     let slippageApplied: number;
 
-    if (useOrderBookSim) {
+    if (order.overridePrice && order.overrideShares) {
+      executionPrice = order.overridePrice;
+      shares = order.overrideShares;
+      slippageApplied = 0;
+    } else if (useOrderBookSim) {
       // Order book simulation: walk the real ask side level-by-level
       try {
+
         const [orderBook, feeRateBps] = await Promise.all([
           getOrderBook(tokenId),
           getFeeRate(tokenId),

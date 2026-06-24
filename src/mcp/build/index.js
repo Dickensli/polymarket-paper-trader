@@ -309,7 +309,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         amount_usd: { type: "number", description: "USD cash amount to spend" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
+                        agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
+                        override_price: { type: "number", description: "Optional exact execution price per share to enforce" },
+                        override_shares: { type: "number", description: "Optional exact share quantity to purchase" }
                     },
                     required: ["slug_or_id", "outcome", "amount_usd"]
                 }
@@ -325,7 +327,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         shares: { type: "number", description: "Number of shares to sell" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
+                        agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
+                        override_price: { type: "number", description: "Optional exact execution price per share to enforce" }
                     },
                     required: ["slug_or_id", "outcome", "shares"]
                 }
@@ -784,6 +787,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const slugOrId = args?.slug_or_id;
                 const outcome = args?.outcome;
                 const amountUsd = args?.amount_usd;
+                const overridePrice = args?.override_price;
+                const overrideShares = args?.override_shares;
                 const resolved = await resolveMarketAndToken(slugOrId, outcome);
                 const idempotencyKey = generateIdempotencyKey();
                 const res = await fetch(`${POLYTRADER_API_URL}/trade/buy`, {
@@ -796,6 +801,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         marketConditionId: resolved.marketId,
                         side: resolved.outcome,
                         amount: amountUsd,
+                        overridePrice,
+                        overrideShares,
                     })
                 });
                 const data = await res.json();
@@ -842,6 +849,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const slugOrId = args?.slug_or_id;
                 const outcome = args?.outcome;
                 const shares = args?.shares;
+                const overridePrice = args?.override_price;
                 const resolved = await resolveMarketAndToken(slugOrId, outcome);
                 // Fetch portfolio to find the corresponding position ID
                 const portRes = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
@@ -865,6 +873,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     body: JSON.stringify({
                         positionId: position.id,
                         quantity: shares,
+                        overridePrice,
                     })
                 });
                 const data = await res.json();

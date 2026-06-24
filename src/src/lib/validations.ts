@@ -8,6 +8,8 @@ export const buyTradeSchema = z.object({
     .min(1, 'Minimum trade is $1')
     .max(10000, 'Maximum trade is $10,000')
     .refine((n) => Number.isFinite(n), 'Amount must be a finite number'),
+  overridePrice: z.number().gt(0).lt(1).optional(),
+  overrideShares: z.number().positive().optional(),
 });
 
 export const sellTradeSchema = z.object({
@@ -16,7 +18,9 @@ export const sellTradeSchema = z.object({
     z.number().positive('Quantity must be positive'),
     z.literal('ALL'),
   ]),
+  overridePrice: z.number().gt(0).lt(1).optional(),
 });
+
 
 export const closeTradeSchema = z.object({
   positionId: z.string().uuid('Invalid position ID'),
