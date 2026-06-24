@@ -24,7 +24,7 @@ export async function GET() {
         initialBalance: portfolios.initialBalance,
       })
       .from(users)
-      .leftJoin(portfolios, eq(users.id, portfolios.userId));
+      .innerJoin(portfolios, eq(users.id, portfolios.userId));
 
     // 2. Fetch all open positions
     const openPositions = await db
