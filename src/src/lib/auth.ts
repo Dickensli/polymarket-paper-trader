@@ -78,20 +78,36 @@ export const auth = async (...args: any[]) => {
     const { headers } = await import('next/headers');
     const reqHeaders = await headers();
     const agentSecret = reqHeaders.get('x-agent-secret');
-    let targetUserId = reqHeaders.get('x-agent-user-id') || '815c03ff-dad9-4535-a427-20422812424a';
+    const rawUserIdHeader = reqHeaders.get('x-agent-user-id') || '815c03ff-dad9-4535-a427-20422812424a';
     const agentAccount = reqHeaders.get('x-agent-account') || 'default';
 
     const isProd = process.env.NODE_ENV === 'production';
     const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
 
     if (agentSecret && expectedSecret && agentSecret === expectedSecret) {
+      const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      
+      let rawAgentName = 'AI Agent';
+      let masterUserId = rawUserIdHeader;
+
+      if (!isUuid(rawUserIdHeader)) {
+        rawAgentName = rawUserIdHeader;
+        masterUserId = getDeterministicUuid(rawUserIdHeader, 'master');
+      }
+
+      let targetUserId = masterUserId;
+      let strategyName = rawAgentName;
+      let strategyEmail = isUuid(rawUserIdHeader) 
+        ? 'agent@polymarkettraders.com' 
+        : `agent+${rawUserIdHeader.replace(/\s+/g, '_')}@polymarkettraders.com`;
+
       if (agentAccount !== 'default') {
-        targetUserId = getDeterministicUuid(targetUserId, agentAccount);
+        targetUserId = getDeterministicUuid(masterUserId, agentAccount);
+        strategyName = `${rawAgentName} (${agentAccount})`;
+        strategyEmail = `agent+${rawAgentName.replace(/\s+/g, '_')}+${agentAccount}@polymarkettraders.com`;
       }
 
       const db = getDb();
-      const strategyName = agentAccount === 'default' ? 'AI Agent' : `AI Agent (${agentAccount})`;
-      const strategyEmail = agentAccount === 'default' ? 'agent@polymarkettraders.com' : `agent+${agentAccount}@polymarkettraders.com`;
 
       // Ensure the agent user exists in the database to satisfy foreign keys
       let dbUser = await db.query.users.findFirst({ where: eq(users.id, targetUserId) });
@@ -121,8 +137,8 @@ export const auth = async (...args: any[]) => {
       return {
         user: {
           id: targetUserId,
-          email: strategyEmail,
-          name: strategyName,
+          email: dbUser ? dbUser.email : strategyEmail,
+          name: dbUser ? dbUser.name : strategyName,
         },
         expires: new Date(Date.now() + 3600 * 1000).toISOString(),
       };
