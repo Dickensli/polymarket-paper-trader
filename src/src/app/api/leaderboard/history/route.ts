@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { users, portfolios, leaderboardSnapshots } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import crypto from 'crypto';
 
 import { auth } from '@/lib/auth';
@@ -44,34 +44,21 @@ export async function GET() {
       orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
     });
 
-    // 2. If history is empty globally (e.g. brand new db), generate 30 days of mock data
-    const anyHistory = await db.query.leaderboardSnapshots.findFirst({
-      where: eq(leaderboardSnapshots.period, 'HISTORY')
-    });
+    // 2. If history is empty globally or has less than 5 points (e.g. brand new db), generate 30 days of mock data
+    const historyCountRes = await db.select({ value: sql<number>`count(*)` })
+      .from(leaderboardSnapshots)
+      .where(eq(leaderboardSnapshots.period, 'HISTORY'));
+    const historyCount = historyCountRes[0]?.value ?? 0;
 
-    if (!anyHistory) {
+    if (historyCount < 5) {
       console.log("=== Generating Mock Leaderboard History (30 Days) ===");
       
-      const strategies = [
-        {
-          name: 'dickens_smith (conservative_arb)',
-          id: '889a71e5-17c8-4008-b531-f4c9b3fc0caf',
-          email: 'agent+dickens_smith+conservative_arb@polymarkettraders.com',
-          type: 'steady'
-        },
-        {
-          name: 'momentum_chaser',
-          id: getDeterministicUuid('momentum_chaser', 'master'),
-          email: 'agent+momentum_chaser@polymarkettraders.com',
-          type: 'volatile'
-        },
-        {
-          name: 'weather_oracle',
-          id: getDeterministicUuid('weather_oracle', 'master'),
-          email: 'agent+weather_oracle@polymarkettraders.com',
-          type: 'oracle'
-        }
-      ];
+      const existingUsers = await db.query.users.findMany();
+      const strategies = existingUsers.map(user => ({
+        id: user.id,
+        name: user.name ?? 'Unknown Strategy',
+        email: user.email
+      }));
 
       const batchSnapshots: any[] = [];
       const now = new Date();
@@ -115,36 +102,14 @@ export async function GET() {
               balance: '10000.000000',
               initialBalance: '10000.000000'
             });
+            dbPort = await tx.query.portfolios.findFirst({ where: eq(portfolios.userId, actualUserId) });
           }
 
-          // Generate 30 days of snapshots
-          let currentValue = 10000;
-          for (let i = 30; i >= 0; i--) {
+          // Generate 30 days of snapshots walking backward from current value
+          let currentValue = dbPort ? parseFloat(dbPort.balance) : 10000;
+          for (let i = 0; i <= 30; i++) {
             const date = new Date(now.getTime() - i * 24 * 3600 * 1000);
             
-            // Generate simulated price walk based on strategy type
-            let change = 0;
-            if (strat.type === 'steady') {
-              // Dickens Smith: steady trade-by-trade slow gain
-              change = (Math.random() - 0.35) * 80; // slightly positive drift
-            } else if (strat.type === 'conservative') {
-              // Conservative Arb: very low variance steady gains
-              change = (Math.random() - 0.2) * 50; 
-            } else if (strat.type === 'volatile') {
-              // Momentum Chaser: high risk, big gains and losses
-              change = (Math.random() - 0.52) * 450; 
-            } else if (strat.type === 'oracle') {
-              // Weather Oracle: step-like jumps when weather event resolves
-              if (i % 6 === 0) {
-                change = 500 + Math.random() * 200; // resolve winning weather event
-              } else {
-                change = -15 - Math.random() * 10; // slow bleed on fee/slippage
-              }
-            }
-
-            currentValue += change;
-            if (currentValue < 1000) currentValue = 1000; // lower bound
-
             const totalPnl = currentValue - 10000;
             const returnPct = (totalPnl / 10000) * 100;
 
@@ -159,6 +124,11 @@ export async function GET() {
               period: 'HISTORY',
               snapshotDate: date
             });
+
+            // Walk backward by subtracting forward step
+            const change = (Math.random() - 0.35) * 80;
+            currentValue -= change;
+            if (currentValue < 1000) currentValue = 1000;
           }
         }
 

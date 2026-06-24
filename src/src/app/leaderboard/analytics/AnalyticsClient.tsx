@@ -10,16 +10,16 @@ type HistoryPoint = {
 };
 
 const STRATEGY_COLORS: Record<string, string> = {
-  'dickens_smith (conservative_arb)': '#3b82f6', // User strategy
-  momentum_chaser: '#ec4899',
-  weather_oracle: '#eab308',
+  'Dickens Li': '#3b82f6',                        // Bright Blue for main user
+  'dickens_smith (conservative_arb)': '#10b981', // Emerald Green for weather strategy
+  'dickens_smith (dickensli)': '#a855f7',        // Purple for second strategy
   unknown: '#94a3b8'
 };
 
 const STRATEGY_LABELS: Record<string, string> = {
+  'Dickens Li': 'Dickens Li',
   'dickens_smith (conservative_arb)': 'Dickens Smith (Conservative)',
-  momentum_chaser: 'Momentum Chaser',
-  weather_oracle: 'Weather Oracle',
+  'dickens_smith (dickensli)': 'Dickens Smith (Dickensli)',
 };
 
 export default function AnalyticsClient() {
@@ -108,6 +108,11 @@ export default function AnalyticsClient() {
       winRate
     };
   }).sort((a, b) => b.totalPnl - a.totalPnl);
+
+  const topStrat = strategyStats[0];
+  const maxDrawdownStrat = [...strategyStats].sort((a, b) => a.maxDrawdown - b.maxDrawdown)[0];
+  const maxWinRateStrat = [...strategyStats].sort((a, b) => b.winRate - a.winRate)[0];
+  const secondStrat = strategyStats[1] || strategyStats[0];
 
   // SVG Chart Dimensions
   const padding = { top: 20, right: 30, bottom: 40, left: 60 };
@@ -502,19 +507,27 @@ export default function AnalyticsClient() {
             <div className="space-y-4 text-xs">
               <div className="flex justify-between items-center border-b border-border/20 pb-2">
                 <span className="text-foreground-muted">Top Performing Strategy</span>
-                <span className="font-semibold text-profit font-mono">weather_oracle (+31.1%)</span>
+                <span className={`font-semibold font-mono ${topStrat.returnPct >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  {STRATEGY_LABELS[topStrat.name] || topStrat.name} ({topStrat.returnPct >= 0 ? '+' : ''}{topStrat.returnPct.toFixed(1)}%)
+                </span>
               </div>
               <div className="flex justify-between items-center border-b border-border/20 pb-2">
                 <span className="text-foreground-muted">Highest Drawdown</span>
-                <span className="font-semibold text-loss font-mono">momentum_chaser (-39.2%)</span>
+                <span className={`font-semibold font-mono ${maxDrawdownStrat.maxDrawdown >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  {STRATEGY_LABELS[maxDrawdownStrat.name] || maxDrawdownStrat.name} ({maxDrawdownStrat.maxDrawdown.toFixed(1)}%)
+                </span>
               </div>
               <div className="flex justify-between items-center border-b border-border/20 pb-2">
                 <span className="text-foreground-muted">Highest Win Rate (Days)</span>
-                <span className="font-semibold text-foreground font-mono">conservative_arb (82%)</span>
+                <span className="font-semibold text-foreground font-mono">
+                  {STRATEGY_LABELS[maxWinRateStrat.name] || maxWinRateStrat.name} ({maxWinRateStrat.winRate.toFixed(0)}%)
+                </span>
               </div>
               <div className="flex justify-between items-center pb-2">
                 <span className="text-foreground-muted">Default Account Name</span>
-                <span className="font-semibold font-mono text-primary">dickens_smith (+5.1%)</span>
+                <span className={`font-semibold font-mono ${secondStrat.returnPct >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  {STRATEGY_LABELS[secondStrat.name] || secondStrat.name} ({secondStrat.returnPct >= 0 ? '+' : ''}{secondStrat.returnPct.toFixed(1)}%)
+                </span>
               </div>
             </div>
           </div>
