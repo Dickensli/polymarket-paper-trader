@@ -53,10 +53,24 @@ export async function GET() {
       console.log("=== Generating Mock Leaderboard History (30 Days) ===");
       
       const strategies = [
-        { name: 'dickens_smith', type: 'steady' },
-        { name: 'conservative_arb', type: 'conservative' },
-        { name: 'momentum_chaser', type: 'volatile' },
-        { name: 'weather_oracle', type: 'oracle' }
+        {
+          name: 'dickens_smith (conservative_arb)',
+          id: '889a71e5-17c8-4008-b531-f4c9b3fc0caf',
+          email: 'agent+dickens_smith+conservative_arb@polymarkettraders.com',
+          type: 'steady'
+        },
+        {
+          name: 'momentum_chaser',
+          id: getDeterministicUuid('momentum_chaser', 'master'),
+          email: 'agent+momentum_chaser@polymarkettraders.com',
+          type: 'volatile'
+        },
+        {
+          name: 'weather_oracle',
+          id: getDeterministicUuid('weather_oracle', 'master'),
+          email: 'agent+weather_oracle@polymarkettraders.com',
+          type: 'oracle'
+        }
       ];
 
       const batchSnapshots: any[] = [];
@@ -64,8 +78,8 @@ export async function GET() {
 
       await db.transaction(async (tx) => {
         for (const strat of strategies) {
-          const userId = getDeterministicUuid(strat.name, 'master');
-          const email = `agent+${strat.name}@polymarkettraders.com`;
+          const userId = strat.id;
+          const email = strat.email;
 
           // Ensure user exists (lookup by email first, then fallback to lookup by id)
           let dbUser = await tx.query.users.findFirst({ where: eq(users.email, email) });

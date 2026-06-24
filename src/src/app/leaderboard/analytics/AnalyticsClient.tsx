@@ -10,16 +10,14 @@ type HistoryPoint = {
 };
 
 const STRATEGY_COLORS: Record<string, string> = {
-  dickens_smith: '#3b82f6',     // Bright Blue
-  conservative_arb: '#10b981',   // Emerald Green
-  momentum_chaser: '#ec4899',    // Hot Pink
-  weather_oracle: '#eab308',     // Amber Yellow
+  'dickens_smith (conservative_arb)': '#3b82f6', // User strategy
+  momentum_chaser: '#ec4899',
+  weather_oracle: '#eab308',
   unknown: '#94a3b8'
 };
 
 const STRATEGY_LABELS: Record<string, string> = {
-  dickens_smith: 'dickens_smith (User)',
-  conservative_arb: 'Conservative Arb',
+  'dickens_smith (conservative_arb)': 'Dickens Smith (Conservative)',
   momentum_chaser: 'Momentum Chaser',
   weather_oracle: 'Weather Oracle',
 };
