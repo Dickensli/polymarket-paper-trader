@@ -15,7 +15,7 @@ function getDeterministicUuid(userId: string, accountName: string): string {
   ].join('-');
 }
 
-import { accounts, sessions, users, verificationTokens } from '@/lib/db/schema';
+import { accounts, sessions, users, verificationTokens, portfolios } from '@/lib/db/schema';
 
 import Resend from 'next-auth/providers/resend';
 
@@ -168,6 +168,17 @@ export const auth = async (...args: any[]) => {
             }
           });
         }
+      }
+
+      // Ensure a portfolio exists for this agent user
+      const dbPort = await db.query.portfolios.findFirst({ where: eq(portfolios.userId, targetUserId) });
+      if (!dbPort) {
+        await db.insert(portfolios).values({
+          id: crypto.randomUUID(),
+          userId: targetUserId,
+          balance: '10000.00',
+          initialBalance: '10000.00'
+        });
       }
 
       return {
