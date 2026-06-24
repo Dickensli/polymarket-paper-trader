@@ -40,7 +40,18 @@ async function resolveMarketAndToken(slugOrId, outcome) {
         if (searchRes.ok) {
             const events = await searchRes.json();
             if (events[0] && events[0].markets) {
-                market = events[0].markets.find((m) => m.slug === slugOrId || m.id === slugOrId);
+                market = events[0].markets.find((m) => {
+                    let tokens = [];
+                    try {
+                        tokens = typeof m.clobTokenIds === 'string' ? JSON.parse(m.clobTokenIds) : (m.clobTokenIds || []);
+                    }
+                    catch { }
+                    return (m.slug === slugOrId ||
+                        m.id === slugOrId ||
+                        m.conditionId === slugOrId ||
+                        m.questionID === slugOrId ||
+                        tokens.includes(slugOrId));
+                });
             }
         }
     }
