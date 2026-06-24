@@ -76,8 +76,12 @@ export default function LeaderboardClient() {
           </thead>
           <tbody className="divide-y divide-border/50">
             {data.map((user) => {
-              const isProfit = user.totalPnL > 0;
-              const isLoss = user.totalPnL < 0;
+              const portfolioValue = Number(user.portfolioValue ?? 10000);
+              const totalPnL = Number(user.totalPnL ?? 0);
+              const returnPct = Number(user.returnPct ?? 0);
+
+              const isProfit = totalPnL > 0;
+              const isLoss = totalPnL < 0;
               const pnlColor = isProfit ? 'text-polymarket-green' : isLoss ? 'text-polymarket-red' : 'text-foreground';
               
               return (
@@ -98,13 +102,13 @@ export default function LeaderboardClient() {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right font-mono text-foreground">
-                    ${user.portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className={`px-6 py-4 text-right font-mono font-semibold ${pnlColor}`}>
-                    {user.totalPnL > 0 ? '+' : ''}${user.totalPnL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {totalPnL > 0 ? '+' : ''}${totalPnL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className={`px-6 py-4 text-right font-mono font-semibold ${pnlColor}`}>
-                    {user.returnPct > 0 ? '+' : ''}{user.returnPct.toFixed(2)}%
+                    {returnPct > 0 ? '+' : ''}{returnPct.toFixed(2)}%
                   </td>
                 </tr>
               );
