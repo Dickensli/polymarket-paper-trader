@@ -531,6 +531,7 @@ export async function executeTrade(
         price,
         total,
         timestamp: tradeRecord.executedAt.toISOString(),
+        slippageApplied: slippageApplied ?? 0,
       };
     } else {
       // SELL trade
@@ -654,6 +655,7 @@ export async function executeTrade(
         price,
         total: receiveAmount,
         timestamp: tradeRecord.executedAt.toISOString(),
+        slippageApplied: slippageApplied ?? 0,
       };
     }
   });

@@ -210,6 +210,7 @@ export interface Trade {
   price: number;
   total: number;
   timestamp: string;
+  slippageApplied?: number;
 }
 
 export interface Portfolio {

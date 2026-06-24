@@ -610,11 +610,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               ok: true,
               data: {
                 cash: portfolio.balance,
-                positions_value: (portfolio.totalValue - portfolio.balance).toFixed(2),
+                starting_balance: portfolio.totalValue - portfolio.totalPnL,
+                positions_value: parseFloat((portfolio.totalValue - portfolio.balance).toFixed(2)),
                 total_value: portfolio.totalValue,
-                total_pnl: portfolio.totalPnL,
-                total_pnl_percent: portfolio.totalPnLPercent,
-                open_positions: portfolio.positions?.length || 0,
+                pnl: portfolio.totalPnL,
               }
             }, null, 2)
           }]
@@ -726,11 +725,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 question: m.question,
                 condition_id: m.conditionId,
                 outcomes: typeof m.outcomes === 'string' ? JSON.parse(m.outcomes) : m.outcomes,
-                outcome_prices: typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices,
+                outcome_prices: (typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices).map((p: any) => parseFloat(p)),
                 volume: m.volume24hr || m.volume,
                 liquidity: m.liquidityClob || m.liquidity,
                 closed: m.closed,
-                end_date: m.endDate,
+                end_date: m.endDate ? m.endDate.substring(0, 10) : null,
               }
             }, null, 2)
           }]
@@ -835,8 +834,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return { content: [{ type: "text", text: `Trade failed: ${data.error || JSON.stringify(data)}` }], isError: true };
         }
         
-        // Match the python envelope response
         const fill = data.data || data;
+        
+        // Fetch fresh portfolio for cash balance
+        const portRes = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
+          headers: getAgentHeaders(args)
+        });
+        let cash = 0;
+        if (portRes.ok) {
+          const portData = await portRes.json() as any;
+          const portfolio = portData.data || portData;
+          cash = portfolio.balance;
+        }
+
         return {
           content: [{
             type: "text",
@@ -846,16 +856,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 trade: {
                   id: fill.id,
                   market_slug: resolved.slug,
-                  outcome: fill.outcome,
-                  side: fill.action,
-                  avg_price: parseFloat(fill.pricePerShare),
-                  amount_usd: parseFloat(fill.totalCost),
+                  outcome: fill.outcome.toLowerCase(),
+                  side: fill.side.toLowerCase(),
+                  avg_price: parseFloat(fill.price),
+                  amount_usd: parseFloat(fill.total),
                   shares: parseFloat(fill.shares),
-                  fee: 0, // Mock or extract from metadata
+                  fee: 0,
                   slippage_bps: Math.round(parseFloat(fill.slippageApplied || "0") * 10000)
                 },
                 account: {
-                  cash: fill.balanceAfterTrade || 0
+                  cash: cash
                 }
               }
             }, null, 2)
@@ -901,6 +911,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         
         const fill = data.data || data;
+
+        // Fetch fresh portfolio for cash balance
+        const portRes2 = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
+          headers: getAgentHeaders(args)
+        });
+        let cash = 0;
+        if (portRes2.ok) {
+          const portData2 = await portRes2.json() as any;
+          const portfolio2 = portData2.data || portData2;
+          cash = portfolio2.balance;
+        }
+
         return {
           content: [{
             type: "text",
@@ -910,16 +932,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 trade: {
                   id: fill.id,
                   market_slug: resolved.slug,
-                  outcome: fill.outcome,
-                  side: fill.action,
-                  avg_price: parseFloat(fill.pricePerShare),
-                  amount_usd: parseFloat(fill.totalCost),
+                  outcome: fill.outcome.toLowerCase(),
+                  side: fill.side.toLowerCase(),
+                  avg_price: parseFloat(fill.price),
+                  amount_usd: parseFloat(fill.total),
                   shares: parseFloat(fill.shares),
                   fee: 0,
                   slippage_bps: Math.round(parseFloat(fill.slippageApplied || "0") * 10000)
                 },
                 account: {
-                  cash: fill.balanceAfterTrade || 0
+                  cash: cash
                 }
               }
             }, null, 2)
@@ -932,35 +954,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
           headers: getAgentHeaders(args)
         });
+        if (!res.ok) {
+          throw new Error(`API returned status ${res.status}`);
+        }
         const data = await res.json() as any;
         const portfolio = data.data || data;
         
-        const formatted = {
-          balance: portfolio.balance,
-          total_value: portfolio.totalValue,
-          total_pnl: portfolio.totalPnL,
-          total_pnl_percent: portfolio.totalPnLPercent,
-          positions: (portfolio.positions || []).map((p: any) => ({
-            position_id: p.id,
-            market: p.marketQuestion,
-            outcome: p.outcome,
-            shares: parseFloat(p.shares),
-            avg_entry: parseFloat(p.avgEntryPrice),
-            current_price: parseFloat(p.currentPrice),
-            unrealized_pnl: parseFloat(p.unrealizedPnL),
-            realized_pnl: parseFloat(p.realizedPnL || 0),
-          })),
-          recent_trades: (portfolio.tradeHistory || []).slice(0, 10).map((t: any) => ({
-            side: t.side,
-            outcome: t.outcome,
-            market: t.marketQuestion,
-            shares: parseFloat(t.shares),
-            price: parseFloat(t.price),
-            total: parseFloat(t.total),
-            timestamp: t.timestamp,
-          })),
+        const roundTo = (n: number, decimals: number) => {
+          const factor = Math.pow(10, decimals);
+          return Math.round(n * factor) / factor;
         };
-        return { content: [{ type: "text", text: JSON.stringify({ ok: true, data: formatted }, null, 2) }] };
+
+        const formattedPositions = await Promise.all((portfolio.positions || []).map(async (p: any) => {
+          // Resolve slug from marketId
+          const market = await resolveMarket(p.marketId);
+          const slug = market?.slug || '';
+          
+          let outcomes: string[] = [];
+          try {
+            outcomes = typeof market?.outcomes === 'string' ? JSON.parse(market.outcomes) : (market?.outcomes || []);
+          } catch {}
+          
+          // Map YES/NO back to actual outcome name if categorical
+          const rawOutcome = outcomes[p.outcome === 'YES' ? 0 : 1] || p.outcome;
+          const normalizedOutcome = rawOutcome.toLowerCase().trim();
+
+          const shares = parseFloat(p.shares);
+          const avgEntryPrice = parseFloat(p.avgEntryPrice);
+          const livePrice = parseFloat(p.currentPrice);
+          const totalCost = roundTo(shares * avgEntryPrice, 2);
+          const currentValue = roundTo(shares * livePrice, 2);
+          const unrealizedPnl = roundTo(currentValue - totalCost, 2);
+          const percentPnl = totalCost > 0 ? roundTo((unrealizedPnl / totalCost) * 100, 2) : 0.0;
+
+          return {
+            market_slug: slug,
+            market_question: p.marketQuestion,
+            outcome: normalizedOutcome,
+            shares: shares,
+            avg_entry_price: avgEntryPrice,
+            total_cost: totalCost,
+            live_price: livePrice,
+            current_value: currentValue,
+            unrealized_pnl: unrealizedPnl,
+            percent_pnl: percentPnl
+          };
+        }));
+
+        return { content: [{ type: "text", text: JSON.stringify({ ok: true, data: formattedPositions }, null, 2) }] };
       }
 
       case "history": {
@@ -968,17 +1009,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
           headers: getAgentHeaders(args)
         });
+        if (!res.ok) throw new Error(`API returned ${res.status}`);
         const data = await res.json() as any;
         const portfolio = data.data || data;
-        const trades = (portfolio.tradeHistory || []).slice(0, limit).map((t: any) => ({
-          trade_id: t.id,
-          market: t.marketQuestion,
-          outcome: t.outcome,
-          side: t.side,
-          shares: parseFloat(t.shares),
-          price: parseFloat(t.price),
-          total: parseFloat(t.total),
-          timestamp: t.timestamp,
+        
+        const trades = await Promise.all((portfolio.tradeHistory || []).slice(0, limit).map(async (t: any) => {
+          const market = await resolveMarket(t.marketId);
+          const slug = market?.slug || '';
+          
+          let outcomes: string[] = [];
+          try {
+            outcomes = typeof market?.outcomes === 'string' ? JSON.parse(market.outcomes) : (market?.outcomes || []);
+          } catch {}
+          
+          const rawOutcome = outcomes[t.outcome === 'YES' ? 0 : 1] || t.outcome;
+          const normalizedOutcome = rawOutcome.toLowerCase().trim();
+
+          return {
+            id: t.id,
+            market_slug: slug,
+            outcome: normalizedOutcome,
+            side: t.side.toLowerCase(),
+            avg_price: parseFloat(t.price),
+            amount_usd: parseFloat(t.total),
+            shares: parseFloat(t.shares),
+            fee: 0,
+            created_at: t.timestamp,
+          };
         }));
         return { content: [{ type: "text", text: JSON.stringify({ ok: true, data: trades }, null, 2) }] };
       }
@@ -1118,24 +1175,125 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const res = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
           headers: getAgentHeaders(args)
         });
+        if (!res.ok) throw new Error(`API returned ${res.status}`);
         const data = await res.json() as any;
         const portfolio = data.data || data;
-        const trades = portfolio.tradeHistory || [];
-        const winTrades = trades.filter((t: any) => t.side === "SELL" && parseFloat(t.total) > 0); // basic win stats
+        
+        const trades = portfolio.tradeHistory || []; // newest first
+        const startingBalance = portfolio.totalValue - portfolio.totalPnL;
+        const cash = portfolio.balance;
+        const positionsValue = portfolio.totalValue - portfolio.balance;
+        const totalValue = portfolio.totalValue;
+        const pnl = portfolio.totalPnL;
+        const roiPct = portfolio.totalPnLPercent;
+
+        // Chronological trades (oldest first)
+        const chronological = [...trades].reverse();
+
+        // Calculate win rate
+        const sells = trades.filter((t: any) => t.side === "SELL");
+        let winRate = 0.0;
+        if (sells.length > 0) {
+          const buyCost: Record<string, number> = {};
+          const buyShares: Record<string, number> = {};
+          for (const t of trades) {
+            if (t.side === "BUY") {
+              const key = `${t.marketId}_${t.outcome}`;
+              buyCost[key] = (buyCost[key] || 0) + parseFloat(t.total);
+              buyShares[key] = (buyShares[key] || 0) + parseFloat(t.shares);
+            }
+          }
+          let wins = 0;
+          for (const t of sells) {
+            const key = `${t.marketId}_${t.outcome}`;
+            const totalShares = buyShares[key] || 0;
+            const entryPrice = totalShares > 0 ? buyCost[key] / totalShares : parseFloat(t.price);
+            if (parseFloat(t.price) > entryPrice) {
+              wins++;
+            }
+          }
+          winRate = wins / sells.length;
+        }
+
+        // Calculate max drawdown
+        let peak = startingBalance;
+        let cumulative = startingBalance;
+        let maxDd = 0.0;
+        for (const t of chronological) {
+          const amt = parseFloat(t.total);
+          const fee = 0; 
+          if (t.side === "BUY") {
+            cumulative -= (amt + fee);
+          } else if (t.side === "SELL") {
+            cumulative += (amt - fee);
+          }
+          if (cumulative > peak) {
+            peak = cumulative;
+          }
+          if (peak > 0) {
+            const dd = (peak - cumulative) / peak;
+            if (dd > maxDd) {
+              maxDd = dd;
+            }
+          }
+        }
+
+        // Calculate Sharpe ratio
+        const byDate: Record<string, number> = {};
+        for (const t of chronological) {
+          const dateStr = t.timestamp.substring(0, 10);
+          const amt = parseFloat(t.total);
+          const fee = 0;
+          if (t.side === "BUY") {
+            byDate[dateStr] = (byDate[dateStr] || 0) - (amt + fee);
+          } else if (t.side === "SELL") {
+            byDate[dateStr] = (byDate[dateStr] || 0) + (amt - fee);
+          }
+        }
+        const dailyPnL = Object.keys(byDate).sort().map(d => byDate[d]);
+        let sharpe = 0.0;
+        if (dailyPnL.length >= 2) {
+          let cum = startingBalance;
+          const dailyReturns = [];
+          for (const dpnl of dailyPnL) {
+            if (cum > 0) {
+              dailyReturns.push(dpnl / cum);
+            } else {
+              dailyReturns.push(0.0);
+            }
+            cum += dpnl;
+          }
+          const meanRet = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
+          const variance = dailyReturns.reduce((a, b) => a + Math.pow(b - meanRet, 2), 0) / (dailyReturns.length - 1);
+          const stdRet = Math.sqrt(variance);
+          if (stdRet > 0) {
+            sharpe = (meanRet / stdRet) * Math.sqrt(365);
+          }
+        }
+
+        const avgTradeSize = trades.length > 0 ? trades.reduce((sum: number, t: any) => sum + parseFloat(t.total), 0) / trades.length : 0.0;
+
+        const result = {
+          starting_balance: startingBalance,
+          cash: cash,
+          positions_value: positionsValue,
+          total_value: totalValue,
+          pnl: pnl,
+          roi_pct: roiPct,
+          total_trades: trades.length,
+          buy_count: trades.filter((t: any) => t.side === "BUY").length,
+          sell_count: trades.filter((t: any) => t.side === "SELL").length,
+          win_rate: winRate,
+          sharpe_ratio: sharpe,
+          max_drawdown: maxDd,
+          total_fees: 0,
+          avg_trade_size: avgTradeSize
+        };
+
         return {
           content: [{
             type: "text",
-            text: JSON.stringify({
-              ok: true,
-              data: {
-                total_pnl: portfolio.totalPnL,
-                total_pnl_percent: portfolio.totalPnLPercent,
-                trades_count: trades.length,
-                win_rate: trades.length > 0 ? winTrades.length / trades.length : 0.0,
-                cash_balance: portfolio.balance,
-                portfolio_value: portfolio.totalValue
-              }
-            }, null, 2)
+            text: JSON.stringify({ ok: true, data: result }, null, 2)
           }]
         };
       }
