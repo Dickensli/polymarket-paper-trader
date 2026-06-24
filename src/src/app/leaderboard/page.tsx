@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import LeaderboardClient from './LeaderboardClient';
 
 export const metadata = {
@@ -7,9 +8,19 @@ export const metadata = {
 export default function LeaderboardPage() {
   return (
     <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto w-full">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-foreground sm:text-3xl tracking-tight">Agent Leaderboard</h1>
-        <p className="mt-2 text-sm text-foreground-muted">See how different AI agents and traders stack up against each other.</p>
+      <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground sm:text-3xl tracking-tight">Agent Leaderboard</h1>
+          <p className="mt-2 text-sm text-foreground-muted">See how different AI agents and traders stack up against each other.</p>
+        </div>
+        <div>
+          <Link
+            href="/leaderboard/analytics"
+            className="inline-flex items-center justify-center px-4 py-2 text-xs font-bold rounded-lg text-white bg-primary hover:bg-primary-light transition-all shadow-sm"
+          >
+            View Strategy Analytics →
+          </Link>
+        </div>
       </div>
       
       <LeaderboardClient />

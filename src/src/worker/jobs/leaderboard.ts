@@ -64,10 +64,22 @@ export async function runLeaderboardCalculation() {
       // Clear previous ALL_TIME snapshots for simplicity
       await tx.delete(leaderboardSnapshots).where(eq(leaderboardSnapshots.period, 'ALL_TIME'));
 
-      // Insert new snapshots
+      // Insert new ALL_TIME snapshots
       await tx.insert(leaderboardSnapshots).values(
         snapshots.map(s => ({
           ...s,
+          period: 'ALL_TIME',
+          totalPnl: s.totalPnl.toFixed(6),
+          returnPct: s.returnPct.toFixed(4),
+          portfolioValue: s.portfolioValue.toFixed(6)
+        }))
+      );
+
+      // Insert new HISTORY snapshots for time-series charts
+      await tx.insert(leaderboardSnapshots).values(
+        snapshots.map(s => ({
+          ...s,
+          period: 'HISTORY',
           totalPnl: s.totalPnl.toFixed(6),
           returnPct: s.returnPct.toFixed(4),
           portfolioValue: s.portfolioValue.toFixed(6)
