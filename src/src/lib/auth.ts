@@ -62,13 +62,49 @@ const nextAuthResult = NextAuth({
   },
 });
 
-export const handlers = nextAuthResult.handlers;
+import { NextResponse } from 'next/server';
+
+const originalHandlers = nextAuthResult.handlers;
+
+export const handlers = {
+  GET: async (req: any, ctx: any) => {
+    if (process.env.MOCK_AUTH === 'true') {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith('/api/auth/session')) {
+        return NextResponse.json({
+          user: {
+            id: '815c03ff-dad9-4535-a427-20422812424a',
+            email: 'dickenslihaocheng@gmail.com',
+            name: 'Dickens Li',
+          },
+          expires: new Date(Date.now() + 3600 * 1000).toISOString(),
+        });
+      }
+    }
+    return originalHandlers.GET(req, ctx);
+  },
+  POST: async (req: any, ctx: any) => {
+    return originalHandlers.POST(req, ctx);
+  }
+};
+
 export const signIn = nextAuthResult.signIn;
 export const signOut = nextAuthResult.signOut;
 
 import { eq } from 'drizzle-orm';
 
 export const auth = async (...args: any[]) => {
+  if (process.env.MOCK_AUTH === 'true') {
+    return {
+      user: {
+        id: '815c03ff-dad9-4535-a427-20422812424a',
+        email: 'dickenslihaocheng@gmail.com',
+        name: 'Dickens Li',
+      },
+      expires: new Date(Date.now() + 3600 * 1000).toISOString(),
+    };
+  }
+
   // Try original session cookie auth first
   const session = await (nextAuthResult.auth as any)(...args);
   if (session) return session;
