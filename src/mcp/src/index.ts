@@ -18,6 +18,23 @@ const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 function getAgentHeaders(args?: any) {
   const accountName = typeof args?.account === "string" ? args.account : "default";
   const userId = typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID;
+
+  const isDickensSmithUser = userId === "dickens_smith" || userId.startsWith("dickens_smith");
+  
+  if (isDickensSmithUser && (accountName === "default" || !accountName.startsWith("dickens_smith("))) {
+    throw new Error(`Account name ${JSON.stringify(accountName)} is not allowed for dickens_smith. You must use the format: dickens_smith("strategy_name")`);
+  }
+
+  if (accountName === "dickens_smith" || accountName.startsWith("dickens_smith")) {
+    if (accountName === "dickens_smith") {
+      throw new Error(`Account name 'dickens_smith' must include a strategy suffix, e.g., dickens_smith("conservative_arb")`);
+    }
+    const pattern = /^dickens_smith\((["'])([a-zA-Z0-9_\u4e00-\u9fa5-]+)\1\)$/;
+    if (!pattern.test(accountName)) {
+      throw new Error(`Account name ${JSON.stringify(accountName)} must match format: dickens_smith("strategy_name")`);
+    }
+  }
+
   return {
     "Content-Type": "application/json",
     "x-agent-secret": AGENT_SECRET,

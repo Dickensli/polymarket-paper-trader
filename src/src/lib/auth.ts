@@ -139,8 +139,13 @@ export const auth = async (...args: any[]) => {
 
       if (agentAccount !== 'default') {
         targetUserId = getDeterministicUuid(masterUserId, agentAccount);
-        strategyName = `${rawAgentName} (${agentAccount})`;
-        strategyEmail = `agent+${rawAgentName.replace(/\s+/g, '_')}+${agentAccount}@polymarkettraders.com`;
+        if (agentAccount.startsWith(rawAgentName)) {
+          strategyName = agentAccount;
+        } else {
+          strategyName = `${rawAgentName}("${agentAccount}")`;
+        }
+        const cleanAccount = agentAccount.replace(/[^a-zA-Z0-9_-]/g, '_');
+        strategyEmail = `agent+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
       }
 
       const db = getDb();
