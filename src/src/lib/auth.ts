@@ -169,10 +169,14 @@ export const auth = async (...args: any[]) => {
               slippageEnabled: false,
               slippageBps: 50,
               theme: "system",
-              notifications: true,
             }
           });
         }
+      }
+
+      if (dbUser && dbUser.name !== strategyName) {
+        await db.update(users).set({ name: strategyName }).where(eq(users.id, targetUserId));
+        dbUser.name = strategyName;
       }
 
       // Ensure a portfolio exists for this agent user
