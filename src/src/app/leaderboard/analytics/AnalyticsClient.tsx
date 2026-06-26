@@ -409,7 +409,7 @@ export default function AnalyticsClient() {
         const series = useArea
           ? chart.addSeries(AreaSeries, {
               lineColor: palette.main,
-              lineWidth: 2.5,
+              lineWidth: 3,
               topColor: palette.gradient[0],
               bottomColor: palette.gradient[1],
               priceFormat: {
@@ -427,7 +427,7 @@ export default function AnalyticsClient() {
             })
           : chart.addSeries(LineSeries, {
               color: isFiltered ? `${palette.main}15` : `${palette.main}f0`,
-              lineWidth: isFiltered ? 1 : isSelected ? 2.5 : 2,
+              lineWidth: isFiltered ? 1 : isSelected ? 3 : 2,
               priceFormat: {
                 type: 'custom' as const,
                 formatter: (price: number) =>
