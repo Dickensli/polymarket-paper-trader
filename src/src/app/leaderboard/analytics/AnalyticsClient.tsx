@@ -223,9 +223,6 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
   };
 }
 
-/* ═══════════════════════════════════════════════════════
-   MAIN ANALYTICS COMPONENT
-   ═══════════════════════════════════════════════════════ */
 export default function AnalyticsClient() {
   const [dailyData, setDailyData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
   const [hourlyData, setHourlyData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
@@ -235,7 +232,7 @@ export default function AnalyticsClient() {
   const [chartMetric, setChartMetric] = useState<ChartMetric>('value');
   const [granularity, setGranularity] = useState<Granularity>('hourly');
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
-  const [activeStrategy, setActiveStrategy] = useState<string | null>(null);
+  const [selectedStrategies, setSelectedStrategies] = useState<Set<string>>(new Set());
   const [hoveredPoint, setHoveredPoint] = useState<{ time: number; values: Record<string, number> } | null>(null);
 
   // Chart refs
@@ -279,9 +276,28 @@ export default function AnalyticsClient() {
     return hist.filter(pt => periodKeyToUnix(pt.date) >= cutoff);
   }, [data, timeRange]);
 
-  // Primary strategy (first or selected)
-  const primaryStrat = activeStrategy || data?.strategies[0] || '';
   const strategies = data?.strategies || [];
+
+  // Toggle a strategy selection
+  const toggleStrategy = useCallback((strat: string) => {
+    setSelectedStrategies(prev => {
+      const next = new Set(prev);
+      if (next.has(strat)) {
+        next.delete(strat);
+      } else {
+        next.add(strat);
+      }
+      return next;
+    });
+  }, []);
+
+  // Primary strategy (first selected, or first overall if empty)
+  const primaryStrat = useMemo(() => {
+    if (selectedStrategies.size > 0) {
+      return Array.from(selectedStrategies)[0];
+    }
+    return strategies[0] || '';
+  }, [selectedStrategies, strategies]);
 
   // Compute all strategy metrics using hourly data
   const metricsData = hourlyData || dailyData;
@@ -383,14 +399,17 @@ export default function AnalyticsClient() {
       for (let i = 0; i < strats.length; i++) {
         const strat = strats[i];
         const palette = getStrategyPalette(strat, i);
-        const isFiltered = activeStrategy !== null && activeStrategy !== strat;
-        const isPrimary = activeStrategy === null ? i === 0 : activeStrategy === strat;
+        const hasSelection = selectedStrategies.size > 0;
+        const isSelected = selectedStrategies.has(strat);
+        const isFiltered = hasSelection && !isSelected;
 
-        // Use area series for primary, line for others
-        const series = isPrimary
+        // Use area series only if exactly 1 is selected
+        const useArea = selectedStrategies.size === 1 && isSelected;
+
+        const series = useArea
           ? chart.addSeries(AreaSeries, {
               lineColor: palette.main,
-              lineWidth: 2,
+              lineWidth: 2.5,
               topColor: palette.gradient[0],
               bottomColor: palette.gradient[1],
               priceFormat: {
@@ -407,15 +426,15 @@ export default function AnalyticsClient() {
               priceLineVisible: false,
             })
           : chart.addSeries(LineSeries, {
-              color: isFiltered ? `${palette.main}20` : `${palette.main}90`,
-              lineWidth: isFiltered ? 1 : 1.5,
+              color: isFiltered ? `${palette.main}15` : `${palette.main}f0`,
+              lineWidth: isFiltered ? 1 : isSelected ? 2.5 : 2,
               priceFormat: {
                 type: 'custom' as const,
                 formatter: (price: number) =>
                   chartMetric === 'pnl' ? formatPnl(price) : formatCurrency(price),
               },
               crosshairMarkerVisible: !isFiltered,
-              lastValueVisible: false,
+              lastValueVisible: !isFiltered,
               priceLineVisible: false,
             });
 
@@ -456,7 +475,7 @@ export default function AnalyticsClient() {
         seriesRefs.current.clear();
       }
     };
-  }, [data, filteredHistory, chartMetric, activeStrategy, granularity]);
+  }, [data, filteredHistory, chartMetric, selectedStrategies, granularity]);
 
   /* ─── Render ──────────────────────────────────────── */
   if (loading) {
@@ -626,26 +645,59 @@ export default function AnalyticsClient() {
           </div>
         </div>
 
-        {/* TradingView Chart */}
-        <div
-          ref={chartContainerRef}
-          className="w-full"
-          style={{ height: 420 }}
-        />
+        {/* TradingView Chart Container with Overlay Tooltip */}
+        <div className="relative w-full">
+          <div
+            ref={chartContainerRef}
+            className="w-full"
+            style={{ height: 420 }}
+          />
+          
+          {/* Custom absolute hover tooltip in the top-right corner */}
+          {hoveredPoint && (
+            <div className="absolute top-4 right-4 bg-background-secondary/95 border border-border/80 rounded-xl p-3.5 shadow-2xl backdrop-blur-md z-30 w-64 animate-fade-in text-xs space-y-2.5">
+              <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                <span className="text-[10px] text-foreground-muted/60 font-mono">HOVER METRICS</span>
+                <span className="text-[10px] text-foreground-muted font-mono">{displayTime}</span>
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {strategies.map((strat, idx) => {
+                  const palette = getStrategyPalette(strat, idx);
+                  const hasSelection = selectedStrategies.size > 0;
+                  const isSelected = selectedStrategies.has(strat);
+                  const isVisible = !hasSelection || isSelected;
+                  const val = hoveredPoint.values[strat];
+                  if (val === undefined) return null;
 
-        {/* Strategy Legend */}
+                  return (
+                    <div key={strat} className={`flex items-center justify-between gap-4 transition-opacity ${isVisible ? 'opacity-100' : 'opacity-25'}`}>
+                      <div className="flex items-center gap-2 truncate mr-2">
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: palette.main }} />
+                        <span className="font-semibold text-foreground truncate">{strat}</span>
+                      </div>
+                      <span className="font-mono text-foreground font-bold">{chartMetric === 'value' ? formatCurrency(val) : formatPnl(val)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Strategy Legend Toggles */}
         <div className="analytics-legend">
           {strategies.map((strat, idx) => {
             const palette = getStrategyPalette(strat, idx);
-            const isSelected = activeStrategy === strat;
-            const isAnySelected = activeStrategy !== null;
+            const isSelected = selectedStrategies.has(strat);
+            const hasSelection = selectedStrategies.size > 0;
+            const isFiltered = hasSelection && !isSelected;
 
             return (
               <button
                 key={strat}
-                onClick={() => setActiveStrategy(isSelected ? null : strat)}
+                onClick={() => toggleStrategy(strat)}
                 className={`analytics-legend-item ${isSelected ? 'analytics-legend-active' : ''} ${
-                  isAnySelected && !isSelected ? 'opacity-30' : ''
+                  isFiltered ? 'opacity-30' : ''
                 }`}
                 style={{
                   '--legend-color': palette.main,
@@ -663,6 +715,14 @@ export default function AnalyticsClient() {
               </button>
             );
           })}
+          {selectedStrategies.size > 0 && (
+            <button
+              onClick={() => setSelectedStrategies(new Set())}
+              className="analytics-legend-item text-foreground-muted hover:text-foreground hover:border-border border-dashed"
+            >
+              Reset Filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -814,24 +874,26 @@ export default function AnalyticsClient() {
             const metrics = allMetrics[strat];
             if (!metrics) return null;
             const isProfit = metrics.totalPnl >= 0;
+            const isSelected = selectedStrategies.has(strat);
+            const isAnySelected = selectedStrategies.size > 0;
 
             return (
               <div
                 key={strat}
-                onClick={() => setActiveStrategy(activeStrategy === strat ? null : strat)}
+                onClick={() => toggleStrategy(strat)}
                 className={`analytics-strategy-card cursor-pointer ${
-                  activeStrategy === strat ? 'analytics-strategy-card-active' : ''
-                }`}
+                  isSelected ? 'analytics-strategy-card-active' : ''
+                } ${isAnySelected && !isSelected ? 'opacity-40' : 'opacity-100'}`}
                 style={{
                   '--card-accent': palette.main,
-                  borderColor: activeStrategy === strat ? palette.main : undefined,
+                  borderColor: isSelected ? palette.main : undefined,
                 } as React.CSSProperties}
               >
                 {/* Header */}
                 <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: palette.main }} />
-                    <span className="text-sm font-bold text-foreground">{strat}</span>
+                  <div className="flex items-center gap-2 truncate">
+                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: palette.main }} />
+                    <span className="text-sm font-bold text-foreground truncate">{strat}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className={`analytics-delta-badge text-[10px] ${isProfit ? 'analytics-delta-positive' : 'analytics-delta-negative'}`}>

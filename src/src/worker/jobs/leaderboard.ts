@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { getDb } from '@/lib/db';
 import { portfolios, positions, users, leaderboardSnapshots } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 /**
  * Calculates portfolio values and creates snapshots for the leaderboard.
@@ -60,8 +60,17 @@ export async function runLeaderboardCalculation() {
   });
 
   if (snapshots.length > 0) {
+    // Truncate timestamps for clean HOURLY and DAILY intervals
+    const now = new Date();
+
+    const hourlyDate = new Date(now);
+    hourlyDate.setUTCMinutes(0, 0, 0);
+
+    const dailyDate = new Date(now);
+    dailyDate.setUTCHours(0, 0, 0, 0);
+
     await db.transaction(async (tx) => {
-      // Clear previous ALL_TIME snapshots for simplicity
+      // 1. Clear previous ALL_TIME snapshots for simplicity
       await tx.delete(leaderboardSnapshots).where(eq(leaderboardSnapshots.period, 'ALL_TIME'));
 
       // Insert new ALL_TIME snapshots
@@ -75,7 +84,51 @@ export async function runLeaderboardCalculation() {
         }))
       );
 
-      // Insert new HISTORY snapshots for time-series charts
+      // 2. Pre-compute/Upsert HOURLY snapshots (delete then insert for the current hour)
+      for (const s of snapshots) {
+        await tx
+          .delete(leaderboardSnapshots)
+          .where(
+            and(
+              eq(leaderboardSnapshots.userId, s.userId),
+              eq(leaderboardSnapshots.period, 'HOURLY'),
+              eq(leaderboardSnapshots.snapshotDate, hourlyDate)
+            )
+          );
+
+        await tx.insert(leaderboardSnapshots).values({
+          ...s,
+          period: 'HOURLY',
+          snapshotDate: hourlyDate,
+          totalPnl: s.totalPnl.toFixed(6),
+          returnPct: s.returnPct.toFixed(4),
+          portfolioValue: s.portfolioValue.toFixed(6)
+        });
+      }
+
+      // 3. Pre-compute/Upsert DAILY snapshots (delete then insert for the current day)
+      for (const s of snapshots) {
+        await tx
+          .delete(leaderboardSnapshots)
+          .where(
+            and(
+              eq(leaderboardSnapshots.userId, s.userId),
+              eq(leaderboardSnapshots.period, 'DAILY'),
+              eq(leaderboardSnapshots.snapshotDate, dailyDate)
+            )
+          );
+
+        await tx.insert(leaderboardSnapshots).values({
+          ...s,
+          period: 'DAILY',
+          snapshotDate: dailyDate,
+          totalPnl: s.totalPnl.toFixed(6),
+          returnPct: s.returnPct.toFixed(4),
+          portfolioValue: s.portfolioValue.toFixed(6)
+        });
+      }
+
+      // 4. Maintain legacy HISTORY snapshots (runs every 15m) for backwards compatibility if needed
       await tx.insert(leaderboardSnapshots).values(
         snapshots.map(s => ({
           ...s,
@@ -102,3 +155,4 @@ export function startLeaderboardJob() {
     }
   });
 }
+

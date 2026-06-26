@@ -168,47 +168,56 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
 
-    // For hourly granularity, always compute from trade data (snapshots are daily)
-    if (granularity === 'hourly') {
-      const targetUserIds = isAdmin ? undefined : [userId];
-      const { strategies, history } = await buildHistoryFromTrades(db, granularity, targetUserIds);
+    // 1. Check for pre-computed snapshots (HOURLY or DAILY)
+    const targetPeriod = granularity === 'hourly' ? 'HOURLY' : 'DAILY';
 
-      return NextResponse.json({
-        success: true,
-        strategies,
-        history,
-        granularity,
-      });
-    }
-
-    // 1. Check for existing snapshots first (daily)
-    const historySnaps = await db.query.leaderboardSnapshots.findMany({
-      where: isAdmin 
-        ? eq(leaderboardSnapshots.period, 'HISTORY')
+    let snaps = await db.query.leaderboardSnapshots.findMany({
+      where: isAdmin
+        ? eq(leaderboardSnapshots.period, targetPeriod)
         : and(
-            eq(leaderboardSnapshots.period, 'HISTORY'),
+            eq(leaderboardSnapshots.period, targetPeriod),
             eq(leaderboardSnapshots.userId, userId)
           ),
       orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
     });
 
-    // 2. If we have snapshots, use them
-    if (historySnaps.length > 0) {
-      const dateMap = new Map<string, Record<string, any>>();
-      
-      for (const snap of historySnaps) {
-        const dateKey = snap.snapshotDate.toISOString().substring(0, 10);
-        if (!dateMap.has(dateKey)) {
-          dateMap.set(dateKey, { date: dateKey });
+    // Backward compatibility fallback for daily: use legacy HISTORY snapshots if DAILY is empty
+    if (snaps.length === 0 && granularity === 'daily') {
+      snaps = await db.query.leaderboardSnapshots.findMany({
+        where: isAdmin
+          ? eq(leaderboardSnapshots.period, 'HISTORY')
+          : and(
+              eq(leaderboardSnapshots.period, 'HISTORY'),
+              eq(leaderboardSnapshots.userId, userId)
+            ),
+        orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
+      });
+    }
+
+    // 2. If snapshots are found, map them to the timeseries layout and return immediately
+    if (snaps.length > 0) {
+      const periodMap = new Map<string, Record<string, any>>();
+
+      for (const snap of snaps) {
+        let periodKey: string;
+        if (granularity === 'hourly') {
+          const hour = snap.snapshotDate.getUTCHours().toString().padStart(2, '0');
+          periodKey = `${snap.snapshotDate.toISOString().substring(0, 10)}T${hour}`;
+        } else {
+          periodKey = snap.snapshotDate.toISOString().substring(0, 10);
         }
-        const dayObj = dateMap.get(dateKey)!;
-        dayObj[snap.userName || 'unknown'] = Number(snap.portfolioValue);
-        dayObj[`${snap.userName || 'unknown'}_pnl`] = Number(snap.totalPnl);
-        dayObj[`${snap.userName || 'unknown'}_rank`] = snap.rank;
+
+        if (!periodMap.has(periodKey)) {
+          periodMap.set(periodKey, { date: periodKey });
+        }
+        const periodObj = periodMap.get(periodKey)!;
+        periodObj[snap.userName || 'unknown'] = Number(snap.portfolioValue);
+        periodObj[`${snap.userName || 'unknown'}_pnl`] = Number(snap.totalPnl);
+        periodObj[`${snap.userName || 'unknown'}_rank`] = snap.rank;
       }
 
-      const historyData = Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-      const activeStrategies = Array.from(new Set(historySnaps.map(s => s.userName || 'unknown')));
+      const historyData = Array.from(periodMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+      const activeStrategies = Array.from(new Set(snaps.map(s => s.userName || 'unknown')));
 
       return NextResponse.json({
         success: true,
@@ -218,7 +227,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 3. No snapshots — compute from real trade data
+    // 3. Fallback: No snapshots found — compute from real trade records
     const targetUserIds = isAdmin ? undefined : [userId];
     const { strategies, history } = await buildHistoryFromTrades(db, granularity, targetUserIds);
 
@@ -233,3 +242,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
+
