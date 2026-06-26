@@ -92,6 +92,7 @@ export const signIn = nextAuthResult.signIn;
 export const signOut = nextAuthResult.signOut;
 
 import { eq } from 'drizzle-orm';
+import { normalizePlatform } from '@/lib/platform';
 
 export const auth = async (...args: any[]) => {
   if (process.env.MOCK_AUTH === 'true') {
@@ -116,6 +117,7 @@ export const auth = async (...args: any[]) => {
     const agentSecret = reqHeaders.get('x-agent-secret');
     const rawUserIdHeader = reqHeaders.get('x-agent-user-id') || '815c03ff-dad9-4535-a427-20422812424a';
     const agentAccount = reqHeaders.get('x-agent-account') || 'default';
+    const platform = normalizePlatform(reqHeaders.get('x-agent-platform'));
 
     const isProd = process.env.NODE_ENV === 'production';
     const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
@@ -138,14 +140,22 @@ export const auth = async (...args: any[]) => {
         : `agent+${rawUserIdHeader.replace(/\s+/g, '_')}@polymarkettraders.com`;
 
       if (agentAccount !== 'default') {
-        targetUserId = getDeterministicUuid(masterUserId, agentAccount);
+        const accountKey = platform === 'kalshi' ? `${platform}:${agentAccount}` : agentAccount;
+        targetUserId = getDeterministicUuid(masterUserId, accountKey);
         if (agentAccount.startsWith(rawAgentName)) {
           strategyName = agentAccount;
         } else {
           strategyName = `${rawAgentName}("${agentAccount}")`;
         }
+        if (platform === 'kalshi' && !strategyName.startsWith('Kalshi ')) {
+          strategyName = `Kalshi ${strategyName}`;
+        }
         const cleanAccount = agentAccount.replace(/[^a-zA-Z0-9_-]/g, '_');
-        strategyEmail = `agent+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
+        strategyEmail = `agent+${platform}+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
+      } else if (platform === 'kalshi') {
+        targetUserId = getDeterministicUuid(masterUserId, 'kalshi:default');
+        strategyName = `Kalshi ${rawAgentName}`;
+        strategyEmail = `agent+kalshi+${rawAgentName.replace(/\s+/g, '_')}@polymarkettraders.com`;
       }
 
       const db = getDb();
@@ -165,6 +175,7 @@ export const auth = async (...args: any[]) => {
             name: strategyName,
             settings: {
               strategyName: agentAccount,
+              platform,
               defaultTradeSize: 100,
               slippageEnabled: false,
               slippageBps: 50,
@@ -175,8 +186,14 @@ export const auth = async (...args: any[]) => {
       }
 
       if (dbUser && dbUser.name !== strategyName) {
-        await db.update(users).set({ name: strategyName }).where(eq(users.id, targetUserId));
+        const settings = (dbUser.settings as Record<string, any>) || {};
+        await db.update(users).set({ name: strategyName, settings: { ...settings, platform } }).where(eq(users.id, targetUserId));
         dbUser.name = strategyName;
+      } else if (dbUser) {
+        const settings = (dbUser.settings as Record<string, any>) || {};
+        if (settings.platform !== platform) {
+          await db.update(users).set({ settings: { ...settings, platform } }).where(eq(users.id, targetUserId));
+        }
       }
 
       // Ensure a portfolio exists for this agent user

@@ -6,8 +6,9 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 
 type HistoryPoint = {
   date: string;
-  [strategyName: string]: any; // portfolioValue, pnl, rank
-};
+} & Record<string, string | number | undefined>;
+
+type Platform = 'polymarket' | 'kalshi';
 
 const DEFAULT_COLORS = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
 
@@ -19,6 +20,9 @@ function getStrategyColor(name: string, index: number): string {
 
 export default function AnalyticsClient() {
   const [data, setData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
+  const [platform, setPlatform] = useState<Platform>('polymarket');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -28,7 +32,7 @@ export default function AnalyticsClient() {
   const [activeStrategy, setActiveStrategy] = useState<string | null>(null); // filter highlight
 
   useEffect(() => {
-    fetch('/api/leaderboard/history')
+    fetch(`/api/leaderboard/history?platform=${platform}&page=${page}&pageSize=8`)
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch leaderboard history');
         return res.json();
@@ -39,6 +43,7 @@ export default function AnalyticsClient() {
             strategies: json.strategies,
             history: json.history
           });
+          setTotalPages(json.meta?.totalPages ?? 1);
         }
       })
       .catch((err) => {
@@ -47,7 +52,13 @@ export default function AnalyticsClient() {
       .finally(() => {
         setLoading(false);
       });
-  }, []);
+  }, [platform, page]);
+
+  const selectPlatform = (nextPlatform: Platform) => {
+    setPlatform(nextPlatform);
+    setPage(1);
+    setActiveStrategy(null);
+  };
 
   if (loading) {
     return (
@@ -62,7 +73,7 @@ export default function AnalyticsClient() {
     return (
       <div className="p-8 bg-red-950/20 border border-red-900/50 text-red-400 rounded-xl max-w-xl mx-auto text-center">
         <h3 className="font-bold text-lg mb-2">Failed to load analytics</h3>
-        <p className="text-sm text-red-300/80 mb-4">{error || 'No historical data found.'}</p>
+          <p className="text-sm text-red-300/80 mb-4">{error || 'No historical data found.'}</p>
         <Link href="/leaderboard" className="text-sm font-semibold text-primary hover:underline">
           Back to Leaderboard
         </Link>
@@ -147,9 +158,10 @@ export default function AnalyticsClient() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/40 pb-6">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight gradient-text">Performance Analytics</h1>
-          <p className="mt-1 text-sm text-foreground-muted">Compare strategy returns, win rates, and daily portfolio metrics.</p>
+          <p className="mt-1 text-sm text-foreground-muted">Compare {platform === 'kalshi' ? 'Kalshi' : 'Polymarket'} strategy returns, win rates, and daily portfolio metrics.</p>
         </div>
         <div className="flex gap-2">
+          <PlatformTabs platform={platform} onSelect={selectPlatform} />
           <Link
             href="/leaderboard"
             className="px-4 py-2 text-xs font-semibold rounded-lg bg-surface border border-border/50 hover:bg-card-hover hover:border-border transition-all"
@@ -175,7 +187,7 @@ export default function AnalyticsClient() {
                 ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                (activePoint[`${activeStrategy || strategies[0]}_pnl`] || 0) >= 0
+                Number(activePoint[`${activeStrategy || strategies[0]}_pnl`] || 0) >= 0
                   ? 'bg-profit/10 text-profit'
                   : 'bg-loss/10 text-loss'
               }`}>
@@ -388,7 +400,10 @@ export default function AnalyticsClient() {
 
       {/* Grid of Strategy Detail Analytics Cards */}
       <div>
-        <h2 className="text-xl font-bold text-foreground mb-4">Detailed Metrics</h2>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h2 className="text-xl font-bold text-foreground">Detailed Metrics</h2>
+          <Pagination page={page} totalPages={totalPages} onPage={setPage} />
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {strategyStats.map((stats, statsIdx) => {
             const color = getStrategyColor(stats.name, statsIdx);
@@ -532,6 +547,50 @@ export default function AnalyticsClient() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PlatformTabs({ platform, onSelect }: { platform: Platform; onSelect: (platform: Platform) => void }) {
+  return (
+    <div className="inline-flex gap-1 rounded-lg border border-border/50 bg-background-secondary p-1">
+      {(['polymarket', 'kalshi'] as Platform[]).map((item) => (
+        <button
+          key={item}
+          onClick={() => onSelect(item)}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+            platform === item
+              ? 'bg-surface text-foreground shadow-sm'
+              : 'text-foreground-muted hover:text-foreground'
+          }`}
+        >
+          {item === 'kalshi' ? 'Kalshi' : 'Polymarket'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Pagination({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (page: number) => void }) {
+  return (
+    <div className="flex items-center justify-end gap-2 text-xs text-foreground-muted">
+      <button
+        onClick={() => onPage(Math.max(1, page - 1))}
+        disabled={page <= 1}
+        className="px-3 py-1.5 rounded-md border border-border/50 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-surface"
+      >
+        Prev
+      </button>
+      <span className="font-mono">
+        Page {page} / {totalPages}
+      </span>
+      <button
+        onClick={() => onPage(Math.min(totalPages, page + 1))}
+        disabled={page >= totalPages}
+        className="px-3 py-1.5 rounded-md border border-border/50 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-surface"
+      >
+        Next
+      </button>
     </div>
   );
 }

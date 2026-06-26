@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { leaderboardSnapshots, users, portfolios, paperTrades, positions } from '@/lib/db/schema';
+import { leaderboardSnapshots, portfolios, paperTrades, positions } from '@/lib/db/schema';
 import { eq, and, asc } from 'drizzle-orm';
 
 import { auth } from '@/lib/auth';
+import { getUserPlatform, normalizePlatform } from '@/lib/platform';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+type HistoryRow = { date: string } & Record<string, string | number>;
 
 /**
  * Build daily portfolio value history from real trade data.
@@ -15,12 +18,12 @@ export const revalidate = 0;
  *   2. Replay trades day-by-day to compute cash balance changes
  *   3. Add current position values for the latest day
  */
-async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserIds?: string[]) {
+async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserIds?: string[], platform = 'polymarket') {
   // Fetch all relevant users
   const allUsers = await db.query.users.findMany();
   const filteredUsers = targetUserIds
     ? allUsers.filter(u => targetUserIds.includes(u.id))
-    : allUsers;
+    : allUsers.filter(u => getUserPlatform(u.settings) === platform);
 
   if (filteredUsers.length === 0) {
     return { strategies: [], history: [] };
@@ -28,7 +31,7 @@ async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserId
 
   const strategyNames: string[] = [];
   // Map: dateKey -> { date, [userName]: value, [userName_pnl]: pnl }
-  const dateMap = new Map<string, Record<string, any>>();
+  const dateMap = new Map<string, HistoryRow>();
 
   for (const user of filteredUsers) {
     const userName = user.name || 'Unknown';
@@ -59,14 +62,6 @@ async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserId
     const currentPositionsValue = openPos.reduce((sum, p) => {
       return sum + Number(p.shares) * Number(p.currentPrice);
     }, 0);
-
-    // Get closed positions for realized PnL
-    const closedPos = await db
-      .select()
-      .from(positions)
-      .where(and(eq(positions.userId, user.id), eq(positions.isOpen, false)));
-
-    const totalRealizedPnl = closedPos.reduce((sum, p) => sum + Number(p.realizedPnl), 0);
 
     // Build day-by-day cash balance from trades
     // Group trades by date
@@ -129,7 +124,25 @@ async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserId
   return { strategies: strategyNames, history };
 }
 
-export async function GET() {
+function pageHistoryStrategies(strategies: string[], history: HistoryRow[], page: number, pageSize: number) {
+  const total = strategies.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pagedStrategies = strategies.slice((page - 1) * pageSize, page * pageSize);
+  const strategySet = new Set(pagedStrategies);
+  const pagedHistory = history.map((point) => {
+    const next: { date: string } & Record<string, string | number | undefined> = { date: point.date };
+    for (const strategy of strategySet) {
+      next[strategy] = point[strategy];
+      next[`${strategy}_pnl`] = point[`${strategy}_pnl`];
+      next[`${strategy}_rank`] = point[`${strategy}_rank`];
+    }
+    return next;
+  });
+
+  return { strategies: pagedStrategies, history: pagedHistory, total, totalPages };
+}
+
+export async function GET(request: Request) {
   try {
     const session = await auth();
     if (!session || !session.user) {
@@ -139,6 +152,10 @@ export async function GET() {
     const userEmail = session.user.email;
     const userId = session.user.id;
     const isAdmin = userEmail === 'dickenslihaocheng@gmail.com';
+    const { searchParams } = new URL(request.url);
+    const platform = normalizePlatform(searchParams.get('platform'));
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
+    const pageSize = Math.min(20, Math.max(1, parseInt(searchParams.get('pageSize') ?? '8', 10) || 8));
 
     const db = getDb();
 
@@ -154,8 +171,8 @@ export async function GET() {
     });
 
     // 2. If we have snapshots, use them
-    if (historySnaps.length > 0) {
-      const dateMap = new Map<string, Record<string, any>>();
+    if (platform === 'polymarket' && historySnaps.length > 0) {
+      const dateMap = new Map<string, HistoryRow>();
       
       for (const snap of historySnaps) {
         const dateKey = snap.snapshotDate.toISOString().substring(0, 10);
@@ -171,25 +188,28 @@ export async function GET() {
       const historyData = Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
       const activeStrategies = Array.from(new Set(historySnaps.map(s => s.userName || 'unknown')));
 
+      const paged = pageHistoryStrategies(activeStrategies, historyData, page, pageSize);
       return NextResponse.json({
         success: true,
-        strategies: activeStrategies,
-        history: historyData
+        strategies: paged.strategies,
+        history: paged.history,
+        meta: { platform, page, pageSize, totalStrategies: paged.total, totalPages: paged.totalPages }
       });
     }
 
     // 3. No snapshots — compute from real trade data
     const targetUserIds = isAdmin ? undefined : [userId];
-    const { strategies, history } = await buildHistoryFromTrades(db, targetUserIds);
+    const { strategies, history } = await buildHistoryFromTrades(db, targetUserIds, platform);
+    const paged = pageHistoryStrategies(strategies, history, page, pageSize);
 
     return NextResponse.json({
       success: true,
-      strategies,
-      history
+      strategies: paged.strategies,
+      history: paged.history,
+      meta: { platform, page, pageSize, totalStrategies: paged.total, totalPages: paged.totalPages }
     });
   } catch (err) {
     console.error('Failed to fetch leaderboard history:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
-
