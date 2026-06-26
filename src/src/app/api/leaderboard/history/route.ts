@@ -4,11 +4,43 @@ import { leaderboardSnapshots, users, portfolios, paperTrades, positions } from 
 import { eq, and, asc } from 'drizzle-orm';
 
 import { auth } from '@/lib/auth';
+import { getUserPlatform, normalizePlatform, type TradingPlatform } from '@/lib/platform';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 type Granularity = 'daily' | 'hourly';
+type HistoryPoint = { date: string } & Record<string, string | number>;
+
+function pageHistoryStrategies(
+  strategies: string[],
+  history: HistoryPoint[],
+  page: number,
+  pageSize: number
+) {
+  const total = strategies.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pagedStrategies = strategies.slice(start, start + pageSize);
+  const allowedKeys = new Set<string>(['date']);
+
+  for (const strategy of pagedStrategies) {
+    allowedKeys.add(strategy);
+    allowedKeys.add(`${strategy}_pnl`);
+    allowedKeys.add(`${strategy}_rank`);
+  }
+
+  return {
+    strategies: pagedStrategies,
+    history: history.map((point) => Object.fromEntries(
+      Object.entries(point).filter(([key]) => allowedKeys.has(key))
+    ) as HistoryPoint),
+    page: safePage,
+    total,
+    totalPages,
+  };
+}
 
 /**
  * Build portfolio value history from real trade data.
@@ -21,13 +53,15 @@ type Granularity = 'daily' | 'hourly';
 async function buildHistoryFromTrades(
   db: ReturnType<typeof getDb>,
   granularity: Granularity,
+  platform: TradingPlatform,
   targetUserIds?: string[]
 ) {
   // Fetch all relevant users
   const allUsers = await db.query.users.findMany();
-  const filteredUsers = targetUserIds
-    ? allUsers.filter(u => targetUserIds.includes(u.id))
-    : allUsers;
+  const filteredUsers = allUsers.filter(u => (
+    getUserPlatform(u.settings) === platform &&
+    (!targetUserIds || targetUserIds.includes(u.id))
+  ));
 
   if (filteredUsers.length === 0) {
     return { strategies: [], history: [] };
@@ -35,7 +69,7 @@ async function buildHistoryFromTrades(
 
   const strategyNames: string[] = [];
   // Map: periodKey -> { date, [userName]: value, [userName_pnl]: pnl }
-  const periodMap = new Map<string, Record<string, any>>();
+  const periodMap = new Map<string, HistoryPoint>();
 
   for (const user of filteredUsers) {
     const userName = user.name || 'Unknown';
@@ -165,24 +199,29 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const granularityParam = searchParams.get('granularity');
     const granularity: Granularity = granularityParam === 'hourly' ? 'hourly' : 'daily';
+    const platform = normalizePlatform(searchParams.get('platform'));
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '8', 10) || 8));
 
     const db = getDb();
 
     // 1. Check for pre-computed snapshots (HOURLY or DAILY)
     const targetPeriod = granularity === 'hourly' ? 'HOURLY' : 'DAILY';
 
-    let snaps = await db.query.leaderboardSnapshots.findMany({
-      where: isAdmin
-        ? eq(leaderboardSnapshots.period, targetPeriod)
-        : and(
-            eq(leaderboardSnapshots.period, targetPeriod),
-            eq(leaderboardSnapshots.userId, userId)
-          ),
-      orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
-    });
+    let snaps = platform === 'polymarket'
+      ? await db.query.leaderboardSnapshots.findMany({
+          where: isAdmin
+            ? eq(leaderboardSnapshots.period, targetPeriod)
+            : and(
+                eq(leaderboardSnapshots.period, targetPeriod),
+                eq(leaderboardSnapshots.userId, userId)
+              ),
+          orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
+        })
+      : [];
 
     // Backward compatibility fallback for daily: use legacy HISTORY snapshots if DAILY is empty
-    if (snaps.length === 0 && granularity === 'daily') {
+    if (platform === 'polymarket' && snaps.length === 0 && granularity === 'daily') {
       snaps = await db.query.leaderboardSnapshots.findMany({
         where: isAdmin
           ? eq(leaderboardSnapshots.period, 'HISTORY')
@@ -196,7 +235,7 @@ export async function GET(request: NextRequest) {
 
     // 2. If snapshots are found, map them to the timeseries layout and return immediately
     if (snaps.length > 0) {
-      const periodMap = new Map<string, Record<string, any>>();
+      const periodMap = new Map<string, HistoryPoint>();
 
       for (const snap of snaps) {
         let periodKey: string;
@@ -218,28 +257,45 @@ export async function GET(request: NextRequest) {
 
       const historyData = Array.from(periodMap.values()).sort((a, b) => a.date.localeCompare(b.date));
       const activeStrategies = Array.from(new Set(snaps.map(s => s.userName || 'unknown')));
+      const paged = pageHistoryStrategies(activeStrategies, historyData, page, pageSize);
 
       return NextResponse.json({
         success: true,
-        strategies: activeStrategies,
-        history: historyData,
+        strategies: paged.strategies,
+        history: paged.history,
         granularity,
+        meta: {
+          platform,
+          granularity,
+          page: paged.page,
+          pageSize,
+          totalStrategies: paged.total,
+          totalPages: paged.totalPages,
+        },
       });
     }
 
     // 3. Fallback: No snapshots found — compute from real trade records
     const targetUserIds = isAdmin ? undefined : [userId];
-    const { strategies, history } = await buildHistoryFromTrades(db, granularity, targetUserIds);
+    const { strategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds);
+    const paged = pageHistoryStrategies(strategies, history, page, pageSize);
 
     return NextResponse.json({
       success: true,
-      strategies,
-      history,
+      strategies: paged.strategies,
+      history: paged.history,
       granularity,
+      meta: {
+        platform,
+        granularity,
+        page: paged.page,
+        pageSize,
+        totalStrategies: paged.total,
+        totalPages: paged.totalPages,
+      },
     });
   } catch (err) {
     console.error('Failed to fetch leaderboard history:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
-

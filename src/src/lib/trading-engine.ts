@@ -16,6 +16,7 @@ import type {
 } from '@/lib/types';
 import { Redis } from '@upstash/redis';
 import { getMidpoint, getMarket } from '@/lib/polymarket';
+import { getKalshiOutcomePrice, parseKalshiTokenId } from '@/lib/kalshi';
 import { runResolutionCheckForUser } from '@/worker/jobs/resolution-handler';
 
 // Constants
@@ -137,7 +138,10 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
             return { tokenId, price: cachedPrice };
           }
 
-          const livePrice = await getMidpoint(tokenId).catch(() => null);
+          const kalshiToken = parseKalshiTokenId(tokenId);
+          const livePrice = kalshiToken
+            ? await getKalshiOutcomePrice(kalshiToken.ticker, kalshiToken.outcome).catch(() => null)
+            : await getMidpoint(tokenId).catch(() => null);
           if (livePrice !== null && redis) {
             await redis.set(`price:${tokenId}`, livePrice, { ex: 15 }).catch(() => {});
           }
@@ -302,7 +306,7 @@ export async function executeTrade(
   userId: string,
   params: TradeParams,
 ): Promise<Trade> {
-  const { marketId, marketQuestion, tokenId, outcome, side, shares, price, idempotencyKey, slippageApplied, feeRateBps } =
+  const { marketId, marketQuestion, tokenId, outcome, side, shares, price, idempotencyKey, slippageApplied, feeRateBps, platform = 'polymarket' } =
     params;
 
   // Validation
@@ -332,7 +336,7 @@ export async function executeTrade(
   // not through normal buy/sell at stale midpoint prices.
   // Skip this check for internal resolution calls (identified by idempotencyKey prefix).
   const isResolutionCall = idempotencyKey?.startsWith('resolve_');
-  if (!isResolutionCall) {
+  if (!isResolutionCall && platform !== 'kalshi') {
     try {
       const marketData = await getMarket(marketId);
       if (marketData.closed) {

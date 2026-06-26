@@ -13,6 +13,7 @@ type HistoryPoint = {
 type Granularity = 'daily' | 'hourly';
 type TimeRange = '1H' | '6H' | '1D' | '1W' | 'ALL';
 type ChartMetric = 'value' | 'pnl';
+type Platform = 'polymarket' | 'kalshi';
 
 /* ─── Constants ─────────────────────────────────────── */
 const STRATEGY_COLORS = [
@@ -228,6 +229,9 @@ export default function AnalyticsClient() {
   const [hourlyData, setHourlyData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [platform, setPlatform] = useState<Platform>('polymarket');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   const [chartMetric, setChartMetric] = useState<ChartMetric>('value');
   const [granularity, setGranularity] = useState<Granularity>('hourly');
@@ -243,17 +247,20 @@ export default function AnalyticsClient() {
   // Fetch both granularities
   useEffect(() => {
     setLoading(true);
+    setError(null);
+    const query = `platform=${platform}&page=${page}&pageSize=8`;
     Promise.all([
-      fetch('/api/leaderboard/history?granularity=daily').then(r => r.json()),
-      fetch('/api/leaderboard/history?granularity=hourly').then(r => r.json()),
+      fetch(`/api/leaderboard/history?granularity=daily&${query}`).then(r => r.json()),
+      fetch(`/api/leaderboard/history?granularity=hourly&${query}`).then(r => r.json()),
     ])
       .then(([daily, hourly]) => {
         if (daily.success) setDailyData({ strategies: daily.strategies, history: daily.history });
         if (hourly.success) setHourlyData({ strategies: hourly.strategies, history: hourly.history });
+        setTotalPages(daily.meta?.totalPages ?? hourly.meta?.totalPages ?? 1);
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [platform, page]);
 
   // Active dataset
   const data = granularity === 'hourly' ? hourlyData : dailyData;
@@ -277,6 +284,13 @@ export default function AnalyticsClient() {
   }, [data, timeRange]);
 
   const strategies = data?.strategies || [];
+
+  const selectPlatform = useCallback((nextPlatform: Platform) => {
+    setPlatform(nextPlatform);
+    setPage(1);
+    setSelectedStrategies(new Set());
+    setHoveredPoint(null);
+  }, []);
 
   // Toggle a strategy selection
   const toggleStrategy = useCallback((strat: string) => {
@@ -577,6 +591,10 @@ export default function AnalyticsClient() {
       <div className="analytics-chart-wrapper">
         <div className="analytics-chart-controls">
           <div className="flex items-center gap-2 flex-wrap">
+            <PlatformTabs platform={platform} onSelect={selectPlatform} />
+
+            <div className="analytics-divider" />
+
             {/* Time Range Selectors */}
             <div className="analytics-pill-group">
               {(['1H', '6H', '1D', '1W', 'ALL'] as TimeRange[]).map(range => (
@@ -652,7 +670,7 @@ export default function AnalyticsClient() {
             className="w-full"
             style={{ height: 420 }}
           />
-          
+
           {/* Custom absolute hover tooltip in the top-right corner */}
           {hoveredPoint && (
             <div className="absolute top-4 right-4 bg-background-secondary/95 border border-border/80 rounded-xl p-3.5 shadow-2xl backdrop-blur-md z-30 w-64 animate-fade-in text-xs space-y-2.5">
@@ -724,6 +742,8 @@ export default function AnalyticsClient() {
             </button>
           )}
         </div>
+
+        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
       </div>
 
       {/* ═══ Hourly Rate Metrics (Monitoring Panel) ════ */}
@@ -994,6 +1014,62 @@ export default function AnalyticsClient() {
             })}
         </div>
       </div>
+    </div>
+  );
+}
+
+function PlatformTabs({
+  platform,
+  onSelect,
+}: {
+  platform: Platform;
+  onSelect: (platform: Platform) => void;
+}) {
+  return (
+    <div className="analytics-pill-group">
+      {(['polymarket', 'kalshi'] as Platform[]).map((item) => (
+        <button
+          key={item}
+          onClick={() => onSelect(item)}
+          className={`analytics-pill ${platform === item ? 'analytics-pill-active' : ''}`}
+        >
+          {item === 'kalshi' ? 'Kalshi' : 'Polymarket'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="mt-4 flex items-center justify-center gap-3 text-xs text-foreground-muted">
+      <button
+        onClick={() => onPageChange(Math.max(1, page - 1))}
+        disabled={page <= 1}
+        className="analytics-pill disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Prev
+      </button>
+      <span className="font-mono">
+        Page {page} / {totalPages}
+      </span>
+      <button
+        onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+        disabled={page >= totalPages}
+        className="analytics-pill disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Next
+      </button>
     </div>
   );
 }

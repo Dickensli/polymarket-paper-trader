@@ -235,6 +235,8 @@ export interface TradeParams {
   slippageApplied?: number;
   /** Fee rate in basis points. If provided, overrides the default. */
   feeRateBps?: number;
+  /** Source venue for paper trade bookkeeping. Defaults to polymarket. */
+  platform?: 'polymarket' | 'kalshi';
 }
 
 // -----------------------------------------------------------------------------

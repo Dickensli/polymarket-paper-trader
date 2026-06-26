@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { users, portfolios, positions } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { getUserPlatform, normalizePlatform } from '@/lib/platform';
 
 function roundTo(n: number, decimals: number): number {
   return Number(Math.round(Number(n + 'e' + decimals)) + 'e-' + decimals);
@@ -10,9 +11,13 @@ function roundTo(n: number, decimals: number): number {
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const db = getDb();
+    const { searchParams } = new URL(request.url);
+    const platform = normalizePlatform(searchParams.get('platform'));
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '25', 10) || 25));
 
     // 1. Fetch all users and their portfolios
     const usersData = await db
@@ -20,6 +25,7 @@ export async function GET() {
         userId: users.id,
         name: users.name,
         image: users.image,
+        settings: users.settings,
         balance: portfolios.balance,
         initialBalance: portfolios.initialBalance,
       })
@@ -45,6 +51,7 @@ export async function GET() {
 
     // 4. Calculate PnL for each user
     const leaderboard = usersData
+      .filter((u) => getUserPlatform(u.settings) === platform)
       .map((u) => {
         const balance = Number(u.balance || '0');
         const initialBalance = Number(u.initialBalance || '10000');
@@ -66,12 +73,22 @@ export async function GET() {
       .filter((u) => u.portfolioValue > 0 || u.totalPnL !== 0)
       .sort((a, b) => b.totalPnL - a.totalPnL);
 
-    // Assign ranks
-    leaderboard.forEach((user, idx) => {
-      (user as any).rank = idx + 1;
-    });
+    const rankedLeaderboard = leaderboard.map((user, idx) => ({ ...user, rank: idx + 1 }));
 
-    return NextResponse.json({ data: leaderboard });
+    const total = rankedLeaderboard.length;
+    const start = (page - 1) * pageSize;
+    const paginated = rankedLeaderboard.slice(start, start + pageSize);
+
+    return NextResponse.json({
+      data: paginated,
+      meta: {
+        platform,
+        page,
+        pageSize,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      },
+    });
   } catch (err) {
     console.error('Failed to fetch leaderboard:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
