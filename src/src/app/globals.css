@@ -225,3 +225,388 @@ input[type="range"]::-moz-range-thumb {
   border: 2px solid #0a0b0f;
   box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
 }
+
+/* ═══════════════════════════════════════════════════════
+   ANALYTICS DASHBOARD — Professional Trading UI
+   Inspired by Robinhood / Webull / Bloomberg Terminal
+   ═══════════════════════════════════════════════════════ */
+
+.analytics-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding-bottom: 48px;
+}
+
+/* ─── Hero Section ─────────────────────────────────── */
+.analytics-hero {
+  padding: 0 0 4px 0;
+}
+
+/* ─── Live Badge ───────────────────────────────────── */
+.analytics-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #30D158;
+  background: rgba(48, 209, 88, 0.08);
+  border: 1px solid rgba(48, 209, 88, 0.15);
+  border-radius: 100px;
+}
+
+.analytics-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #30D158;
+  animation: pulse-glow 2s ease-in-out infinite;
+  box-shadow: 0 0 6px rgba(48, 209, 88, 0.4);
+}
+
+/* ─── Delta Badges ─────────────────────────────────── */
+.analytics-delta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: "SF Mono", "Fira Code", monospace;
+  border-radius: 6px;
+  letter-spacing: -0.01em;
+}
+
+.analytics-delta-positive {
+  color: #30D158;
+  background: rgba(48, 209, 88, 0.1);
+}
+
+.analytics-delta-negative {
+  color: #FF453A;
+  background: rgba(255, 69, 58, 0.1);
+}
+
+/* ─── Chart Wrapper ────────────────────────────────── */
+.analytics-chart-wrapper {
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 20px;
+  padding: 20px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.analytics-chart-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* ─── Pill Group / Toggle ──────────────────────────── */
+.analytics-pill-group {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+}
+
+.analytics-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.6);
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.analytics-pill:hover {
+  color: rgba(148, 163, 184, 0.9);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.analytics-pill-active {
+  color: #f8fafc !important;
+  background: rgba(59, 130, 246, 0.15) !important;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.08);
+}
+
+.analytics-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0 4px;
+}
+
+/* ─── Legend ────────────────────────────────────────── */
+.analytics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.analytics-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 100px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.analytics-legend-item:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+}
+
+.analytics-legend-active {
+  color: #f8fafc !important;
+}
+
+.analytics-legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ─── Section ──────────────────────────────────────── */
+.analytics-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.analytics-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.analytics-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: -0.01em;
+}
+
+/* ─── Metric Cards ─────────────────────────────────── */
+.analytics-metric-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 16px;
+  padding: 16px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.analytics-metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(59, 130, 246, 0.2) 50%,
+    transparent 100%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.analytics-metric-card:hover {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+
+.analytics-metric-card:hover::before {
+  opacity: 1;
+}
+
+.analytics-metric-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.08);
+  color: #5AC8FA;
+}
+
+/* ─── Strategy Cards ───────────────────────────────── */
+.analytics-strategy-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 16px;
+  padding: 16px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.analytics-strategy-card:hover {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.analytics-strategy-card-active {
+  box-shadow:
+    0 0 0 1px var(--card-accent, rgba(59, 130, 246, 0.3)),
+    0 0 20px rgba(59, 130, 246, 0.06);
+}
+
+/* ─── Waterfall / Bar Chart ────────────────────────── */
+.analytics-waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.analytics-waterfall-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.analytics-waterfall-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100px;
+  min-width: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f8fafc;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.analytics-waterfall-bar-container {
+  flex: 1;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.analytics-waterfall-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  z-index: 1;
+}
+
+.analytics-waterfall-bar {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 4px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 2;
+}
+
+.analytics-waterfall-value {
+  position: relative;
+  z-index: 3;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: "SF Mono", "Fira Code", monospace;
+  padding: 0 8px;
+  width: 100%;
+  text-align: center;
+}
+
+/* ─── Responsive Tweaks ────────────────────────────── */
+@media (max-width: 768px) {
+  .analytics-dashboard {
+    gap: 16px;
+  }
+
+  .analytics-chart-wrapper {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .analytics-waterfall-label {
+    width: 72px;
+    min-width: 72px;
+    font-size: 10px;
+  }
+
+  .analytics-pill {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+}
+
+/* ─── Staggered card animation ─────────────────────── */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.analytics-metric-card,
+.analytics-strategy-card {
+  animation: card-enter 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.analytics-metric-card:nth-child(1),
+.analytics-strategy-card:nth-child(1) { animation-delay: 0ms; }
+.analytics-metric-card:nth-child(2),
+.analytics-strategy-card:nth-child(2) { animation-delay: 60ms; }
+.analytics-metric-card:nth-child(3),
+.analytics-strategy-card:nth-child(3) { animation-delay: 120ms; }
+.analytics-metric-card:nth-child(4),
+.analytics-strategy-card:nth-child(4) { animation-delay: 180ms; }

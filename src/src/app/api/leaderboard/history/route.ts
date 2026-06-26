@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { leaderboardSnapshots, users, portfolios, paperTrades, positions } from '@/lib/db/schema';
 import { eq, and, asc } from 'drizzle-orm';
@@ -8,14 +8,21 @@ import { auth } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+type Granularity = 'daily' | 'hourly';
+
 /**
- * Build daily portfolio value history from real trade data.
+ * Build portfolio value history from real trade data.
+ * Supports both daily and hourly granularity.
  * For each user:
  *   1. Start at initialBalance on portfolio creation date
- *   2. Replay trades day-by-day to compute cash balance changes
- *   3. Add current position values for the latest day
+ *   2. Replay trades period-by-period to compute cash balance changes
+ *   3. Add current position values for the latest period
  */
-async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserIds?: string[]) {
+async function buildHistoryFromTrades(
+  db: ReturnType<typeof getDb>,
+  granularity: Granularity,
+  targetUserIds?: string[]
+) {
   // Fetch all relevant users
   const allUsers = await db.query.users.findMany();
   const filteredUsers = targetUserIds
@@ -27,8 +34,8 @@ async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserId
   }
 
   const strategyNames: string[] = [];
-  // Map: dateKey -> { date, [userName]: value, [userName_pnl]: pnl }
-  const dateMap = new Map<string, Record<string, any>>();
+  // Map: periodKey -> { date, [userName]: value, [userName_pnl]: pnl }
+  const periodMap = new Map<string, Record<string, any>>();
 
   for (const user of filteredUsers) {
     const userName = user.name || 'Unknown';
@@ -60,44 +67,44 @@ async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserId
       return sum + Number(p.shares) * Number(p.currentPrice);
     }, 0);
 
-    // Get closed positions for realized PnL
-    const closedPos = await db
-      .select()
-      .from(positions)
-      .where(and(eq(positions.userId, user.id), eq(positions.isOpen, false)));
-
-    const totalRealizedPnl = closedPos.reduce((sum, p) => sum + Number(p.realizedPnl), 0);
-
-    // Build day-by-day cash balance from trades
-    // Group trades by date
-    const tradesByDate = new Map<string, { totalCost: number; action: string }[]>();
+    // Build period-by-period cash balance from trades
+    // Group trades by period key
+    const tradesByPeriod = new Map<string, { totalCost: number; action: string }[]>();
     for (const trade of trades) {
-      const dateKey = trade.executedAt.toISOString().substring(0, 10);
-      if (!tradesByDate.has(dateKey)) {
-        tradesByDate.set(dateKey, []);
+      const periodKey = getPeriodKey(trade.executedAt, granularity);
+      if (!tradesByPeriod.has(periodKey)) {
+        tradesByPeriod.set(periodKey, []);
       }
-      tradesByDate.get(dateKey)!.push({
+      tradesByPeriod.get(periodKey)!.push({
         totalCost: Number(trade.totalCost),
         action: trade.action
       });
     }
 
-    // Generate daily data points from portfolio creation to today
+    // Generate period data points from portfolio creation to now
     const startDate = new Date(createdAt);
-    startDate.setUTCHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    const now = new Date();
+
+    if (granularity === 'daily') {
+      startDate.setUTCHours(0, 0, 0, 0);
+      now.setUTCHours(0, 0, 0, 0);
+    } else {
+      // Hourly: truncate to hour
+      startDate.setUTCMinutes(0, 0, 0);
+      now.setUTCMinutes(0, 0, 0);
+    }
 
     let cashBalance = initialBalance;
-    const dayMs = 24 * 60 * 60 * 1000;
+    const stepMs = granularity === 'daily' ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+    const nowKey = getPeriodKey(now, granularity);
 
-    for (let d = new Date(startDate); d <= today; d = new Date(d.getTime() + dayMs)) {
-      const dateKey = d.toISOString().substring(0, 10);
+    for (let d = new Date(startDate); d <= now; d = new Date(d.getTime() + stepMs)) {
+      const periodKey = getPeriodKey(d, granularity);
 
-      // Apply trades for this day
-      const dayTrades = tradesByDate.get(dateKey);
-      if (dayTrades) {
-        for (const t of dayTrades) {
+      // Apply trades for this period
+      const periodTrades = tradesByPeriod.get(periodKey);
+      if (periodTrades) {
+        for (const t of periodTrades) {
           if (t.action === 'BUY') {
             cashBalance -= t.totalCost;
           } else {
@@ -106,30 +113,44 @@ async function buildHistoryFromTrades(db: ReturnType<typeof getDb>, targetUserId
         }
       }
 
-      // For the current/latest day, add open position values
-      const isToday = dateKey === today.toISOString().substring(0, 10);
-      const portfolioValue = isToday
+      // For the current/latest period, add open position values
+      const isCurrent = periodKey === nowKey;
+      const portfolioValue = isCurrent
         ? cashBalance + currentPositionsValue
-        : cashBalance; // Historical days: just cash (positions were bought/sold reflected in cash)
+        : cashBalance;
 
       const totalPnl = portfolioValue - initialBalance;
 
-      if (!dateMap.has(dateKey)) {
-        dateMap.set(dateKey, { date: dateKey });
+      if (!periodMap.has(periodKey)) {
+        periodMap.set(periodKey, { date: periodKey });
       }
-      const dayObj = dateMap.get(dateKey)!;
-      dayObj[userName] = Number(portfolioValue.toFixed(2));
-      dayObj[`${userName}_pnl`] = Number(totalPnl.toFixed(2));
-      dayObj[`${userName}_rank`] = 1;
+      const periodObj = periodMap.get(periodKey)!;
+      periodObj[userName] = Number(portfolioValue.toFixed(2));
+      periodObj[`${userName}_pnl`] = Number(totalPnl.toFixed(2));
+      periodObj[`${userName}_rank`] = 1;
     }
   }
 
-  const history = Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  const history = Array.from(periodMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 
   return { strategies: strategyNames, history };
 }
 
-export async function GET() {
+/**
+ * Get the period key for a given date and granularity.
+ * Daily: "2026-06-24"
+ * Hourly: "2026-06-24T14" (ISO date + hour)
+ */
+function getPeriodKey(date: Date, granularity: Granularity): string {
+  const dateStr = date.toISOString().substring(0, 10);
+  if (granularity === 'daily') {
+    return dateStr;
+  }
+  const hour = date.getUTCHours().toString().padStart(2, '0');
+  return `${dateStr}T${hour}`;
+}
+
+export async function GET(request: NextRequest) {
   try {
     const session = await auth();
     if (!session || !session.user) {
@@ -140,9 +161,27 @@ export async function GET() {
     const userId = session.user.id;
     const isAdmin = userEmail === 'dickenslihaocheng@gmail.com';
 
+    // Parse granularity from query params
+    const { searchParams } = new URL(request.url);
+    const granularityParam = searchParams.get('granularity');
+    const granularity: Granularity = granularityParam === 'hourly' ? 'hourly' : 'daily';
+
     const db = getDb();
 
-    // 1. Check for existing snapshots first
+    // For hourly granularity, always compute from trade data (snapshots are daily)
+    if (granularity === 'hourly') {
+      const targetUserIds = isAdmin ? undefined : [userId];
+      const { strategies, history } = await buildHistoryFromTrades(db, granularity, targetUserIds);
+
+      return NextResponse.json({
+        success: true,
+        strategies,
+        history,
+        granularity,
+      });
+    }
+
+    // 1. Check for existing snapshots first (daily)
     const historySnaps = await db.query.leaderboardSnapshots.findMany({
       where: isAdmin 
         ? eq(leaderboardSnapshots.period, 'HISTORY')
@@ -174,22 +213,23 @@ export async function GET() {
       return NextResponse.json({
         success: true,
         strategies: activeStrategies,
-        history: historyData
+        history: historyData,
+        granularity,
       });
     }
 
     // 3. No snapshots — compute from real trade data
     const targetUserIds = isAdmin ? undefined : [userId];
-    const { strategies, history } = await buildHistoryFromTrades(db, targetUserIds);
+    const { strategies, history } = await buildHistoryFromTrades(db, granularity, targetUserIds);
 
     return NextResponse.json({
       success: true,
       strategies,
-      history
+      history,
+      granularity,
     });
   } catch (err) {
     console.error('Failed to fetch leaderboard history:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
-
