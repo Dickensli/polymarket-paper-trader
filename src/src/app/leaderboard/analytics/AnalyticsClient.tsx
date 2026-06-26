@@ -384,8 +384,8 @@ export default function AnalyticsClient() {
           secondsVisible: false,
           rightOffset: 8,
           barSpacing: granularity === 'hourly' ? 8 : 14,
-          fixLeftEdge: true,
-          fixRightEdge: true,
+          fixLeftEdge: false,
+          fixRightEdge: false,
         },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -406,6 +406,32 @@ export default function AnalyticsClient() {
           if (d && 'value' in d) values[name] = d.value;
         }
         setHoveredPoint({ time: param.time as number, values });
+      });
+
+      // Subscribe to click for selecting the closest strategy line
+      chart.subscribeClick((param: any) => {
+        if (!param.time || !param.seriesData || !param.point) return;
+        const clickY = param.point.y;
+        let closestStrat: string | null = null;
+        let closestDist = Infinity;
+        for (const [name, series] of seriesRefs.current.entries()) {
+          const d = param.seriesData.get(series);
+          if (d && 'value' in d) {
+            try {
+              const coord = series.priceToCoordinate(d.value);
+              if (coord !== null) {
+                const dist = Math.abs(coord - clickY);
+                if (dist < closestDist) {
+                  closestDist = dist;
+                  closestStrat = name;
+                }
+              }
+            } catch { /* series disposed */ }
+          }
+        }
+        if (closestStrat && closestDist < 40) {
+          toggleStrategy(closestStrat);
+        }
       });
 
       const strats = data!.strategies;
@@ -489,7 +515,7 @@ export default function AnalyticsClient() {
         seriesRefs.current.clear();
       }
     };
-  }, [data, filteredHistory, chartMetric, selectedStrategies, granularity]);
+  }, [data, filteredHistory, chartMetric, selectedStrategies, granularity, toggleStrategy]);
 
   /* ─── Render ──────────────────────────────────────── */
   if (loading) {
@@ -671,9 +697,9 @@ export default function AnalyticsClient() {
             style={{ height: 420 }}
           />
 
-          {/* Custom absolute hover tooltip in the top-right corner */}
+          {/* Custom absolute hover tooltip — anchored top-left to avoid overlapping the right price scale */}
           {hoveredPoint && (
-            <div className="absolute top-4 right-4 bg-background-secondary/95 border border-border/80 rounded-xl p-3.5 shadow-2xl backdrop-blur-md z-30 w-64 animate-fade-in text-xs space-y-2.5">
+            <div className="absolute top-4 left-4 bg-background-secondary/95 border border-border/80 rounded-xl p-3.5 shadow-2xl backdrop-blur-md z-30 w-64 pointer-events-none animate-fade-in text-xs space-y-2.5">
               <div className="flex items-center justify-between border-b border-border/40 pb-2">
                 <span className="text-[10px] text-foreground-muted/60 font-mono">HOVER METRICS</span>
                 <span className="text-[10px] text-foreground-muted font-mono">{displayTime}</span>

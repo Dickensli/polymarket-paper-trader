@@ -7,12 +7,23 @@ interface PricePoint {
   p: number; // Price 0-1
 }
 
-interface PriceChartProps {
-  conditionId: string;
-  height?: number;
+/** Kalshi candlestick entry from the candlesticks API */
+interface KalshiCandlestick {
+  end_period_ts: number;
+  yes_price: { open: number; close: number; high: number; low: number };
+  no_price: { open: number; close: number; high: number; low: number };
+  volume: number;
+  open_interest: number;
 }
 
-export default function PriceChart({ conditionId, height = 300 }: PriceChartProps) {
+interface PriceChartProps {
+  conditionId?: string;
+  height?: number;
+  platform?: 'polymarket' | 'kalshi';
+  ticker?: string; // Kalshi market ticker
+}
+
+export default function PriceChart({ conditionId, height = 300, platform = 'polymarket', ticker }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
@@ -21,7 +32,10 @@ export default function PriceChart({ conditionId, height = 300 }: PriceChartProp
   const [hasData, setHasData] = useState(true);
 
   useEffect(() => {
-    if (!containerRef.current || !conditionId) return;
+    const isKalshi = platform === 'kalshi';
+    if (!containerRef.current) return;
+    if (isKalshi && !ticker) return;
+    if (!isKalshi && !conditionId) return;
 
     let mounted = true;
 
@@ -32,23 +46,54 @@ export default function PriceChart({ conditionId, height = 300 }: PriceChartProp
 
         if (!mounted || !containerRef.current) return;
 
-        // Fetch price history from Polymarket CLOB API
-        const res = await fetch(
-          `https://clob.polymarket.com/prices-history?market=${conditionId}&interval=all&fidelity=60`
-        );
+        // Fetch price history based on platform
+        let raw: { t: number; p: number }[];
 
-        if (!res.ok) {
-          setError('Failed to load price history');
-          setIsLoading(false);
-          return;
-        }
+        if (isKalshi && ticker) {
+          // Fetch from Kalshi candlesticks proxy
+          const res = await fetch(
+            `/api/kalshi/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=60`
+          );
 
-        const raw: { t: number; p: number }[] = await res.json();
+          if (!res.ok) {
+            setError('Failed to load Kalshi price history');
+            setIsLoading(false);
+            return;
+          }
 
-        if (!raw || raw.length === 0) {
-          setHasData(false);
-          setIsLoading(false);
-          return;
+          const json: { candlesticks: KalshiCandlestick[] } = await res.json();
+
+          if (!json.candlesticks || json.candlesticks.length === 0) {
+            setHasData(false);
+            setIsLoading(false);
+            return;
+          }
+
+          // Transform Kalshi candlesticks to { t, p } format
+          // Kalshi prices are in cents (0-100), normalize to 0-1
+          raw = json.candlesticks.map((c) => ({
+            t: c.end_period_ts,
+            p: c.yes_price.close / 100,
+          }));
+        } else {
+          // Fetch price history from Polymarket CLOB API
+          const res = await fetch(
+            `https://clob.polymarket.com/prices-history?market=${conditionId}&interval=all&fidelity=60`
+          );
+
+          if (!res.ok) {
+            setError('Failed to load price history');
+            setIsLoading(false);
+            return;
+          }
+
+          raw = await res.json();
+
+          if (!raw || raw.length === 0) {
+            setHasData(false);
+            setIsLoading(false);
+            return;
+          }
         }
 
         // Clear any existing chart
@@ -149,7 +194,7 @@ export default function PriceChart({ conditionId, height = 300 }: PriceChartProp
         chartRef.current = null;
       }
     };
-  }, [conditionId, height]);
+  }, [conditionId, height, platform, ticker]);
 
   if (error) {
     return (

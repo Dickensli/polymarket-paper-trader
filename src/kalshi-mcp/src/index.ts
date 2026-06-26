@@ -7,6 +7,7 @@ import {
 import fetch from "node-fetch";
 
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
+const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || "https://external-api.kalshi.com/trade-api/v2";
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 
@@ -142,6 +143,68 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Summarize Kalshi paper trading performance.",
       inputSchema: { type: "object", properties: accountProps, required: ["account"] },
     },
+    {
+      name: "get_candlesticks",
+      description: "Get price candlestick data for a Kalshi market. Returns OHLC data.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticker: { type: "string", description: "Market ticker." },
+          period_interval: { type: "number", description: "Candle period in minutes. Valid: 1, 60, 1440. Default 60." },
+          start_ts: { type: "number", description: "Start timestamp (unix seconds)." },
+          end_ts: { type: "number", description: "End timestamp (unix seconds)." },
+        },
+        required: ["ticker"],
+      },
+    },
+    {
+      name: "get_orderbook",
+      description: "Get the current order book (bids) for a Kalshi market.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticker: { type: "string", description: "Market ticker." },
+          depth: { type: "number", description: "Order book depth." },
+        },
+        required: ["ticker"],
+      },
+    },
+    {
+      name: "get_event",
+      description: "Get details of a Kalshi event (which contains multiple markets).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          event_ticker: { type: "string", description: "Event ticker." },
+        },
+        required: ["event_ticker"],
+      },
+    },
+    {
+      name: "search_events",
+      description: "Search/list Kalshi events.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", description: "Filter by event status." },
+          series_ticker: { type: "string", description: "Filter by series ticker." },
+          limit: { type: "number", description: "Max results to return." },
+          cursor: { type: "string", description: "Pagination cursor." },
+        },
+      },
+    },
+    {
+      name: "get_public_trades",
+      description: "Get recent public trades for a Kalshi market.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticker: { type: "string", description: "Market ticker to filter trades." },
+          limit: { type: "number", description: "Max results to return." },
+          cursor: { type: "string", description: "Pagination cursor." },
+        },
+      },
+    },
   ],
 }));
 
@@ -239,6 +302,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           sell_count: trades.filter((t: any) => t.side === "SELL").length,
         },
       });
+    }
+    case "get_candlesticks": {
+      const ticker = encodeURIComponent(String((args as any).ticker));
+      const params = new URLSearchParams();
+      params.set("period_interval", String((args as any).period_interval || 60));
+      if ((args as any).start_ts !== undefined) params.set("start_ts", String((args as any).start_ts));
+      if ((args as any).end_ts !== undefined) params.set("end_ts", String((args as any).end_ts));
+      const data = await callPolyTrader(`/kalshi/markets/${ticker}/candlesticks?${params.toString()}`);
+      return json({ ok: true, data: data.data ?? data });
+    }
+    case "get_orderbook": {
+      const ticker = encodeURIComponent(String((args as any).ticker));
+      const params = new URLSearchParams();
+      if ((args as any).depth !== undefined) params.set("depth", String((args as any).depth));
+      const url = `${KALSHI_BASE_URL}/markets/${ticker}/orderbook?${params.toString()}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return json({ ok: true, data });
+    }
+    case "get_event": {
+      const eventTicker = encodeURIComponent(String((args as any).event_ticker));
+      const url = `${KALSHI_BASE_URL}/events/${eventTicker}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return json({ ok: true, data });
+    }
+    case "search_events": {
+      const params = new URLSearchParams();
+      for (const key of ["status", "series_ticker", "limit", "cursor"]) {
+        const value = (args as any)[key];
+        if (value !== undefined) params.set(key, String(value));
+      }
+      const url = `${KALSHI_BASE_URL}/events?${params.toString()}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return json({ ok: true, data });
+    }
+    case "get_public_trades": {
+      const params = new URLSearchParams();
+      for (const key of ["ticker", "limit", "cursor"]) {
+        const value = (args as any)[key];
+        if (value !== undefined) params.set(key, String(value));
+      }
+      const url = `${KALSHI_BASE_URL}/markets/trades?${params.toString()}`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      return json({ ok: true, data });
     }
     default:
       throw new Error(`Unknown tool: ${name}`);

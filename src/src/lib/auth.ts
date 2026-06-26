@@ -147,14 +147,12 @@ export const auth = async (...args: any[]) => {
         } else {
           strategyName = `${rawAgentName}("${agentAccount}")`;
         }
-        if (platform === 'kalshi' && !strategyName.startsWith('Kalshi ')) {
-          strategyName = `Kalshi ${strategyName}`;
-        }
+
         const cleanAccount = agentAccount.replace(/[^a-zA-Z0-9_-]/g, '_');
         strategyEmail = `agent+${platform}+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
       } else if (platform === 'kalshi') {
         targetUserId = getDeterministicUuid(masterUserId, 'kalshi:default');
-        strategyName = `Kalshi ${rawAgentName}`;
+        strategyName = rawAgentName;
         strategyEmail = `agent+kalshi+${rawAgentName.replace(/\s+/g, '_')}@polymarkettraders.com`;
       }
 
