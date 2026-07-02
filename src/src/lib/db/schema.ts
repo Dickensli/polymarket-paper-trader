@@ -333,3 +333,26 @@ export const limitOrders = pgTable(
     index('limit_orders_market_idx').on(table.marketId),
   ],
 );
+
+// ─── Agent Reports ──────────────────────────────────────────
+
+/** Session reports written by trading agents for cross-session memory */
+export const agentReports = pgTable(
+  'agent_reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    account: varchar('account', { length: 255 }).notNull(),
+    filename: varchar('filename', { length: 255 }).notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('agent_reports_user_idx').on(table.userId),
+    index('agent_reports_account_idx').on(table.account),
+    index('agent_reports_created_idx').on(table.createdAt),
+    uniqueIndex('agent_reports_unique_idx').on(table.userId, table.account, table.filename),
+  ],
+);

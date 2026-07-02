@@ -563,6 +563,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         strategy: { type: "string", description: "Strategy python path" }
                     }
                 }
+            },
+            // ── Agent Reports ──────────────────────────────────────────
+            {
+                name: "save_report",
+                description: "Save a trading session report for later retrieval. Use this at the end of every session to persist strategy reflections, lessons learned, and next steps.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        account: { type: "string", description: "Strategy account name, e.g. dickens_smith(\"conservative_arb\")" },
+                        content: { type: "string", description: "Markdown report content" },
+                        filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" }
+                    },
+                    required: ["account", "content", "filename"]
+                }
+            },
+            {
+                name: "list_reports",
+                description: "List recent session reports for a strategy account. Use this during bootstrap to find the latest report to read.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        account: { type: "string", description: "Strategy account name" },
+                        limit: { type: "number", description: "Max reports to return (default 3)" }
+                    },
+                    required: ["account"]
+                }
+            },
+            {
+                name: "read_report",
+                description: "Read the full content of a specific session report. Use this during bootstrap to restore strategy context from the previous session.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        account: { type: "string", description: "Strategy account name" },
+                        filename: { type: "string", description: "Report filename to read" }
+                    },
+                    required: ["account", "filename"]
+                }
             }
         ]
     };
@@ -1345,6 +1383,75 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         }]
                 };
             }
+            // ── Agent Reports ──────────────────────────────────────────
+            case "save_report": {
+                const account = args?.account;
+                const content = args?.content;
+                const filename = args?.filename;
+                if (!account || !content || !filename) {
+                    throw new Error("Missing required fields: account, content, filename");
+                }
+                const saveRes = await fetch(`${POLYTRADER_API_URL}/reports`, {
+                    method: "POST",
+                    headers: getAgentHeaders(args),
+                    body: JSON.stringify({ account, content, filename }),
+                });
+                if (!saveRes.ok) {
+                    const errBody = await saveRes.text();
+                    throw new Error(`API returned ${saveRes.status}: ${errBody}`);
+                }
+                const saveData = await saveRes.json();
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: saveData.data || saveData }, null, 2)
+                        }]
+                };
+            }
+            case "list_reports": {
+                const account = args?.account;
+                if (!account)
+                    throw new Error("Missing required field: account");
+                const limit = args?.limit || 3;
+                const listRes = await fetch(`${POLYTRADER_API_URL}/reports?account=${encodeURIComponent(account)}&limit=${limit}`, { headers: getAgentHeaders(args) });
+                if (!listRes.ok) {
+                    const errBody = await listRes.text();
+                    throw new Error(`API returned ${listRes.status}: ${errBody}`);
+                }
+                const listData = await listRes.json();
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: listData.data || listData }, null, 2)
+                        }]
+                };
+            }
+            case "read_report": {
+                const account = args?.account;
+                const filename = args?.filename;
+                if (!account || !filename)
+                    throw new Error("Missing required fields: account, filename");
+                const readRes = await fetch(`${POLYTRADER_API_URL}/reports/${encodeURIComponent(filename)}?account=${encodeURIComponent(account)}`, { headers: getAgentHeaders(args) });
+                if (!readRes.ok) {
+                    if (readRes.status === 404) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: JSON.stringify({ ok: false, error: `Report not found: ${filename}` }, null, 2)
+                                }]
+                        };
+                    }
+                    const errBody = await readRes.text();
+                    throw new Error(`API returned ${readRes.status}: ${errBody}`);
+                }
+                const readData = await readRes.json();
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: readData.data || readData }, null, 2)
+                        }]
+                };
+            }
             default:
                 throw new Error(`Unknown tool: ${name}`);
         }
@@ -1362,6 +1469,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function run() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("PolyTrader MCP server running on stdio (v0.4.0 — 30 tools)");
+    console.error("PolyTrader MCP server running on stdio (v0.5.0 — 33 tools)");
 }
 run().catch(console.error);
