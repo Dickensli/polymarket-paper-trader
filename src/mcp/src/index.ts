@@ -589,12 +589,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "backtest",
-        description: "Backtesting tool notification.",
+        description: "Run a what-if backtest replay. Provide a set of hypothetical trades with entry/exit prices to compute simulated P&L, ROI, Sharpe ratio, win rate, and max drawdown.",
         inputSchema: {
           type: "object",
           properties: {
-            strategy: { type: "string", description: "Strategy python path" }
-          }
+            trades: {
+              type: "array",
+              description: "Array of hypothetical trades to simulate.",
+              items: {
+                type: "object",
+                properties: {
+                  market: { type: "string", description: "Market slug or condition ID" },
+                  outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
+                  side: { type: "string", enum: ["BUY", "SELL"], description: "Trade direction (default: BUY)" },
+                  amount: { type: "number", description: "USD amount" },
+                  entry_price: { type: "number", description: "Entry price (0-1)" },
+                  exit_price: { type: "number", description: "Exit price (0-1)" },
+                },
+                required: ["market", "outcome", "amount", "entry_price", "exit_price"],
+              },
+            },
+            starting_balance: { type: "number", description: "Starting balance (default 10000)" },
+            account: { type: "string", description: "The trading strategy or profile name" },
+            agent_user_id: { type: "string", description: "Optional override for the agent user ID" },
+          },
+          required: ["trades"]
         }
       },
       // ── Agent Reports ──────────────────────────────────────────
@@ -1454,13 +1473,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "backtest": {
+        const trades = args?.trades as any[];
+        const startingBalance = (args?.starting_balance as number) || 10000;
+        if (!Array.isArray(trades) || trades.length === 0) {
+          throw new Error("trades must be a non-empty array");
+        }
+        const res = await fetch(`${POLYTRADER_API_URL}/backtest`, {
+          method: "POST",
+          headers: getAgentHeaders(args),
+          body: JSON.stringify({ platform: "polymarket", trades, starting_balance: startingBalance }),
+        });
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw new Error(`API returned ${res.status}: ${errBody}`);
+        }
+        const data = await res.json() as any;
         return {
           content: [{
             type: "text",
-            text: JSON.stringify({
-              ok: false,
-              error: "Backtesting is only available via the Python CLI tool: `pm-trader backtest`"
-            }, null, 2)
+            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
           }]
         };
       }
