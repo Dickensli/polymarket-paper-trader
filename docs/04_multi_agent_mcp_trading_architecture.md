@@ -84,30 +84,46 @@ Every strategy run should follow the same lifecycle:
 6. Return
    - MCP response includes updated portfolio, report metadata, warnings, and reconciliation status.
 
+## Server-Side Binding & State Guardrails
+
+To prevent AI hallucination leading to catastrophic trading mistakes (e.g., executing a real trade instead of a paper trade, or placing a trade on the wrong market), the system enforces **Server-Side Binding** of strategy configurations.
+
+1. **Context Registration & Lock-in**:
+   - The strategy's operating parameters (`agent_mode`, `platform`, risk settings) are defined and locked at the server level during `register_strategy` or via the host script database.
+   - Subsequent execution tools (e.g., `buy`, `sell`, `portfolio`, `get_strategy_context`) **MUST NOT** ask the AI to specify `agent_mode` or `platform` dynamically on every trade. The server resolves these parameters internally by looking up the `strategy_name` (or authenticated header contexts).
+
+2. **Stateless Initialization & Synchronization**:
+   - To prevent the polling AI from calling setup/registration tools on every execution (since it is stateless), the system implements three guardrails:
+     - **MCP Resources (Recommended)**: The server exposes a read-only resource `strategy_state://{strategy_name}`. The system prompt instructs the AI to read this state first; if `is_setup` is true, the AI skips initialization.
+     - **API Idempotency (Defense in Depth)**: If `register_strategy` is called repeatedly, the server handles it gracefully, returning the existing state and a success status without altering configuration or throwing errors.
+     - **Host Script Prompt Modification**: The cron runner script checks database state prior to invoking the LLM and dynamically omits setup instructions if initialization has already occurred.
+
 ## Required MCP Tool Shape
 
-All lifecycle tools should require these fields unless the tool is obviously platform-neutral:
+Tools are split between administrative setup and streamlined execution. Execution tools require only the strategy identifier, leaving platform routing to the server context.
+
+### Required Fields for Setup/Context Tools
 
 - `strategy_name`: stable strategy/account name, for example `dickens_smith("conservative_arb")`.
-- `agent_mode`: enum, `paper` or `real`.
-- `platform`: enum, `polymarket`, `kalshi`, or `polymarket_us`.
 
-Recommended core tools:
+### Core Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `register_strategy` | Register or update strategy identity. Must return `{ registered: true, starting_balance: 10000 }` by default. |
-| `get_strategy_context` | Return prior portfolio, current official portfolio if real, recent trades/orders, recent reports, and warnings. |
-| `write_strategy_report` | Persist markdown/structured reflection after a run. |
-| `list_strategy_reports` | List prior reports for cross-session memory. |
-| `read_strategy_report` | Read a specific prior report. |
-| `record_paper_trade` | Submit paper trade intent/results to server. |
-| `submit_real_trade` | Submit real order intent to server; server handles official API call and Supabase audit. |
-| `cancel_real_order` | Cancel a real order and persist audit/result. |
-| `reconcile_portfolio` | Compare official portfolio/orders with local snapshots and log discrepancies. |
-| `get_official_market_data` | Unified read tool or family of read tools backed by official APIs. |
+| Tool | Parameters | Purpose |
+| --- | --- | --- |
+| `register_strategy` | `strategy_name`, `agent_mode`, `platform`, `starting_balance` | Register strategy identity on the server and lock in its mode and platform. Returns `{ registered: true, is_new: boolean }`. Safe to call repeatedly (idempotent). |
+| `get_strategy_context` | `strategy_name` | Returns registered strategy details, prior portfolio state, recent trades/orders, recent reports, and system warnings. |
+| `write_strategy_report`| `strategy_name`, `content`, `filename` | Persist markdown/structured reflection after a run. |
+| `list_strategy_reports` | `strategy_name`, `limit` | List prior reports for cross-session memory. |
+| `read_strategy_report` | `strategy_name`, `filename` | Read a specific prior report. |
+| `buy` / `sell` | `strategy_name`, `slug`/`ticker`, `outcome`, `shares`/`amount`, `price` | Execute a buy/sell trade. The server automatically routes the trade to the correct venue (Kalshi, Polymarket US, etc.) and mode (paper/real) based on the strategy's server-side binding. |
+| `cancel_order` | `strategy_name`, `order_id` | Cancel a trade order on the bound platform. |
+| `reconcile_portfolio` | `strategy_name` | For real trading: compare official venue balances/positions with local snapshots and log discrepancies. |
+| `get_official_market_data` | `slug`/`ticker` | Unified read tool backed by official venue APIs. |
 
-Older tools such as `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell` can remain as compatibility wrappers, but the new agent protocol should be explicit about strategy, mode, and platform.
+### MCP Resources
+
+- `strategy_state://{strategy_name}`: Returns JSON containing current registration parameters, status, and whether initialization is complete (e.g. `{"is_setup": true, "agent_mode": "paper", "platform": "polymarket_us"}`).
+
 
 ## Server Responsibilities
 
