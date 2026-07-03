@@ -556,12 +556,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "backtest",
-                description: "Backtesting tool notification.",
+                description: "Run a what-if backtest replay. Provide a set of hypothetical trades with entry/exit prices to compute simulated P&L, ROI, Sharpe ratio, win rate, and max drawdown.",
                 inputSchema: {
                     type: "object",
                     properties: {
-                        strategy: { type: "string", description: "Strategy python path" }
-                    }
+                        trades: {
+                            type: "array",
+                            description: "Array of hypothetical trades to simulate.",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    market: { type: "string", description: "Market slug or condition ID" },
+                                    outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
+                                    side: { type: "string", enum: ["BUY", "SELL"], description: "Trade direction (default: BUY)" },
+                                    amount: { type: "number", description: "USD amount" },
+                                    entry_price: { type: "number", description: "Entry price (0-1)" },
+                                    exit_price: { type: "number", description: "Exit price (0-1)" },
+                                },
+                                required: ["market", "outcome", "amount", "entry_price", "exit_price"],
+                            },
+                        },
+                        starting_balance: { type: "number", description: "Starting balance (default 10000)" },
+                        account: { type: "string", description: "The trading strategy or profile name" },
+                        agent_user_id: { type: "string", description: "Optional override for the agent user ID" },
+                    },
+                    required: ["trades"]
                 }
             },
             // ── Agent Reports ──────────────────────────────────────────
@@ -600,6 +619,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         filename: { type: "string", description: "Report filename to read" }
                     },
                     required: ["account", "filename"]
+                }
+            },
+            // ── Agent Strategy Lifecycle ────────────────────────────────
+            {
+                name: "register_strategy",
+                description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        strategy_name: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+                        agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'" },
+                        platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
+                        starting_balance: { type: "number", description: "Starting paper balance in USD" },
+                        account: { type: "string", description: "Strategy account name" },
+                        agent_user_id: { type: "string", description: "Optional agent user ID override" }
+                    },
+                    required: ["strategy_name"]
+                }
+            },
+            {
+                name: "get_strategy_context",
+                description: "Get full strategy context including registration state, portfolio, positions, recent trades, and reports. Use this at the start of every run to check if setup is needed and to restore cross-session state.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        strategy_name: { type: "string", description: "Strategy name to get context for" },
+                        account: { type: "string", description: "Strategy account name" },
+                        agent_user_id: { type: "string", description: "Optional agent user ID override" }
+                    },
+                    required: ["strategy_name"]
                 }
             }
         ]
@@ -1373,13 +1422,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 };
             }
             case "backtest": {
+                const trades = args?.trades;
+                const startingBalance = args?.starting_balance || 10000;
+                if (!Array.isArray(trades) || trades.length === 0) {
+                    throw new Error("trades must be a non-empty array");
+                }
+                const res = await fetch(`${POLYTRADER_API_URL}/backtest`, {
+                    method: "POST",
+                    headers: getAgentHeaders(args),
+                    body: JSON.stringify({ platform: "polymarket", trades, starting_balance: startingBalance }),
+                });
+                if (!res.ok) {
+                    const errBody = await res.text();
+                    throw new Error(`API returned ${res.status}: ${errBody}`);
+                }
+                const data = await res.json();
                 return {
                     content: [{
                             type: "text",
-                            text: JSON.stringify({
-                                ok: false,
-                                error: "Backtesting is only available via the Python CLI tool: `pm-trader backtest`"
-                            }, null, 2)
+                            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
                         }]
                 };
             }
@@ -1449,6 +1510,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [{
                             type: "text",
                             text: JSON.stringify({ ok: true, data: readData.data || readData }, null, 2)
+                        }]
+                };
+            }
+            // ── Agent Strategy Lifecycle ────────────────────────────────
+            case "register_strategy": {
+                const strategy_name = args?.strategy_name;
+                if (!strategy_name)
+                    throw new Error("Missing required field: strategy_name");
+                const agent_mode = args?.agent_mode || "paper";
+                const platform = args?.platform || "polymarket";
+                const starting_balance = args?.starting_balance || 10000;
+                const res = await fetch(`${POLYTRADER_API_URL}/agent/strategies/register`, {
+                    method: "POST",
+                    headers: getAgentHeaders(args),
+                    body: JSON.stringify({ strategy_name, agent_mode, platform, starting_balance }),
+                });
+                if (!res.ok) {
+                    const errBody = await res.text();
+                    throw new Error(`API returned ${res.status}: ${errBody}`);
+                }
+                const data = await res.json();
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
+                        }]
+                };
+            }
+            case "get_strategy_context": {
+                const strategy_name = args?.strategy_name;
+                if (!strategy_name)
+                    throw new Error("Missing required field: strategy_name");
+                const res = await fetch(`${POLYTRADER_API_URL}/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`, { headers: getAgentHeaders(args) });
+                if (!res.ok) {
+                    const errBody = await res.text();
+                    throw new Error(`API returned ${res.status}: ${errBody}`);
+                }
+                const data = await res.json();
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
                         }]
                 };
             }

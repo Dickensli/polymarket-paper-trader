@@ -230,6 +230,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 required: ["trades"],
             },
         },
+        // ── Agent Strategy ─────────────────────────────────────────────
+        {
+            name: "register_strategy",
+            description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    strategy_name: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+                    agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'" },
+                    platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
+                    starting_balance: { type: "number", description: "Starting paper balance in USD" },
+                    ...accountProps,
+                },
+                required: ["strategy_name"],
+            },
+        },
+        {
+            name: "get_strategy_context",
+            description: "Get full strategy context including registration state, portfolio, positions, recent trades, and reports. Use this at the start of every run to check if setup is needed and to restore cross-session state.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    strategy_name: { type: "string", description: "Strategy name to get context for" },
+                    ...accountProps,
+                },
+                required: ["strategy_name"],
+            },
+        },
     ],
 }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -405,6 +433,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 headers: getAgentHeaders(args),
                 body: JSON.stringify({ platform: "polymarket_us", trades, starting_balance: startingBalance }),
             });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        // ── Agent Strategy ─────────────────────────────────────────────
+        case "register_strategy": {
+            const strategy_name = String(args.strategy_name);
+            if (!strategy_name)
+                throw new Error("Missing required field: strategy_name");
+            const agent_mode = String(args.agent_mode || "paper");
+            const platform = String(args.platform || "polymarket_us");
+            const starting_balance = Number(args.starting_balance || 10000);
+            const data = await callPolyTrader("/agent/strategies/register", {
+                method: "POST",
+                headers: getAgentHeaders(args),
+                body: JSON.stringify({ strategy_name, agent_mode, platform, starting_balance }),
+            });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        case "get_strategy_context": {
+            const strategy_name = String(args.strategy_name);
+            if (!strategy_name)
+                throw new Error("Missing required field: strategy_name");
+            const data = await callPolyTrader(`/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         default:

@@ -191,6 +191,101 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 },
             },
         },
+        // ── Agent Reports (Retro) ──────────────────────────────────────
+        {
+            name: "save_report",
+            description: "Save a trading session report for later retrieval. Use at the end of every session to persist strategy reflections, lessons learned, and next steps.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    content: { type: "string", description: "Markdown report content" },
+                    filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" },
+                    ...accountProps,
+                },
+                required: ["account", "content", "filename"],
+            },
+        },
+        {
+            name: "list_reports",
+            description: "List recent session reports for a strategy account. Use during bootstrap to find the latest report to read.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    limit: { type: "number", description: "Max reports to return (default 3)" },
+                    ...accountProps,
+                },
+                required: ["account"],
+            },
+        },
+        {
+            name: "read_report",
+            description: "Read the full content of a specific session report. Use during bootstrap to restore strategy context from the previous session.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    filename: { type: "string", description: "Report filename to read" },
+                    ...accountProps,
+                },
+                required: ["account", "filename"],
+            },
+        },
+        // ── Backtesting ────────────────────────────────────────────────
+        {
+            name: "backtest",
+            description: "Run a what-if backtest replay. Provide a set of hypothetical trades with entry/exit prices to compute simulated P&L, ROI, Sharpe ratio, win rate, and max drawdown.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    trades: {
+                        type: "array",
+                        description: "Array of hypothetical trades to simulate.",
+                        items: {
+                            type: "object",
+                            properties: {
+                                market: { type: "string", description: "Market ticker" },
+                                outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
+                                side: { type: "string", enum: ["BUY", "SELL"], description: "Trade direction" },
+                                amount: { type: "number", description: "USD amount" },
+                                entry_price: { type: "number", description: "Entry price (0-1)" },
+                                exit_price: { type: "number", description: "Exit price (0-1)" },
+                            },
+                            required: ["market", "outcome", "amount", "entry_price", "exit_price"],
+                        },
+                    },
+                    starting_balance: { type: "number", description: "Starting balance (default 10000)" },
+                    ...accountProps,
+                },
+                required: ["trades"],
+            },
+        },
+        // ── Agent Strategy ─────────────────────────────────────────────
+        {
+            name: "register_strategy",
+            description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    strategy_name: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+                    agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'", default: "paper" },
+                    platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'", default: "kalshi" },
+                    starting_balance: { type: "number", description: "Starting paper balance in USD", default: 10000 },
+                    ...accountProps,
+                },
+                required: ["strategy_name"],
+            },
+        },
+        {
+            name: "get_strategy_context",
+            description: "Get full strategy context including registration state, portfolio, positions, recent trades, and reports. Use this at the start of every run to check if setup is needed and to restore cross-session state.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    strategy_name: { type: "string", description: "Strategy name to get context for" },
+                    ...accountProps,
+                },
+                required: ["strategy_name"],
+            },
+        },
     ],
 }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -340,6 +435,75 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const res = await fetch(url, { headers: { Accept: "application/json" } });
             const data = await res.json();
             return json({ ok: true, data });
+        }
+        // ── Agent Reports (Retro) ──────────────────────────────────────
+        case "save_report": {
+            const account = String(args.account);
+            const content = String(args.content);
+            const filename = String(args.filename);
+            if (!account || !content || !filename) {
+                throw new Error("Missing required fields: account, content, filename");
+            }
+            const data = await callPolyTrader("/reports", {
+                method: "POST",
+                headers: getAgentHeaders(args),
+                body: JSON.stringify({ account, content, filename }),
+            });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        case "list_reports": {
+            const account = String(args.account);
+            if (!account)
+                throw new Error("Missing required field: account");
+            const limit = Number(args.limit || 3);
+            const data = await callPolyTrader(`/reports?account=${encodeURIComponent(account)}&limit=${limit}`, { headers: getAgentHeaders(args) });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        case "read_report": {
+            const account = String(args.account);
+            const filename = String(args.filename);
+            if (!account || !filename)
+                throw new Error("Missing required fields: account, filename");
+            const data = await callPolyTrader(`/reports/${encodeURIComponent(filename)}?account=${encodeURIComponent(account)}`, { headers: getAgentHeaders(args) });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        // ── Backtesting ────────────────────────────────────────────────
+        case "backtest": {
+            const trades = args.trades;
+            const startingBalance = Number(args.starting_balance || 10000);
+            if (!Array.isArray(trades) || trades.length === 0) {
+                throw new Error("trades must be a non-empty array");
+            }
+            const data = await callPolyTrader("/backtest", {
+                method: "POST",
+                headers: getAgentHeaders(args),
+                body: JSON.stringify({ platform: "kalshi", trades, starting_balance: startingBalance }),
+            });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        // ── Agent Strategy ─────────────────────────────────────────────
+        case "register_strategy": {
+            const strategy_name = String(args.strategy_name);
+            if (!strategy_name)
+                throw new Error("Missing required field: strategy_name");
+            const data = await callPolyTrader("/agent/strategies/register", {
+                method: "POST",
+                headers: getAgentHeaders(args),
+                body: JSON.stringify({
+                    strategy_name,
+                    agent_mode: args.agent_mode || "paper",
+                    platform: args.platform || "kalshi",
+                    starting_balance: Number(args.starting_balance || 10000),
+                }),
+            });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        case "get_strategy_context": {
+            const strategy_name = String(args.strategy_name);
+            if (!strategy_name)
+                throw new Error("Missing required field: strategy_name");
+            const data = await callPolyTrader(`/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`, { headers: getAgentHeaders(args) });
+            return json({ ok: true, data: data.data ?? data });
         }
         default:
             throw new Error(`Unknown tool: ${name}`);

@@ -30,6 +30,59 @@ export const orderStatusEnum = pgEnum('order_status', [
   'REJECTED',
 ]);
 
+/** Agent operating mode */
+export const agentModeEnum = pgEnum('agent_mode', ['paper', 'real']);
+
+/** Supported trading platforms */
+export const platformEnum = pgEnum('platform', ['polymarket', 'kalshi', 'polymarket_us']);
+
+/** Strategy lifecycle status */
+export const strategyStatusEnum = pgEnum('strategy_status', ['active', 'paused', 'disabled']);
+
+// ─── Strategies ─────────────────────────────────────────────
+
+/**
+ * Strategy registration table — one row per unique (strategy_name, agent_mode, platform).
+ *
+ * The strategy's mode and platform are server-side-bound here so that
+ * execution tools (buy/sell) never need the AI to specify them dynamically,
+ * preventing hallucination-driven misrouting.
+ */
+export const strategies = pgTable(
+  'strategies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** The user row this strategy operates under (auto-created by auth.ts) */
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Stable strategy name, e.g. 'conservative_arb' or 'dickens_smith("aggressive")' */
+    strategyName: varchar('strategy_name', { length: 255 }).notNull(),
+    /** Paper or real trading mode — locked at registration */
+    agentMode: agentModeEnum('agent_mode').notNull().default('paper'),
+    /** Target platform — locked at registration */
+    platform: platformEnum('platform').notNull().default('polymarket'),
+    /** Strategy lifecycle status */
+    status: strategyStatusEnum('status').notNull().default('active'),
+    /** Starting paper balance */
+    startingBalance: decimal('starting_balance', { precision: 18, scale: 2 }).notNull().default('10000.00'),
+    /** Risk configuration (max position size, Kelly fraction, etc.) */
+    riskConfig: jsonb('risk_config').default({}),
+    /** Cron schedule string, if scheduled */
+    schedule: varchar('schedule', { length: 100 }),
+    /** Arbitrary strategy metadata */
+    metadata: jsonb('metadata').default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('strategies_unique_idx').on(table.strategyName, table.agentMode, table.platform),
+    index('strategies_user_idx').on(table.userId),
+    index('strategies_name_idx').on(table.strategyName),
+    index('strategies_status_idx').on(table.status),
+  ],
+);
+
 // ─── Users ──────────────────────────────────────────────────
 
 /** Core user table – doubles as the NextAuth user table */

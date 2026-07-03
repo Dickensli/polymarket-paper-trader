@@ -653,6 +653,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["account", "filename"]
         }
+      },
+
+      // ── Agent Strategy Lifecycle ────────────────────────────────
+      {
+        name: "register_strategy",
+        description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            strategy_name: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+            agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'" },
+            platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
+            starting_balance: { type: "number", description: "Starting paper balance in USD" },
+            account: { type: "string", description: "Strategy account name" },
+            agent_user_id: { type: "string", description: "Optional agent user ID override" }
+          },
+          required: ["strategy_name"]
+        }
+      },
+      {
+        name: "get_strategy_context",
+        description: "Get full strategy context including registration state, portfolio, positions, recent trades, and reports. Use this at the start of every run to check if setup is needed and to restore cross-session state.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            strategy_name: { type: "string", description: "Strategy name to get context for" },
+            account: { type: "string", description: "Strategy account name" },
+            agent_user_id: { type: "string", description: "Optional agent user ID override" }
+          },
+          required: ["strategy_name"]
+        }
       }
     ]
   };
@@ -1568,6 +1599,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{
             type: "text",
             text: JSON.stringify({ ok: true, data: readData.data || readData }, null, 2)
+          }]
+        };
+      }
+
+      // ── Agent Strategy Lifecycle ────────────────────────────────
+      case "register_strategy": {
+        const strategy_name = args?.strategy_name as string;
+        if (!strategy_name) throw new Error("Missing required field: strategy_name");
+        const agent_mode = (args?.agent_mode as string) || "paper";
+        const platform = (args?.platform as string) || "polymarket";
+        const starting_balance = (args?.starting_balance as number) || 10000;
+        const res = await fetch(`${POLYTRADER_API_URL}/agent/strategies/register`, {
+          method: "POST",
+          headers: getAgentHeaders(args),
+          body: JSON.stringify({ strategy_name, agent_mode, platform, starting_balance }),
+        });
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw new Error(`API returned ${res.status}: ${errBody}`);
+        }
+        const data = await res.json() as any;
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
+          }]
+        };
+      }
+
+      case "get_strategy_context": {
+        const strategy_name = args?.strategy_name as string;
+        if (!strategy_name) throw new Error("Missing required field: strategy_name");
+        const res = await fetch(
+          `${POLYTRADER_API_URL}/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`,
+          { headers: getAgentHeaders(args) }
+        );
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw new Error(`API returned ${res.status}: ${errBody}`);
+        }
+        const data = await res.json() as any;
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
           }]
         };
       }

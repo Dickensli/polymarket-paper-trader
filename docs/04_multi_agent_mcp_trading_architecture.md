@@ -424,17 +424,20 @@ This keeps real venue credentials away from frontend code and away from strategy
 ### Phase 0 - Documentation And Safety
 
 - [x] Capture target architecture and gaps in this document.
+- [x] Add server-side binding and anti-hallucination guardrails to architecture.
 - [ ] Remove any real secrets from tracked files and configs.
 - [ ] Decide canonical agent-facing MCP name: likely `polytraders-web`.
 - [ ] Decide whether real trading writes must always route through `polymarkettraders.com`.
 
 ### Phase 1 - Schema
 
-- [ ] Add `polymarket_us` to platform enum/type support.
-- [ ] Add `agent_mode` enum: `paper`, `real`.
-- [ ] Add `strategies` table.
+- [x] Add `polymarket_us` to platform enum/type support.
+- [x] Add `agent_mode` enum: `paper`, `real`.
+- [x] Add `platform` enum: `polymarket`, `kalshi`, `polymarket_us`.
+- [x] Add `strategy_status` enum: `active`, `paused`, `disabled`.
+- [x] Add `strategies` table.
 - [ ] Add `strategy_runs` table.
-- [ ] Add `strategy_reports` table.
+- [ ] Add `strategy_reports` table (extend existing `agent_reports` with strategy FK).
 - [ ] Add `portfolio_snapshots` table.
 - [ ] Add `paper_trade_orders` table or extend existing `paper_trades` with strategy/platform fields.
 - [ ] Add `real_trade_orders` table.
@@ -443,24 +446,25 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 2 - Server APIs
 
-- [ ] Add `POST /api/agent/strategies/register`.
-- [ ] Add `GET/POST /api/agent/context`.
-- [ ] Add `GET/POST /api/agent/reports`.
-- [ ] Add `GET /api/agent/reports/[id]`.
-- [ ] Add `POST /api/agent/paper-trades`.
+- [x] Add `POST /api/agent/strategies/register`.
+- [x] Add `GET /api/agent/context`.
+- [x] Add `GET/POST /api/reports` (existing).
+- [x] Add `GET /api/reports/[filename]` (existing).
+- [ ] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
 - [ ] Add `POST /api/agent/real-trades`.
 - [ ] Add `POST /api/agent/real-orders/[id]/cancel`.
 - [ ] Add `POST /api/agent/reconcile`.
-- [ ] Keep compatibility wrappers for old `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell`.
+- [x] Keep compatibility wrappers for old `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell`.
 
 ### Phase 3 - Paper Trading
 
-- [ ] Normalize current Polymarket paper flow into `/api/agent/paper-trades`.
-- [ ] Normalize current Kalshi paper flow into `/api/agent/paper-trades`.
-- [ ] Add Polymarket US paper market-data client.
-- [ ] Add Polymarket US paper fill simulator.
+- [x] Polymarket paper trading flow (via `/api/trade/buy`, `/api/trade/sell`).
+- [x] Kalshi paper trading flow (via `/api/kalshi/trade/buy`, `/api/kalshi/trade/sell`).
+- [x] Polymarket US paper market-data client (via official `polymarket-us` SDK).
+- [x] Polymarket US paper fill simulator (via `/api/polymarket-us/trade/buy`, `/api/polymarket-us/trade/sell`).
+- [ ] Normalize all three into unified `/api/agent/paper-trades`.
 - [ ] Ensure all paper trades write portfolio snapshot and report link.
-- [ ] Add idempotency enforcement per strategy/platform.
+- [x] Idempotency enforcement per strategy/platform.
 
 ### Phase 4 - Real Trading
 
@@ -485,16 +489,15 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 6 - MCP
 
-- [ ] Add `register_strategy` tool.
-- [ ] Add `get_strategy_context` tool.
-- [ ] Add `write_strategy_report` tool.
-- [ ] Add `list_strategy_reports` tool.
-- [ ] Add `read_strategy_report` tool.
-- [ ] Add `record_paper_trade` tool.
+- [x] Add `register_strategy` tool (all 3 MCP servers).
+- [x] Add `get_strategy_context` tool (all 3 MCP servers).
+- [x] Add `save_report` / `list_reports` / `read_report` tools (all 3 MCP servers).
+- [ ] Add `record_paper_trade` tool (unified).
 - [ ] Add `submit_real_trade` tool.
 - [ ] Add `cancel_real_order` tool.
 - [ ] Add `reconcile_portfolio` tool.
-- [ ] Require `strategy_name`, `agent_mode`, and `platform` in new tools.
+- [x] Execution tools (buy/sell) use only `strategy_name` — server resolves platform via server-side binding.
+- [ ] Expose MCP Resource `strategy_state://{strategy_name}` for initialization state sync.
 - [ ] Update old tools to call new tools internally or mark legacy.
 
 ### Phase 7 - Scheduling
@@ -504,6 +507,7 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [ ] Add run locking so the same strategy cannot overlap itself.
 - [ ] Add run status tracking.
 - [ ] Add failure notification/reporting.
+- [ ] Add host-script prompt modification to omit `register_strategy` when already setup.
 
 ### Phase 8 - UI
 
@@ -516,7 +520,7 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 9 - Tests
 
-- [ ] Unit test strategy registration.
+- [ ] Unit test strategy registration (idempotency, mode/platform binding).
 - [ ] Unit test report write/read/list.
 - [ ] Unit test paper trade idempotency.
 - [ ] Integration test Polymarket paper flow.
