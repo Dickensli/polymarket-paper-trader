@@ -336,7 +336,7 @@ export async function executeTrade(
   // not through normal buy/sell at stale midpoint prices.
   // Skip this check for internal resolution calls (identified by idempotencyKey prefix).
   const isResolutionCall = idempotencyKey?.startsWith('resolve_');
-  if (!isResolutionCall && platform !== 'kalshi') {
+  if (!isResolutionCall && platform !== 'kalshi' && platform !== 'polymarket_us') {
     try {
       const marketData = await getMarket(marketId);
       if (marketData.closed) {

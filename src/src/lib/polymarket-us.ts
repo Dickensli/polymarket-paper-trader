@@ -1,0 +1,281 @@
+// =============================================================================
+// Polymarket US API Client (polymarket.us — regulated US prediction market)
+// =============================================================================
+//
+// Uses the official `polymarket-us` SDK for all API interactions.
+// Handles Ed25519-signed authentication automatically via SDK.
+//
+// Follows the same export pattern as kalshi.ts.
+// =============================================================================
+
+import {
+  PolymarketUS,
+  type MarketDetail,
+  type MarketBBO,
+  type MarketBook,
+  type Event as PMEvent,
+  type GetMarketsResponse,
+  type GetMarketResponse,
+  type GetEventsResponse,
+  type GetEventResponse,
+  type SearchResponse,
+  type MarketsListParams,
+  type EventsListParams,
+  type SearchParams,
+} from 'polymarket-us';
+
+// ---------------------------------------------------------------------------
+// Singleton client — initialized lazily
+// ---------------------------------------------------------------------------
+
+let _client: PolymarketUS | null = null;
+
+function getClient(): PolymarketUS {
+  if (!_client) {
+    const keyId = process.env.POLYMARKET_US_KEY_ID;
+    const secretKey = process.env.POLYMARKET_US_SECRET_KEY;
+
+    _client = new PolymarketUS({
+      ...(keyId && secretKey ? { keyId, secretKey } : {}),
+    });
+  }
+  return _client;
+}
+
+/**
+ * Expose the raw SDK client for routes that need direct access.
+ */
+export function getPolymarketUsClient(): PolymarketUS {
+  return getClient();
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+function normalizePrice(value: unknown): number | null {
+  if (value == null) return null;
+
+  // SDK Amount type: { value: string, currency: 'USD' }
+  if (typeof value === 'object' && 'value' in (value as Record<string, unknown>)) {
+    const v = Number((value as { value: string }).value);
+    if (!Number.isFinite(v) || v <= 0) return null;
+    return v > 1 ? v / 100 : v;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric > 1 ? numeric / 100 : numeric;
+}
+
+// ---------------------------------------------------------------------------
+// Market endpoints
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch a single market by slug from the Polymarket US API.
+ */
+export async function getPolymarketUsMarket(
+  slug: string,
+): Promise<MarketDetail | null> {
+  try {
+    const res: GetMarketResponse = await getClient().markets.retrieveBySlug(slug);
+    return res.market ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a list of markets with optional filters.
+ */
+export async function getPolymarketUsMarkets(
+  params?: MarketsListParams,
+): Promise<GetMarketsResponse | null> {
+  try {
+    return await getClient().markets.list(params);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the full order book for a market.
+ */
+export async function getPolymarketUsMarketBook(
+  slug: string,
+): Promise<MarketBook | null> {
+  try {
+    return await getClient().markets.book(slug);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch best bid/offer for a market.
+ */
+export async function getPolymarketUsMarketBBO(
+  slug: string,
+): Promise<MarketBBO | null> {
+  try {
+    return await getClient().markets.bbo(slug);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Event endpoints
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch a list of events with optional filters.
+ */
+export async function getPolymarketUsEvents(
+  params?: EventsListParams,
+): Promise<GetEventsResponse | null> {
+  try {
+    return await getClient().events.list(params);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a single event by ID (numeric).
+ */
+export async function getPolymarketUsEvent(
+  id: number,
+): Promise<GetEventResponse | null> {
+  try {
+    return await getClient().events.retrieve(id);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a single event by slug.
+ */
+export async function getPolymarketUsEventBySlug(
+  slug: string,
+): Promise<GetEventResponse | null> {
+  try {
+    return await getClient().events.retrieveBySlug(slug);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/**
+ * Search for events/markets.
+ */
+export async function searchPolymarketUs(
+  params?: SearchParams,
+): Promise<SearchResponse | null> {
+  try {
+    return await getClient().search.query(params);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Price helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the best price for a given outcome and side using the BBO endpoint.
+ *
+ * - BUY  → uses the best ask (cheapest available offer)
+ * - SELL → uses the best bid (highest available bid)
+ *
+ * Note: The actual SDK responses nest data under `marketData`, so we
+ * handle both the typed shape and the actual runtime shape.
+ */
+export async function getPolymarketUsOutcomePrice(
+  slug: string,
+  outcome: 'YES' | 'NO',
+  side: 'BUY' | 'SELL' = 'BUY',
+): Promise<number | null> {
+  // Use BBO for top-of-book pricing
+  const bboRaw = await getPolymarketUsMarketBBO(slug) as Record<string, unknown> | null;
+  if (bboRaw) {
+    // Handle both direct shape and { marketData: { ... } } wrapper
+    const bbo = (bboRaw.marketData ?? bboRaw) as Record<string, unknown>;
+    const priceField = side === 'BUY' ? bbo.bestAsk : bbo.bestBid;
+    const price = normalizePrice(priceField);
+    if (price !== null && price < 1) return price;
+
+    // Also try currentPx as a fallback
+    if (bbo.currentPx) {
+      const px = normalizePrice(bbo.currentPx);
+      if (px !== null && px < 1) return px;
+    }
+  }
+
+  // Fallback: try the full order book
+  const bookRaw = await getPolymarketUsMarketBook(slug) as Record<string, unknown> | null;
+  if (bookRaw) {
+    const book = (bookRaw.marketData ?? bookRaw) as Record<string, unknown>;
+    const offers = book.offers as Array<{ px: unknown }> | undefined;
+    const bids = book.bids as Array<{ px: unknown }> | undefined;
+
+    if (side === 'BUY' && offers?.length) {
+      const price = normalizePrice(offers[0].px);
+      if (price !== null && price < 1) return price;
+    }
+    if (side === 'SELL' && bids?.length) {
+      const price = normalizePrice(bids[0].px);
+      if (price !== null && price < 1) return price;
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Token ID helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a deterministic token ID for a Polymarket US market/outcome pair.
+ */
+export function polymarketUsTokenId(
+  slug: string,
+  outcome: 'YES' | 'NO',
+): string {
+  return `polymarket_us:${slug}:${outcome}`;
+}
+
+/**
+ * Parse a Polymarket US token ID back into slug and outcome.
+ */
+export function parsePolymarketUsTokenId(
+  tokenId: string,
+): { slug: string; outcome: 'YES' | 'NO' } | null {
+  const match = /^polymarket_us:(.+):(YES|NO)$/.exec(tokenId);
+  if (!match) return null;
+  return { slug: match[1], outcome: match[2] as 'YES' | 'NO' };
+}
+
+// Re-export SDK types for use in routes
+export type {
+  MarketDetail,
+  MarketBBO,
+  MarketBook,
+  PMEvent,
+  GetMarketsResponse,
+  GetMarketResponse,
+  GetEventsResponse,
+  GetEventResponse,
+  SearchResponse,
+  MarketsListParams,
+  EventsListParams,
+  SearchParams,
+};

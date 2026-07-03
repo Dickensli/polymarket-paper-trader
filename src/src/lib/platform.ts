@@ -1,7 +1,9 @@
-export type TradingPlatform = 'polymarket' | 'kalshi';
+export type TradingPlatform = 'polymarket' | 'kalshi' | 'polymarket_us';
 
 export function normalizePlatform(value: unknown): TradingPlatform {
-  return value === 'kalshi' ? 'kalshi' : 'polymarket';
+  if (value === 'kalshi') return 'kalshi';
+  if (value === 'polymarket_us') return 'polymarket_us';
+  return 'polymarket';
 }
 
 export function getUserPlatform(settings: unknown): TradingPlatform {
