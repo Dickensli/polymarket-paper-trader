@@ -83,7 +83,79 @@ export const strategies = pgTable(
   ],
 );
 
+// ─── Strategy Runs ──────────────────────────────────────────
+
+/** One row per scheduled/manual agent execution for auditing and run-locking */
+export const strategyRuns = pgTable(
+  'strategy_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .notNull()
+      .references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** External trigger identifier (cron job ID, manual, etc.) */
+    triggerId: varchar('trigger_id', { length: 255 }),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    /** Run lifecycle: running → completed | failed | cancelled */
+    status: varchar('status', { length: 20 }).notNull().default('running'),
+    /** Context provided to the agent at the start of this run */
+    inputContext: jsonb('input_context'),
+    /** Brief summary written by the agent at the end of the run */
+    summary: text('summary'),
+    /** Error message if the run failed */
+    error: text('error'),
+    /** Number of trades executed during this run */
+    tradesExecuted: integer('trades_executed').default(0),
+    metadata: jsonb('metadata').default({}),
+  },
+  (table) => [
+    index('strategy_runs_strategy_idx').on(table.strategyId),
+    index('strategy_runs_user_idx').on(table.userId),
+    index('strategy_runs_status_idx').on(table.status),
+    index('strategy_runs_started_idx').on(table.startedAt),
+  ],
+);
+
+// ─── Portfolio Snapshots ────────────────────────────────────
+
+/** Immutable snapshots for tracking portfolio state at key moments */
+export const portfolioSnapshots = pgTable(
+  'portfolio_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .references(() => strategyRuns.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform'),
+    agentMode: agentModeEnum('agent_mode'),
+    /** Where this snapshot came from */
+    source: varchar('source', { length: 20 }).notNull().default('local'), // 'local', 'official', 'reconciled'
+    cash: decimal('cash', { precision: 18, scale: 2 }).notNull(),
+    positionsValue: decimal('positions_value', { precision: 18, scale: 2 }).notNull().default('0.00'),
+    totalValue: decimal('total_value', { precision: 18, scale: 2 }).notNull(),
+    pnl: decimal('pnl', { precision: 18, scale: 6 }).notNull().default('0.000000'),
+    positions: jsonb('positions').default([]),
+    orders: jsonb('orders').default([]),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('portfolio_snapshots_strategy_idx').on(table.strategyId),
+    index('portfolio_snapshots_user_idx').on(table.userId),
+    index('portfolio_snapshots_run_idx').on(table.runId),
+    index('portfolio_snapshots_captured_idx').on(table.capturedAt),
+  ],
+);
+
 // ─── Users ──────────────────────────────────────────────────
+
 
 /** Core user table – doubles as the NextAuth user table */
 export const users = pgTable('users', {
