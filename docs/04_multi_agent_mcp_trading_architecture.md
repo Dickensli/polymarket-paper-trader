@@ -436,13 +436,13 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `platform` enum: `polymarket`, `kalshi`, `polymarket_us`.
 - [x] Add `strategy_status` enum: `active`, `paused`, `disabled`.
 - [x] Add `strategies` table.
-- [ ] Add `strategy_runs` table.
-- [ ] Add `strategy_reports` table (extend existing `agent_reports` with strategy FK).
-- [ ] Add `portfolio_snapshots` table.
-- [ ] Add `paper_trade_orders` table or extend existing `paper_trades` with strategy/platform fields.
-- [ ] Add `real_trade_orders` table.
-- [ ] Add `reconciliation_logs` table.
-- [ ] Generate and verify Drizzle migration.
+- [x] Add `strategy_runs` table.
+- [x] Add `strategy_reports` table (extend existing `agent_reports` with strategy FK).
+- [x] Add `portfolio_snapshots` table.
+- [x] Add `paper_trade_orders` table or extend existing `paper_trades` with strategy/platform fields.
+- [x] Add `real_trade_orders` table.
+- [x] Add `reconciliation_logs` table.
+- [x] Generate and verify Drizzle migration.
 
 ### Phase 2 - Server APIs
 
@@ -450,10 +450,12 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `GET /api/agent/context`.
 - [x] Add `GET/POST /api/reports` (existing).
 - [x] Add `GET /api/reports/[filename]` (existing).
-- [ ] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
-- [ ] Add `POST /api/agent/real-trades`.
-- [ ] Add `POST /api/agent/real-orders/[id]/cancel`.
-- [ ] Add `POST /api/agent/reconcile`.
+- [x] Add `GET/POST /api/agent/reports`.
+- [x] Add `GET /api/agent/reports/[id]`.
+- [x] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
+- [x] Add `POST /api/agent/real-trades` (safe audit-first placeholder; official client pending).
+- [x] Add `POST /api/agent/real-orders/[id]/cancel` (safe audit-first placeholder; official client pending).
+- [x] Add `POST /api/agent/reconcile` (local snapshot/log placeholder; official snapshot fetch pending).
 - [x] Keep compatibility wrappers for old `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell`.
 
 ### Phase 3 - Paper Trading
@@ -462,19 +464,20 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Kalshi paper trading flow (via `/api/kalshi/trade/buy`, `/api/kalshi/trade/sell`).
 - [x] Polymarket US paper market-data client (via official `polymarket-us` SDK).
 - [x] Polymarket US paper fill simulator (via `/api/polymarket-us/trade/buy`, `/api/polymarket-us/trade/sell`).
-- [ ] Normalize all three into unified `/api/agent/paper-trades`.
-- [ ] Ensure all paper trades write portfolio snapshot and report link.
+- [x] Normalize all three into unified `/api/agent/paper-trades`.
+- [x] Ensure unified agent paper trades write portfolio snapshot.
+- [ ] Link paper trades to the current strategy report/run summary.
 - [x] Idempotency enforcement per strategy/platform.
 
 ### Phase 4 - Real Trading
 
 - [ ] Move or reuse Kalshi official trading client server-side.
 - [ ] Move or reuse Polymarket US official trading client server-side.
-- [ ] Add real-trading enable flags per platform and per strategy.
+- [x] Add real-trading enable flag per strategy (`metadata.real_trading_enabled`).
 - [ ] Add `submit_real_trade` MCP flow for Kalshi.
 - [ ] Add `submit_real_trade` MCP flow for Polymarket US.
 - [ ] Add cancel-order flow for both real platforms.
-- [ ] Persist every official request/response in `real_trade_orders`.
+- [x] Persist every attempted official request/response/error in `real_trade_orders`.
 - [ ] Add official portfolio snapshot after each real write.
 
 ### Phase 5 - Reconciliation
@@ -484,8 +487,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [ ] Compare official vs local balances.
 - [ ] Compare official vs local positions.
 - [ ] Compare official vs local open orders/fills.
-- [ ] Write `reconciliation_logs` for material differences.
-- [ ] Return warnings to MCP client when differences exceed threshold.
+- [x] Write `reconciliation_logs` for local snapshot / pending-official reconciliation state.
+- [x] Return warnings to MCP client when official reconciliation is not yet available.
 
 ### Phase 6 - MCP
 
@@ -520,13 +523,15 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 9 - Tests
 
-- [ ] Unit test strategy registration (idempotency, mode/platform binding).
-- [ ] Unit test report write/read/list.
-- [ ] Unit test paper trade idempotency.
+- [x] Unit test strategy registration (idempotency, mode/platform binding).
+- [x] Unit test report write/read/list.
+- [x] Unit test paper trade idempotency.
+- [x] Unit test unified paper trade writes normalized order and portfolio snapshot.
+- [x] Unit test real-trade/cancel safety placeholders persist audit state.
+- [x] Unit test reconciliation local snapshot/log placeholder.
 - [ ] Integration test Polymarket paper flow.
 - [ ] Integration test Kalshi paper flow.
 - [ ] Integration test Polymarket US paper flow.
 - [ ] Mock official real trade clients for Kalshi and Polymarket US.
-- [ ] Test reconciliation thresholds and log creation.
+- [ ] Test reconciliation thresholds.
 - [ ] MCP smoke test listing and calling new tools.
-

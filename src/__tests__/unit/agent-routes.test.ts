@@ -1,0 +1,429 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/auth', () => ({
+  auth: vi.fn(),
+}));
+
+vi.mock('@/lib/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/db')>()),
+  getDb: vi.fn(),
+}));
+
+vi.mock('@/lib/trading-engine', () => {
+  class TradingError extends Error {
+    constructor(
+      message: string,
+      public readonly code: string,
+    ) {
+      super(message);
+    }
+  }
+
+  return {
+    executeTrade: vi.fn(),
+    getPortfolio: vi.fn(),
+    TradingError,
+  };
+});
+
+vi.mock('@/lib/polymarket', () => ({
+  getMarket: vi.fn(),
+  getMidpoint: vi.fn(),
+}));
+
+vi.mock('@/lib/kalshi', () => ({
+  getKalshiOutcomePrice: vi.fn(),
+}));
+
+vi.mock('@/lib/polymarket-us', () => ({
+  getPolymarketUsMarket: vi.fn(),
+  getPolymarketUsOutcomePrice: vi.fn(),
+  polymarketUsTokenId: vi.fn((slug: string, outcome: string) => `${slug}:${outcome}`),
+}));
+
+type JsonBody = Record<string, unknown>;
+
+function makeRequest({
+  body,
+  headers,
+  url = 'https://example.test/api',
+}: {
+  body?: JsonBody;
+  headers?: Record<string, string>;
+  url?: string;
+} = {}) {
+  return {
+    headers: {
+      get: (name: string) => headers?.[name] ?? headers?.[name.toLowerCase()] ?? null,
+    },
+    json: vi.fn(async () => body ?? {}),
+    nextUrl: new URL(url),
+  };
+}
+
+function createChain<T>(result: T) {
+  const chain = {
+    from: vi.fn(() => chain),
+    where: vi.fn(() => chain),
+    orderBy: vi.fn(() => chain),
+    limit: vi.fn(async () => result),
+  };
+  return chain;
+}
+
+function createMockDb() {
+  const insertResults: unknown[] = [];
+  const updateResults: unknown[] = [];
+  const insertValues = vi.fn((values: unknown) => ({
+    returning: vi.fn(async () => [insertResults.shift() ?? { id: 'inserted-id', ...values as object }]),
+  }));
+  const updateSet = vi.fn((values: unknown) => ({
+    where: vi.fn(() => ({
+      returning: vi.fn(async () => [updateResults.shift() ?? { id: 'updated-id', ...values as object }]),
+    })),
+  }));
+  const selectResult: unknown[] = [];
+
+  return {
+    insertResults,
+    updateResults,
+    selectResult,
+    insertValues,
+    updateSet,
+    query: {
+      agentReports: { findFirst: vi.fn() },
+      paperTradeOrders: { findFirst: vi.fn() },
+      realTradeOrders: { findFirst: vi.fn() },
+      strategies: { findFirst: vi.fn() },
+      strategyRuns: { findFirst: vi.fn() },
+    },
+    insert: vi.fn(() => ({ values: insertValues })),
+    update: vi.fn(() => ({ set: updateSet })),
+    select: vi.fn(() => createChain(selectResult)),
+  };
+}
+
+describe('agent route handlers', () => {
+  let db: ReturnType<typeof createMockDb>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    db = createMockDb();
+
+    const { auth } = await import('@/lib/auth');
+    const { getDb } = await import('@/lib/db');
+    vi.mocked(auth).mockResolvedValue({ user: { id: 'user-1' } } as never);
+    vi.mocked(getDb).mockReturnValue(db as never);
+  });
+
+  it('registers a new strategy and returns existing strategies idempotently', async () => {
+    const { POST } = await import('@/app/api/agent/strategies/register/route');
+
+    db.query.strategies.findFirst.mockResolvedValueOnce(null);
+    db.insertResults.push({
+      id: 'strategy-1',
+      strategyName: 'arb',
+      agentMode: 'paper',
+      platform: 'kalshi',
+      status: 'active',
+      startingBalance: '10000.00',
+      riskConfig: {},
+      schedule: null,
+      createdAt: new Date('2026-07-03T00:00:00.000Z'),
+    });
+
+    const created = await POST(makeRequest({
+      body: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+    }) as never);
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      registered: true,
+      is_new: true,
+      strategy: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+    });
+
+    db.query.strategies.findFirst.mockResolvedValueOnce({
+      id: 'strategy-1',
+      strategyName: 'arb',
+      agentMode: 'paper',
+      platform: 'kalshi',
+      status: 'active',
+      startingBalance: '10000.00',
+      riskConfig: {},
+      schedule: null,
+      createdAt: new Date('2026-07-03T00:00:00.000Z'),
+    });
+
+    const existing = await POST(makeRequest({
+      body: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+    }) as never);
+    expect(existing.status).toBe(200);
+    await expect(existing.json()).resolves.toMatchObject({
+      registered: true,
+      is_new: false,
+      strategy: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+    });
+  });
+
+  it('writes, lists, and reads strategy reports through /api/agent/reports', async () => {
+    const reportsRoute = await import('@/app/api/agent/reports/route');
+    const reportByIdRoute = await import('@/app/api/agent/reports/[id]/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', strategyName: 'arb' });
+    db.query.agentReports.findFirst.mockResolvedValueOnce(null);
+    db.insertResults.push({
+      id: 'report-1',
+      strategyId: 'strategy-1',
+      runId: null,
+      account: 'arb',
+      filename: 'run.md',
+      content: '# Report',
+      title: 'Run',
+    });
+
+    const written = await reportsRoute.POST(makeRequest({
+      body: {
+        strategy_name: 'arb',
+        filename: 'run.md',
+        content: '# Report',
+        title: 'Run',
+      },
+    }) as never);
+    expect(written.status).toBe(201);
+    await expect(written.json()).resolves.toMatchObject({
+      data: { id: 'report-1', strategyId: 'strategy-1', filename: 'run.md' },
+      updated: false,
+    });
+
+    db.selectResult.push({
+      id: 'report-1',
+      filename: 'run.md',
+      title: 'Run',
+      createdAt: new Date('2026-07-03T00:00:00.000Z'),
+    });
+    const listed = await reportsRoute.GET(makeRequest({
+      url: 'https://example.test/api/agent/reports?strategy_name=arb&limit=5',
+    }) as never);
+    await expect(listed.json()).resolves.toMatchObject({
+      data: [{ id: 'report-1', filename: 'run.md', title: 'Run' }],
+      meta: { count: 1, limit: 5 },
+    });
+
+    db.query.agentReports.findFirst.mockResolvedValueOnce({
+      id: 'report-1',
+      strategyId: 'strategy-1',
+      runId: null,
+      userId: 'user-1',
+      account: 'arb',
+      filename: 'run.md',
+      content: '# Report',
+      title: 'Run',
+      lessonsLearned: null,
+      nextSteps: null,
+      portfolioSummary: {},
+      tradeSummary: {},
+      createdAt: new Date('2026-07-03T00:00:00.000Z'),
+    });
+    const read = await reportByIdRoute.GET(makeRequest() as never, {
+      params: Promise.resolve({ id: 'report-1' }),
+    });
+    await expect(read.json()).resolves.toMatchObject({
+      data: { id: 'report-1', filename: 'run.md', content: '# Report' },
+    });
+  });
+
+  it('returns existing paper order for duplicate idempotency key', async () => {
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue({
+      id: 'paper-order-1',
+      idempotencyKey: 'idem-1',
+    });
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'idem-1' },
+      body: { strategy_name: 'arb', slug: 'market', amount: 10 },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { id: 'paper-order-1' },
+      message: 'Returned existing paper order (idempotent)',
+    });
+  });
+
+  it('executes a unified paper trade and writes normalized order plus portfolio snapshot', async () => {
+    const { executeTrade, getPortfolio } = await import('@/lib/trading-engine');
+    const { getKalshiOutcomePrice } = await import('@/lib/kalshi');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1',
+      strategyName: 'arb',
+      agentMode: 'paper',
+      platform: 'kalshi',
+      status: 'active',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue({
+      id: 'run-1',
+      strategyId: 'strategy-1',
+      status: 'running',
+    });
+    vi.mocked(getKalshiOutcomePrice).mockResolvedValue(0.25);
+    vi.mocked(executeTrade).mockResolvedValue({
+      id: 'trade-1',
+      marketId: 'KXTEST',
+      marketQuestion: 'KXTEST',
+      tokenId: 'KXTEST:YES',
+      outcome: 'YES',
+      side: 'BUY',
+      shares: 40,
+      price: 0.25,
+      total: 10,
+      timestamp: '2026-07-03T00:00:00.000Z',
+    });
+    vi.mocked(getPortfolio).mockResolvedValue({
+      balance: 9990,
+      positions: [],
+      tradeHistory: [],
+      totalValue: 10000,
+      totalPnL: 0,
+      totalPnLPercent: 0,
+    });
+    db.insertResults.push({
+      id: 'paper-order-1',
+      strategyId: 'strategy-1',
+      paperTradeId: 'trade-1',
+      platform: 'kalshi',
+    });
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'idem-2' },
+      body: {
+        strategy_name: 'arb',
+        slug: 'KXTEST',
+        outcome: 'YES',
+        side: 'BUY',
+        amount: 10,
+      },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(executeTrade).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      marketId: 'KXTEST',
+      platform: 'kalshi',
+      shares: 40,
+      price: 0.25,
+    }));
+    expect(db.update).toHaveBeenCalled();
+    expect(db.insert).toHaveBeenCalledTimes(2);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { id: 'trade-1' },
+      paper_order: { id: 'paper-order-1' },
+      portfolio: { cash: 9990, total_value: 10000 },
+    });
+  });
+
+  it('rejects disabled real trading while persisting a real trade audit row', async () => {
+    const { POST } = await import('@/app/api/agent/real-trades/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1',
+      strategyName: 'real-arb',
+      agentMode: 'real',
+      platform: 'kalshi',
+      status: 'active',
+      metadata: {},
+    });
+    db.insertResults.push({
+      id: 'real-order-1',
+      status: 'REJECTED',
+      error: { code: 'REAL_TRADING_DISABLED' },
+    });
+
+    const response = await POST(makeRequest({
+      body: {
+        strategy_name: 'real-arb',
+        slug: 'KXTEST',
+        outcome: 'YES',
+        side: 'BUY',
+        amount: 10,
+      },
+    }) as never);
+
+    expect(response.status).toBe(403);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      strategyId: 'strategy-1',
+      platform: 'kalshi',
+      status: 'REJECTED',
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Real trading is disabled for this strategy.',
+      audit: { id: 'real-order-1' },
+    });
+  });
+
+  it('updates real order audit on cancel placeholder', async () => {
+    const { POST } = await import('@/app/api/agent/real-orders/[id]/cancel/route');
+
+    db.query.realTradeOrders.findFirst.mockResolvedValue({
+      id: 'real-order-1',
+      userId: 'user-1',
+    });
+    db.updateResults.push({
+      id: 'real-order-1',
+      status: 'CANCEL_REJECTED',
+    });
+
+    const response = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: 'real-order-1' }),
+    });
+
+    expect(response.status).toBe(501);
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'CANCEL_REJECTED',
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Official cancel client is not implemented yet.',
+      audit: { id: 'real-order-1', status: 'CANCEL_REJECTED' },
+    });
+  });
+
+  it('captures local snapshot and reconciliation log', async () => {
+    const { getPortfolio } = await import('@/lib/trading-engine');
+    const { POST } = await import('@/app/api/agent/reconcile/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1',
+      strategyName: 'real-arb',
+      agentMode: 'real',
+      platform: 'kalshi',
+    });
+    vi.mocked(getPortfolio).mockResolvedValue({
+      balance: 9000,
+      positions: [],
+      tradeHistory: [],
+      totalValue: 9500,
+      totalPnL: -500,
+      totalPnLPercent: -5,
+    });
+    db.insertResults.push(
+      { id: 'snapshot-1', source: 'local' },
+      { id: 'log-1', severity: 'warning' },
+    );
+
+    const response = await POST(makeRequest({
+      body: { strategy_name: 'real-arb' },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(db.insert).toHaveBeenCalledTimes(2);
+    await expect(response.json()).resolves.toMatchObject({
+      reconciled: false,
+      local_snapshot: { id: 'snapshot-1' },
+      reconciliation_log: { id: 'log-1', severity: 'warning' },
+      warnings: ['Official venue snapshot fetch is not implemented yet.'],
+    });
+  });
+});

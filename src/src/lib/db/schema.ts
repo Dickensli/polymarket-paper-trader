@@ -248,6 +248,10 @@ export const paperTrades = pgTable(
   'paper_trades',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .references(() => strategies.id, { onDelete: 'set null' }),
+    runId: uuid('run_id')
+      .references(() => strategyRuns.id, { onDelete: 'set null' }),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -257,6 +261,7 @@ export const paperTrades = pgTable(
     marketId: varchar('market_id', { length: 255 }).notNull(),
     marketQuestion: text('market_question'),
     tokenId: varchar('token_id', { length: 255 }).notNull(),
+    platform: platformEnum('platform').default('polymarket'),
     outcome: outcomeEnum('outcome').notNull(),
     action: tradeActionEnum('action').notNull(),
     shares: decimal('shares', { precision: 18, scale: 6 }).notNull(),
@@ -270,11 +275,127 @@ export const paperTrades = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index('paper_trades_strategy_idx').on(table.strategyId),
+    index('paper_trades_run_idx').on(table.runId),
     index('paper_trades_user_idx').on(table.userId),
     index('paper_trades_portfolio_idx').on(table.portfolioId),
     index('paper_trades_market_idx').on(table.marketId),
     index('paper_trades_executed_idx').on(table.executedAt),
     index('paper_trades_idempotency_idx').on(table.idempotencyKey),
+  ],
+);
+
+// ─── Normalized Agent Paper Orders ─────────────────────────
+
+/** Normalized cross-platform paper order records for strategy agents */
+export const paperTradeOrders = pgTable(
+  'paper_trade_orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .notNull()
+      .references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .references(() => strategyRuns.id, { onDelete: 'set null' }),
+    paperTradeId: uuid('paper_trade_id')
+      .references(() => paperTrades.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform').notNull(),
+    marketId: varchar('market_id', { length: 255 }).notNull(),
+    marketSlug: varchar('market_slug', { length: 500 }),
+    outcome: outcomeEnum('outcome').notNull(),
+    side: tradeActionEnum('side').notNull(),
+    quantity: decimal('quantity', { precision: 18, scale: 6 }).notNull(),
+    price: decimal('price', { precision: 18, scale: 6 }).notNull(),
+    notional: decimal('notional', { precision: 18, scale: 2 }).notNull(),
+    fillModel: varchar('fill_model', { length: 50 }).notNull().default('paper_midpoint'),
+    status: orderStatusEnum('status').notNull().default('FILLED'),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
+    request: jsonb('request').default({}),
+    result: jsonb('result').default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('paper_trade_orders_strategy_idx').on(table.strategyId),
+    index('paper_trade_orders_user_idx').on(table.userId),
+    index('paper_trade_orders_run_idx').on(table.runId),
+    index('paper_trade_orders_market_idx').on(table.marketId),
+    uniqueIndex('paper_trade_orders_idempotency_idx').on(table.strategyId, table.idempotencyKey),
+  ],
+);
+
+// ─── Real Trade Orders ─────────────────────────────────────
+
+/** Audit trail for official real-trading write requests */
+export const realTradeOrders = pgTable(
+  'real_trade_orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .notNull()
+      .references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .references(() => strategyRuns.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform').notNull(),
+    officialOrderId: varchar('official_order_id', { length: 255 }),
+    clientOrderId: varchar('client_order_id', { length: 255 }),
+    marketId: varchar('market_id', { length: 255 }),
+    marketSlugOrTicker: varchar('market_slug_or_ticker', { length: 500 }),
+    side: tradeActionEnum('side').notNull(),
+    quantity: decimal('quantity', { precision: 18, scale: 6 }),
+    price: decimal('price', { precision: 18, scale: 6 }),
+    status: varchar('status', { length: 50 }).notNull().default('PENDING'),
+    request: jsonb('request').default({}),
+    officialResponse: jsonb('official_response').default({}),
+    error: jsonb('error').default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('real_trade_orders_strategy_idx').on(table.strategyId),
+    index('real_trade_orders_user_idx').on(table.userId),
+    index('real_trade_orders_platform_idx').on(table.platform),
+    index('real_trade_orders_status_idx').on(table.status),
+    index('real_trade_orders_official_idx').on(table.officialOrderId),
+  ],
+);
+
+// ─── Reconciliation Logs ───────────────────────────────────
+
+/** Official-vs-local mismatch log for real agents */
+export const reconciliationLogs = pgTable(
+  'reconciliation_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .notNull()
+      .references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .references(() => strategyRuns.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform').notNull(),
+    severity: varchar('severity', { length: 20 }).notNull().default('info'),
+    differenceType: varchar('difference_type', { length: 50 }).notNull().default('unknown'),
+    officialSnapshot: jsonb('official_snapshot').default({}),
+    localSnapshot: jsonb('local_snapshot').default({}),
+    diff: jsonb('diff').default({}),
+    threshold: jsonb('threshold').default({}),
+    message: text('message').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('reconciliation_logs_strategy_idx').on(table.strategyId),
+    index('reconciliation_logs_user_idx').on(table.userId),
+    index('reconciliation_logs_platform_idx').on(table.platform),
+    index('reconciliation_logs_severity_idx').on(table.severity),
+    index('reconciliation_logs_created_idx').on(table.createdAt),
   ],
 );
 
@@ -466,15 +587,26 @@ export const agentReports = pgTable(
   'agent_reports',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .references(() => strategies.id, { onDelete: 'set null' }),
+    runId: uuid('run_id')
+      .references(() => strategyRuns.id, { onDelete: 'set null' }),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     account: varchar('account', { length: 255 }).notNull(),
     filename: varchar('filename', { length: 255 }).notNull(),
     content: text('content').notNull(),
+    title: varchar('title', { length: 255 }),
+    lessonsLearned: text('lessons_learned'),
+    nextSteps: text('next_steps'),
+    portfolioSummary: jsonb('portfolio_summary').default({}),
+    tradeSummary: jsonb('trade_summary').default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index('agent_reports_strategy_idx').on(table.strategyId),
+    index('agent_reports_run_idx').on(table.runId),
     index('agent_reports_user_idx').on(table.userId),
     index('agent_reports_account_idx').on(table.account),
     index('agent_reports_created_idx').on(table.createdAt),

@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { strategies, paperTrades, strategyRuns } from '@/lib/db/schema';
+import {
+  strategies,
+  paperTrades,
+  paperTradeOrders,
+  portfolioSnapshots,
+  strategyRuns,
+} from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
-import { executeTrade, TradingError } from '@/lib/trading-engine';
+import { executeTrade, getPortfolio, TradingError } from '@/lib/trading-engine';
 
 // Polymarket helpers
 import { getMarket, getMidpoint } from '@/lib/polymarket';
@@ -25,6 +31,8 @@ const paperTradeSchema = z.object({
   amount: z.number().positive().max(100000).optional(),
   shares: z.number().positive().optional(),
   price: z.number().min(0.001).max(0.999).optional(),
+  run_id: z.string().uuid().optional(),
+  fill_model: z.string().min(1).max(50).optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -51,12 +59,12 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
-    const existing = await db.query.paperTrades.findFirst({
-      where: eq(paperTrades.idempotencyKey, idempotencyKey),
+    const existingOrder = await db.query.paperTradeOrders.findFirst({
+      where: eq(paperTradeOrders.idempotencyKey, idempotencyKey),
     });
-    if (existing) {
+    if (existingOrder) {
       return NextResponse.json(
-        { data: existing, message: 'Returned existing trade (idempotent)' },
+        { data: existingOrder, message: 'Returned existing paper order (idempotent)' },
         { status: 200 },
       );
     }
@@ -110,6 +118,31 @@ export async function POST(request: NextRequest) {
     }
 
     const platform = strategy.platform;
+
+    let runId = order.run_id ?? null;
+    if (runId) {
+      const run = await db.query.strategyRuns.findFirst({
+        where: and(
+          eq(strategyRuns.id, runId),
+          eq(strategyRuns.strategyId, strategy.id),
+        ),
+      });
+      if (!run) {
+        return NextResponse.json(
+          { error: 'run_id does not belong to this strategy' },
+          { status: 400 },
+        );
+      }
+    } else {
+      const latestRun = await db.query.strategyRuns.findFirst({
+        where: and(
+          eq(strategyRuns.strategyId, strategy.id),
+          eq(strategyRuns.status, 'running'),
+        ),
+        orderBy: [desc(strategyRuns.startedAt)],
+      });
+      runId = latestRun?.id ?? null;
+    }
 
     // ── Resolve market data & price per platform ──────────────
     let marketId: string;
@@ -215,8 +248,66 @@ export async function POST(request: NextRequest) {
       platform,
     });
 
+    await db
+      .update(paperTrades)
+      .set({
+        strategyId: strategy.id,
+        runId,
+        platform,
+        metadata: {
+          strategy_name: order.strategy_name,
+          source: 'agent_paper_trades',
+        },
+      })
+      .where(eq(paperTrades.id, trade.id));
+
+    const [paperOrder] = await db
+      .insert(paperTradeOrders)
+      .values({
+        strategyId: strategy.id,
+        userId: session.user.id,
+        runId,
+        paperTradeId: trade.id,
+        platform,
+        marketId,
+        marketSlug: order.slug,
+        outcome: order.outcome,
+        side: order.side,
+        quantity: shares.toFixed(6),
+        price: price.toFixed(6),
+        notional: trade.total.toFixed(2),
+        fillModel: order.fill_model ?? 'paper_midpoint',
+        status: 'FILLED',
+        idempotencyKey,
+        request: order,
+        result: trade,
+      })
+      .returning();
+
+    const portfolio = await getPortfolio(session.user.id);
+    await db.insert(portfolioSnapshots).values({
+      strategyId: strategy.id,
+      userId: session.user.id,
+      runId,
+      platform,
+      agentMode: strategy.agentMode,
+      source: 'local',
+      cash: portfolio.balance.toFixed(2),
+      positionsValue: (portfolio.totalValue - portfolio.balance).toFixed(2),
+      totalValue: portfolio.totalValue.toFixed(2),
+      pnl: portfolio.totalPnL.toFixed(6),
+      positions: portfolio.positions,
+      orders: [paperOrder],
+    });
+
     return NextResponse.json({
       data: trade,
+      paper_order: paperOrder,
+      portfolio: {
+        cash: portfolio.balance,
+        total_value: portfolio.totalValue,
+        pnl: portfolio.totalPnL,
+      },
       platform,
       strategy_name: order.strategy_name,
     });
