@@ -632,7 +632,7 @@ describe('agent route handlers', () => {
         {
           id: 'strategy-1',
           userId: 'user-1',
-          strategyName: 'real-arb',
+          strategyId: 'real-arb',
           agentMode: 'real',
           platform: 'kalshi',
           status: 'active',
@@ -646,7 +646,7 @@ describe('agent route handlers', () => {
         {
           id: 'strategy-2',
           userId: 'user-1',
-          strategyName: 'paper-polymarket',
+          strategyId: 'paper-polymarket',
           agentMode: 'paper',
           platform: 'polymarket',
           status: 'active',
@@ -662,7 +662,7 @@ describe('agent route handlers', () => {
         {
           id: 'report-1',
           strategyId: 'strategy-1',
-          account: 'real-arb',
+          strategyName: 'real-arb',
           filename: 'run.md',
           title: 'Run',
           lessonsLearned: 'Tighten sizing',

@@ -232,6 +232,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (err) {
+    console.error('[API Dashboard Error]:', err);
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json(
       { error: 'Internal server error', details: message },

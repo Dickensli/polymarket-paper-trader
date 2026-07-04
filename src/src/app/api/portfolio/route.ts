@@ -27,7 +27,9 @@ export async function GET() {
     const portfolio = await getPortfolio(session.user.id);
     return NextResponse.json({ data: portfolio });
   } catch (err) {
+    console.error('[API Portfolio GET Error]:', err);
     const message = err instanceof Error ? err.message : 'Unknown error';
+
     return NextResponse.json(
       { error: 'Internal server error', details: message },
       { status: 500 },
@@ -62,7 +64,9 @@ export async function DELETE(request: Request) {
       message: 'Portfolio has been reset to initial state.',
     });
   } catch (err) {
+    console.error('[API Portfolio DELETE Error]:', err);
     const message = err instanceof Error ? err.message : 'Unknown error';
+
     return NextResponse.json(
       { error: 'Internal server error', details: message },
       { status: 500 },

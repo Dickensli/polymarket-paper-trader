@@ -715,6 +715,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  console.error(`[MCP] Call tool: ${name} with args: ${JSON.stringify(args)}`);
 
   try {
     switch (name) {
@@ -1625,10 +1626,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // ── Agent Strategy Lifecycle ────────────────────────────────
       case "register_strategy": {
-        const strategy_id = args?.strategy_id as string;
-        if (!strategy_id) throw new Error("Missing required field: strategy_id");
-        const account_id = args?.account_id as string;
-        if (!account_id) throw new Error("Missing required field: account_id");
+        const strategy_id = (args?.strategy_id || args?.strategy_name) as string;
+        if (!strategy_id) throw new Error("Missing required field: strategy_id or strategy_name");
+        const account_id = (args?.account_id || args?.agent_user_id || args?.account) as string;
+        if (!account_id) throw new Error("Missing required field: account_id or agent_user_id");
         const is_paper_trading = args?.is_paper_trading !== false;
         const platform = (args?.platform as string) || "polymarket";
         const balance = (args?.balance as number) || 10000;
@@ -1657,8 +1658,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       case "get_strategy_context": {
-        const strategy_id = args?.strategy_id as string;
-        if (!strategy_id) throw new Error("Missing required field: strategy_id");
+        const strategy_id = (args?.strategy_id || args?.strategy_name) as string;
+        if (!strategy_id) throw new Error("Missing required field: strategy_id or strategy_name");
         const res = await fetch(
           `${POLYTRADER_API_URL}/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`,
           { headers: getAgentHeaders(args) }
@@ -1731,6 +1732,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error: any) {
+    console.error("[MCP Error]", error);
     return {
       content: [{ type: "text", text: `Error: ${error.message}` }],
       isError: true,
