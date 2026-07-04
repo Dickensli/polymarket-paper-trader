@@ -1,58 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
-import postgres from 'postgres';
-import fs from 'fs';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { getDb } from '@/lib/db';
 import path from 'path';
 
-export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('x-agent-secret') || req.headers.get('x-migrate-secret');
-  
-  // Use the default AGENT_SECRET or a one-time migration secret
-  if (authHeader !== 'jetski_migration_2024' && authHeader !== process.env.AGENT_SECRET) {
+export const dynamic = 'force-dynamic';
+
+export async function GET(req: NextRequest) {
+  // Simple auth check
+  const authHeader = req.headers.get('x-agent-secret');
+  if (authHeader !== process.env.AGENT_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    return NextResponse.json({ error: 'DATABASE_URL is not set in production' }, { status: 500 });
-  }
-
-  const sql = postgres(databaseUrl, { ssl: 'require' });
-
   try {
-    const drizzleDir = path.join(process.cwd(), 'drizzle');
-    const files = fs.readdirSync(drizzleDir)
-      .filter(f => f.endsWith('.sql'))
-      .sort();
+    console.log('Starting migration...');
+    const db = getDb();
     
-    console.log(`Found ${files.length} migrations: ${files.join(', ')}`);
-    const results = [];
-
-    for (const file of files) {
-      const migrationPath = path.join(drizzleDir, file);
-      const migrationSql = fs.readFileSync(migrationPath, 'utf8');
-      
-      console.log(`Applying migration ${file}...`);
-      try {
-        await sql.unsafe(migrationSql);
-        results.push({ file, status: 'success' });
-      } catch (err: any) {
-        console.warn(`Migration ${file} failed or already applied:`, err.message);
-        results.push({ file, status: 'skipped/failed', error: err.message });
+    // Drizzle migrate needs the path to the migrations folder
+    // In Vercel, we need to be careful about the path
+    const migrationsFolder = path.join(process.cwd(), 'drizzle');
+    
+    console.log(`Using migrations folder: ${migrationsFolder}`);
+    
+    await migrate(db, { migrationsFolder });
+    
+    return NextResponse.json({ success: true, message: 'Migrations applied successfully' });
+  } catch (error: any) {
+    console.error('Migration failed:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: error.message,
+      stack: error.stack,
+      cwd: process.cwd(),
+      env: {
+        NODE_ENV: process.env.NODE_ENV,
+        HAS_DB_URL: !!process.env.DATABASE_URL
       }
-    }
-    
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Migration process completed',
-      results
-    });
-  } catch (err: any) {
-    console.error('Migration API failed:', err);
-    return NextResponse.json({ 
-      error: err.message,
-      stack: err.stack
     }, { status: 500 });
-  } finally {
-    await sql.end();
   }
 }

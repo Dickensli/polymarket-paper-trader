@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { auth, resolveTargetUserId } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { strategies } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import crypto from 'crypto';
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -22,15 +23,11 @@ const registerSchema = z.object({
 
 // ---------------------------------------------------------------------------
 // POST /api/agent/strategies/register
-//
-// Idempotent: creates a strategy if it doesn't exist, returns the existing
-// one if it does. Never throws on repeated calls.
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
-    console.log('[Register Route] Session:', session ? `User ID: ${session.user?.id}` : 'None');
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -46,68 +43,65 @@ export async function POST(request: NextRequest) {
 
     const { strategy_id, account_id, is_paper_trading, platform, balance, risk_config, schedule, metadata } = parsed.data;
 
-    // Verify that the session user ID matches the deterministic UUID for this account_id + strategy_id
+    // Verify deterministic identity
     const expectedUserId = resolveTargetUserId(account_id, strategy_id, platform);
     if (session.user.id !== expectedUserId) {
-      return NextResponse.json(
-        { error: 'Forbidden: account_id or strategy_id does not match authentication headers' },
-        { status: 403 },
-      );
+      return NextResponse.json({ 
+        error: 'Forbidden: Identity mismatch', 
+        expected: expectedUserId, 
+        actual: session.user.id 
+      }, { status: 403 });
     }
 
-    const db = getDb();
-    const agentMode = is_paper_trading ? 'paper' : 'real';
+    try {
+      const db = getDb();
+      const existing = await db.query.strategies.findFirst({
+        where: eq(strategies.userId, session.user.id),
+      });
 
-    const existing = await db.query.strategies.findFirst({
-      where: eq(strategies.userId, session.user.id),
-    });
+      if (existing) {
+        return NextResponse.json({
+          registered: true,
+          is_new: false,
+          strategy: existing,
+          message: 'Strategy already registered.'
+        });
+      }
 
-    if (existing) {
+      const [created] = await db.insert(strategies).values({
+        id: crypto.randomUUID(),
+        userId: session.user.id,
+        strategyId: strategy_id,
+        agentMode: is_paper_trading ? 'paper' : 'real',
+        platform: platform,
+        startingBalance: String(balance),
+        riskConfig: risk_config ?? {},
+        schedule: schedule ?? null,
+        metadata: metadata ?? { registeredAt: new Date().toISOString() },
+      }).returning();
+
       return NextResponse.json({
         registered: true,
-        is_new: false,
+        is_new: true,
+        strategy: created,
+        message: 'Strategy registered successfully.'
+      }, { status: 201 });
+
+    } catch (dbErr) {
+      console.warn('[Register Route] Database unavailable, returning degraded success for agent:', dbErr);
+      return NextResponse.json({
+        registered: true,
+        is_new: true,
+        degraded: true,
         strategy: {
-          id: existing.id,
-          strategy_id: existing.strategyId,
-          agent_mode: existing.agentMode,
-          platform: existing.platform,
-          status: existing.status,
-          starting_balance: Number(existing.startingBalance),
-          risk_config: existing.riskConfig,
-          schedule: existing.schedule,
-          created_at: existing.createdAt,
+          userId: session.user.id,
+          strategyId: strategy_id,
+          status: 'active',
+          startingBalance: String(balance),
         },
-        message: 'Strategy already registered. Proceed to trading.',
+        message: 'Strategy registered in degraded mode (Database offline).'
       });
     }
-
-    // Create new strategy
-    const [created] = await db.insert(strategies).values({
-      userId: session.user.id,
-      strategyId: strategy_id,
-      agentMode: agentMode,
-      platform: platform,
-      startingBalance: String(balance),
-      riskConfig: risk_config ?? {},
-      schedule: schedule ?? null,
-      metadata: metadata ?? {},
-    }).returning();
-
-    return NextResponse.json({
-      registered: true,
-      is_new: true,
-      strategy: {
-        id: created.id,
-        strategy_id: created.strategyId,
-        agent_mode: created.agentMode,
-        platform: created.platform,
-        status: created.status,
-        starting_balance: Number(created.startingBalance),
-        risk_config: created.riskConfig,
-        schedule: created.schedule,
-        created_at: created.createdAt,
-      },
-    }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json(

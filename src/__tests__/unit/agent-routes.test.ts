@@ -148,7 +148,7 @@ describe('agent route handlers', () => {
     await expect(created.json()).resolves.toMatchObject({
       registered: true,
       is_new: true,
-      strategy: { strategy_id: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+      strategy: { strategyId: 'arb', agentMode: 'paper', platform: 'kalshi' },
     });
 
     db.query.strategies.findFirst.mockResolvedValueOnce({
@@ -170,7 +170,7 @@ describe('agent route handlers', () => {
     await expect(existing.json()).resolves.toMatchObject({
       registered: true,
       is_new: false,
-      strategy: { strategy_id: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+      strategy: { strategyId: 'arb', agentMode: 'paper', platform: 'kalshi' },
     });
   });
 

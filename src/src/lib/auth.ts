@@ -26,13 +26,8 @@ export function resolveTargetUserId(accountId: string, strategyId: string, platf
   if (!isUuid(accountId)) {
     masterUserId = getDeterministicUuid(accountId, 'master');
   }
-  if (strategyId !== 'default') {
-    const accountKey = platform === 'kalshi' ? `${platform}:${strategyId}` : strategyId;
-    return getDeterministicUuid(masterUserId, accountKey);
-  } else if (platform === 'kalshi') {
-    return getDeterministicUuid(masterUserId, 'kalshi:default');
-  }
-  return masterUserId;
+  const accountKey = `${platform}:${strategyId}`;
+  return getDeterministicUuid(masterUserId, accountKey);
 }
 
 const adapter = process.env.DATABASE_URL
