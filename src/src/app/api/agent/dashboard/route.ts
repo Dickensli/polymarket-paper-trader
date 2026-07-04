@@ -8,10 +8,12 @@ import {
   realTradeOrders,
   reconciliationLogs,
   strategies,
+  users,
 } from '@/lib/db/schema';
 
 type PlatformFilter = 'all' | 'polymarket' | 'kalshi' | 'polymarket_us';
 type ModeFilter = 'all' | 'paper' | 'real';
+const GLOBAL_AGENT_VIEWER_EMAILS = new Set(['dickenslihaocheng@gmail.com']);
 
 function parsePlatform(value: string | null): PlatformFilter {
   if (value === 'polymarket' || value === 'kalshi' || value === 'polymarket_us') return value;
@@ -28,10 +30,18 @@ function numeric(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function strategyName(strategy: typeof strategies.$inferSelect): string {
+  const legacyStrategy = strategy as typeof strategies.$inferSelect & {
+    strategyName?: string;
+  };
+  return strategy.strategyId ?? legacyStrategy.strategyName ?? '';
+}
+
 function strategyPayload(strategy: typeof strategies.$inferSelect) {
   return {
     id: strategy.id,
-    strategy_name: strategy.strategyId,
+    agent_id: strategy.userId,
+    strategy_name: strategyName(strategy),
     agent_mode: strategy.agentMode,
     platform: strategy.platform,
     status: strategy.status,
@@ -55,13 +65,20 @@ export async function GET(request: NextRequest) {
     const agentMode = parseMode(request.nextUrl.searchParams.get('agent_mode'));
     const strategyId = request.nextUrl.searchParams.get('strategy_id') || 'all';
     const db = getDb();
+    const canViewAllAgents = GLOBAL_AGENT_VIEWER_EMAILS.has(session.user.email ?? '');
 
-    const allStrategies = await db
-      .select()
-      .from(strategies)
-      .where(eq(strategies.userId, session.user.id))
-      .orderBy(desc(strategies.createdAt))
-      .limit(200);
+    const allStrategies = canViewAllAgents
+      ? await db
+        .select()
+        .from(strategies)
+        .orderBy(desc(strategies.createdAt))
+        .limit(500)
+      : await db
+        .select()
+        .from(strategies)
+        .where(eq(strategies.userId, session.user.id))
+        .orderBy(desc(strategies.createdAt))
+        .limit(200);
 
     const filteredStrategies = allStrategies.filter((strategy) => {
       if (strategyId !== 'all' && strategy.id !== strategyId) return false;
@@ -74,36 +91,29 @@ export async function GET(request: NextRequest) {
     const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
 
     const [
+      visibleUsers,
       reports,
       snapshots,
       realOrders,
       reconciliationWarnings,
     ] = await Promise.all([
-      db
-        .select()
-        .from(agentReports)
-        .where(eq(agentReports.userId, session.user.id))
-        .orderBy(desc(agentReports.createdAt))
-        .limit(100),
-      db
-        .select()
-        .from(portfolioSnapshots)
-        .where(eq(portfolioSnapshots.userId, session.user.id))
-        .orderBy(desc(portfolioSnapshots.capturedAt))
-        .limit(120),
-      db
-        .select()
-        .from(realTradeOrders)
-        .where(eq(realTradeOrders.userId, session.user.id))
-        .orderBy(desc(realTradeOrders.createdAt))
-        .limit(100),
-      db
-        .select()
-        .from(reconciliationLogs)
-        .where(eq(reconciliationLogs.userId, session.user.id))
-        .orderBy(desc(reconciliationLogs.createdAt))
-        .limit(100),
+      canViewAllAgents
+        ? db.select().from(users).limit(1000)
+        : db.select().from(users).where(eq(users.id, session.user.id)).limit(1),
+      canViewAllAgents
+        ? db.select().from(agentReports).orderBy(desc(agentReports.createdAt)).limit(200)
+        : db.select().from(agentReports).where(eq(agentReports.userId, session.user.id)).orderBy(desc(agentReports.createdAt)).limit(100),
+      canViewAllAgents
+        ? db.select().from(portfolioSnapshots).orderBy(desc(portfolioSnapshots.capturedAt)).limit(240)
+        : db.select().from(portfolioSnapshots).where(eq(portfolioSnapshots.userId, session.user.id)).orderBy(desc(portfolioSnapshots.capturedAt)).limit(120),
+      canViewAllAgents
+        ? db.select().from(realTradeOrders).orderBy(desc(realTradeOrders.createdAt)).limit(200)
+        : db.select().from(realTradeOrders).where(eq(realTradeOrders.userId, session.user.id)).orderBy(desc(realTradeOrders.createdAt)).limit(100),
+      canViewAllAgents
+        ? db.select().from(reconciliationLogs).orderBy(desc(reconciliationLogs.createdAt)).limit(200)
+        : db.select().from(reconciliationLogs).where(eq(reconciliationLogs.userId, session.user.id)).orderBy(desc(reconciliationLogs.createdAt)).limit(100),
     ]);
+    const userById = new Map(visibleUsers.map((user) => [user.id, user]));
 
     const belongsToVisibleStrategy = (id: string | null) => {
       if (!id) return strategyId === 'all' && platform === 'all' && agentMode === 'all';
@@ -140,6 +150,9 @@ export async function GET(request: NextRequest) {
         agent_mode: agentMode,
         strategy_id: strategyId,
       },
+      access: {
+        scope: canViewAllAgents ? 'global' : 'user',
+      },
       summary: {
         strategies: filteredStrategies.length,
         reports: filteredReports.length,
@@ -152,6 +165,8 @@ export async function GET(request: NextRequest) {
         const latestSnapshot = latestSnapshotByStrategy.get(strategy.id);
         return {
           ...strategyPayload(strategy),
+          agent_email: userById.get(strategy.userId)?.email ?? null,
+          agent_name: userById.get(strategy.userId)?.name ?? null,
           latest_snapshot: latestSnapshot
             ? {
                 id: latestSnapshot.id,
@@ -167,8 +182,11 @@ export async function GET(request: NextRequest) {
       }),
       reports: filteredReports.map((report) => ({
         id: report.id,
+        agent_id: report.userId,
+        agent_email: userById.get(report.userId)?.email ?? null,
+        agent_name: userById.get(report.userId)?.name ?? null,
         strategy_id: report.strategyId,
-        strategy_name: report.strategyId ? strategyById.get(report.strategyId)?.strategyId ?? report.strategyName : report.strategyName,
+        strategy_name: report.strategyId ? strategyName(strategyById.get(report.strategyId) ?? ({} as typeof strategies.$inferSelect)) || report.strategyName : report.strategyName,
         account: report.strategyName,
         filename: report.filename,
         title: report.title,
@@ -178,8 +196,11 @@ export async function GET(request: NextRequest) {
       })),
       snapshots: filteredSnapshots.map((snapshot) => ({
         id: snapshot.id,
+        agent_id: snapshot.userId,
+        agent_email: userById.get(snapshot.userId)?.email ?? null,
+        agent_name: userById.get(snapshot.userId)?.name ?? null,
         strategy_id: snapshot.strategyId,
-        strategy_name: snapshot.strategyId ? strategyById.get(snapshot.strategyId)?.strategyId ?? null : null,
+        strategy_name: snapshot.strategyId ? strategyName(strategyById.get(snapshot.strategyId) ?? ({} as typeof strategies.$inferSelect)) || null : null,
         run_id: snapshot.runId,
         platform: snapshot.platform,
         agent_mode: snapshot.agentMode,
@@ -194,8 +215,11 @@ export async function GET(request: NextRequest) {
       })),
       real_orders: filteredRealOrders.map((order) => ({
         id: order.id,
+        agent_id: order.userId,
+        agent_email: userById.get(order.userId)?.email ?? null,
+        agent_name: userById.get(order.userId)?.name ?? null,
         strategy_id: order.strategyId,
-        strategy_name: strategyById.get(order.strategyId)?.strategyId ?? null,
+        strategy_name: strategyName(strategyById.get(order.strategyId) ?? ({} as typeof strategies.$inferSelect)) || null,
         run_id: order.runId,
         platform: order.platform,
         official_order_id: order.officialOrderId,
@@ -214,8 +238,11 @@ export async function GET(request: NextRequest) {
       })),
       reconciliation_logs: filteredWarnings.map((log) => ({
         id: log.id,
+        agent_id: log.userId,
+        agent_email: userById.get(log.userId)?.email ?? null,
+        agent_name: userById.get(log.userId)?.name ?? null,
         strategy_id: log.strategyId,
-        strategy_name: strategyById.get(log.strategyId)?.strategyId ?? null,
+        strategy_name: strategyName(strategyById.get(log.strategyId) ?? ({} as typeof strategies.$inferSelect)) || null,
         run_id: log.runId,
         platform: log.platform,
         severity: log.severity,

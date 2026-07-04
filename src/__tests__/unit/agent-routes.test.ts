@@ -660,8 +660,16 @@ describe('agent route handlers', () => {
       ],
       [
         {
+          id: 'user-1',
+          email: 'agent@example.test',
+          name: 'Agent One',
+        },
+      ],
+      [
+        {
           id: 'report-1',
           strategyId: 'strategy-1',
+          userId: 'user-1',
           strategyName: 'real-arb',
           filename: 'run.md',
           title: 'Run',
@@ -674,6 +682,7 @@ describe('agent route handlers', () => {
         {
           id: 'snapshot-1',
           strategyId: 'strategy-1',
+          userId: 'user-1',
           runId: null,
           platform: 'kalshi',
           agentMode: 'real',
@@ -691,6 +700,7 @@ describe('agent route handlers', () => {
         {
           id: 'order-1',
           strategyId: 'strategy-1',
+          userId: 'user-1',
           runId: null,
           platform: 'kalshi',
           officialOrderId: 'official-1',
@@ -712,6 +722,7 @@ describe('agent route handlers', () => {
         {
           id: 'log-1',
           strategyId: 'strategy-1',
+          userId: 'user-1',
           runId: null,
           platform: 'kalshi',
           severity: 'warning',
@@ -741,13 +752,71 @@ describe('agent route handlers', () => {
       strategies: [
         {
           id: 'strategy-1',
+          agent_name: 'Agent One',
           strategy_name: 'real-arb',
           latest_snapshot: { total_value: 1025, pnl: 25 },
         },
       ],
-      reports: [{ filename: 'run.md', strategy_name: 'real-arb' }],
+      reports: [{ filename: 'run.md', strategy_name: 'real-arb', agent_name: 'Agent One' }],
       real_orders: [{ id: 'order-1', status: 'SUBMITTED' }],
       reconciliation_logs: [{ id: 'log-1', severity: 'warning' }],
+    });
+  });
+
+  it('lets the global agent viewer see all agent strategies', async () => {
+    const { auth } = await import('@/lib/auth');
+    vi.mocked(auth).mockResolvedValue({
+      user: { id: 'admin-user', email: 'dickenslihaocheng@gmail.com' },
+    } as never);
+    const { GET } = await import('@/app/api/agent/dashboard/route');
+
+    db.selectResults.push(
+      [
+        {
+          id: 'strategy-1',
+          userId: 'agent-user-1',
+          strategyId: 'global-arb',
+          agentMode: 'paper',
+          platform: 'polymarket',
+          status: 'active',
+          startingBalance: '10000.00',
+          riskConfig: {},
+          schedule: null,
+          metadata: {},
+          createdAt: new Date('2026-07-04T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-04T00:00:00.000Z'),
+        },
+      ],
+      [
+        {
+          id: 'agent-user-1',
+          email: 'agent+global@polymarkettraders.com',
+          name: 'Global Agent',
+        },
+      ],
+      [],
+      [],
+      [],
+      [],
+    );
+
+    const response = await GET(makeRequest({
+      url: 'https://example.test/api/agent/dashboard',
+    }) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      access: { scope: 'global' },
+      summary: { strategies: 1 },
+      strategies: [
+        {
+          id: 'strategy-1',
+          agent_id: 'agent-user-1',
+          agent_email: 'agent+global@polymarkettraders.com',
+          agent_name: 'Global Agent',
+          strategy_name: 'global-arb',
+        },
+      ],
     });
   });
 });
