@@ -40,6 +40,8 @@ export type OfficialPortfolioSnapshot = {
   pnl: number;
   positions: unknown[];
   orders: unknown[];
+  fills: unknown[];
+  activity: unknown[];
   raw: Record<string, unknown>;
 };
 
@@ -194,14 +196,16 @@ async function cancelKalshiOrder(orderId: string): Promise<OfficialCancelResult>
 }
 
 async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
-  const [balance, positions, orders] = await Promise.all([
+  const [balance, positions, orders, fills] = await Promise.all([
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/balance').catch((error) => ({ error: String(error) })),
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/positions').catch((error) => ({ error: String(error) })),
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/orders').catch((error) => ({ error: String(error) })),
+    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/fills').catch((error) => ({ error: String(error) })),
   ]);
   const balanceRecord = balance as Record<string, unknown>;
   const positionsRecord = positions as Record<string, unknown>;
   const ordersRecord = orders as Record<string, unknown>;
+  const fillsRecord = fills as Record<string, unknown>;
 
   const cash =
     Number(balanceRecord.balance) / (Number(balanceRecord.balance) > 1_000_000 ? 100 : 1) ||
@@ -209,6 +213,7 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
     0;
   const positionRows = Array.isArray(positionsRecord.positions) ? positionsRecord.positions : [];
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
+  const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
 
   return {
     cash,
@@ -217,7 +222,9 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
     pnl: 0,
     positions: positionRows,
     orders: orderRows,
-    raw: { balance: balanceRecord, positions: positionsRecord, orders: ordersRecord },
+    fills: fillRows,
+    activity: [],
+    raw: { balance: balanceRecord, positions: positionsRecord, orders: ordersRecord, fills: fillsRecord },
   };
 }
 
@@ -280,19 +287,31 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
     orders?: {
       list?(): Promise<Record<string, unknown>>;
     };
+    fills?: {
+      list?(): Promise<Record<string, unknown>>;
+    };
+    activity?: {
+      list?(): Promise<Record<string, unknown>>;
+    };
   };
-  const [portfolio, positions, orders] = await Promise.all([
+  const [portfolio, positions, orders, fills, activity] = await Promise.all([
     client.portfolio?.retrieve?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
     client.portfolio?.positions?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
     client.orders?.list?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
+    client.fills?.list?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
+    client.activity?.list?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
   ]);
   const portfolioRecord = portfolio as Record<string, unknown>;
   const positionsRecord = positions as Record<string, unknown>;
   const ordersRecord = orders as Record<string, unknown>;
+  const fillsRecord = fills as Record<string, unknown>;
+  const activityRecord = activity as Record<string, unknown>;
 
   const cash = Number(portfolioRecord.cash ?? portfolioRecord.availableBalance ?? portfolioRecord.balance ?? 0);
   const positionRows = Array.isArray(positionsRecord.positions) ? positionsRecord.positions : [];
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
+  const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
+  const activityRows = Array.isArray(activityRecord.activity) ? activityRecord.activity : [];
   return {
     cash,
     positionsValue: Number(portfolioRecord.positionsValue ?? 0),
@@ -300,7 +319,15 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
     pnl: Number(portfolioRecord.pnl ?? 0),
     positions: positionRows,
     orders: orderRows,
-    raw: { portfolio: portfolioRecord, positions: positionsRecord, orders: ordersRecord },
+    fills: fillRows,
+    activity: activityRows,
+    raw: {
+      portfolio: portfolioRecord,
+      positions: positionsRecord,
+      orders: ordersRecord,
+      fills: fillsRecord,
+      activity: activityRecord,
+    },
   };
 }
 

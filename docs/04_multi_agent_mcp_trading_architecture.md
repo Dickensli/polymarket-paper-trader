@@ -482,13 +482,13 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 5 - Reconciliation
 
-- [ ] Implement official Kalshi portfolio/order/fill snapshot fetch.
-- [ ] Implement official Polymarket US portfolio/order/activity snapshot fetch.
-- [ ] Compare official vs local balances.
-- [ ] Compare official vs local positions.
-- [ ] Compare official vs local open orders/fills.
+- [x] Implement official Kalshi portfolio/order/fill snapshot fetch.
+- [x] Implement official Polymarket US portfolio/order/activity snapshot fetch.
+- [x] Compare official vs local balances.
+- [x] Compare official vs local positions.
+- [x] Compare official vs local open orders/fills.
 - [x] Write `reconciliation_logs` for local snapshot / pending-official reconciliation state.
-- [x] Return warnings to MCP client when official reconciliation is not yet available.
+- [x] Return warnings to MCP client when official reconciliation is unavailable or fails.
 
 ### Phase 6 - MCP
 

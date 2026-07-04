@@ -99,7 +99,7 @@ function createMockDb() {
     query: {
       agentReports: { findFirst: vi.fn() },
       paperTradeOrders: { findFirst: vi.fn() },
-      realTradeOrders: { findFirst: vi.fn() },
+      realTradeOrders: { findFirst: vi.fn(), findMany: vi.fn() },
       strategies: { findFirst: vi.fn() },
       strategyRuns: { findFirst: vi.fn() },
     },
@@ -412,6 +412,8 @@ describe('agent route handlers', () => {
       pnl: 25,
       positions: [],
       orders: [],
+      fills: [],
+      activity: [],
       raw: {},
     });
 
@@ -473,6 +475,8 @@ describe('agent route handlers', () => {
       pnl: 0,
       positions: [],
       orders: [],
+      fills: [],
+      activity: [],
       raw: {},
     });
 
@@ -491,7 +495,8 @@ describe('agent route handlers', () => {
     });
   });
 
-  it('captures local snapshot and reconciliation log', async () => {
+  it('reconciles real strategies against official snapshots and logs differences', async () => {
+    const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
     const { getPortfolio } = await import('@/lib/trading-engine');
     const { POST } = await import('@/app/api/agent/reconcile/route');
 
@@ -501,17 +506,53 @@ describe('agent route handlers', () => {
       agentMode: 'real',
       platform: 'kalshi',
     });
+    db.query.realTradeOrders.findMany.mockResolvedValue([
+      {
+        id: 'local-order-1',
+        officialOrderId: 'official-1',
+        clientOrderId: 'client-1',
+        status: 'SUBMITTED',
+      },
+    ]);
     vi.mocked(getPortfolio).mockResolvedValue({
       balance: 9000,
-      positions: [],
+      positions: [{
+        id: 'position-1',
+        marketId: 'KXTEST',
+        marketQuestion: 'KXTEST',
+        tokenId: 'kalshi:KXTEST:YES',
+        outcome: 'YES',
+        shares: 10,
+        avgEntryPrice: 0.25,
+        currentPrice: 0.26,
+        unrealizedPnL: 0.1,
+        unrealizedPnLPercent: 4,
+        realizedPnL: 0,
+        createdAt: '2026-07-03T00:00:00.000Z',
+      }],
       tradeHistory: [],
       totalValue: 9500,
       totalPnL: -500,
       totalPnLPercent: -5,
     });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 9100,
+      positionsValue: 260,
+      totalValue: 9360,
+      pnl: -640,
+      positions: [{ ticker: 'KXTEST', outcome: 'YES', count: 11 }],
+      orders: [{ order_id: 'official-2', status: 'SUBMITTED' }],
+      fills: [{ id: 'fill-1' }],
+      activity: [],
+      raw: {},
+    });
     db.insertResults.push(
       { id: 'snapshot-1', source: 'local' },
-      { id: 'log-1', severity: 'warning' },
+      { id: 'snapshot-2', source: 'official' },
+      { id: 'log-1', severity: 'warning', differenceType: 'balance' },
+      { id: 'log-2', severity: 'warning', differenceType: 'position' },
+      { id: 'log-3', severity: 'warning', differenceType: 'order' },
+      { id: 'log-4', severity: 'warning', differenceType: 'fill' },
     );
 
     const response = await POST(makeRequest({
@@ -519,12 +560,64 @@ describe('agent route handlers', () => {
     }) as never);
 
     expect(response.status).toBe(200);
-    expect(db.insert).toHaveBeenCalledTimes(2);
+    expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi');
+    expect(db.insert).toHaveBeenCalledTimes(6);
     await expect(response.json()).resolves.toMatchObject({
       reconciled: false,
       local_snapshot: { id: 'snapshot-1' },
-      reconciliation_log: { id: 'log-1', severity: 'warning' },
-      warnings: ['Official venue snapshot fetch is not implemented yet.'],
+      official_snapshot: { id: 'snapshot-2' },
+      reconciliation_logs: [
+        { id: 'log-1', severity: 'warning' },
+        { id: 'log-2', severity: 'warning' },
+        { id: 'log-3', severity: 'warning' },
+        { id: 'log-4', severity: 'warning' },
+      ],
+      warnings: [
+        'Official and local balances differ beyond configured thresholds.',
+        'Official and local positions differ beyond configured thresholds.',
+        'Official and local open orders differ.',
+        'Official and local fills/activity differ.',
+      ],
+    });
+  });
+
+  it('captures paper local snapshot without official reconciliation', async () => {
+    const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { getPortfolio } = await import('@/lib/trading-engine');
+    const { POST } = await import('@/app/api/agent/reconcile/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1',
+      strategyName: 'paper-arb',
+      agentMode: 'paper',
+      platform: 'polymarket_us',
+    });
+    vi.mocked(getPortfolio).mockResolvedValue({
+      balance: 10000,
+      positions: [],
+      tradeHistory: [],
+      totalValue: 10000,
+      totalPnL: 0,
+      totalPnLPercent: 0,
+    });
+    db.insertResults.push(
+      { id: 'snapshot-1', source: 'local' },
+      { id: 'log-1', severity: 'info' },
+    );
+
+    const response = await POST(makeRequest({
+      body: { strategy_name: 'paper-arb' },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(getOfficialPortfolioSnapshot).not.toHaveBeenCalled();
+    expect(db.query.realTradeOrders.findMany).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      reconciled: true,
+      local_snapshot: { id: 'snapshot-1' },
+      official_snapshot: null,
+      reconciliation_logs: [{ id: 'log-1', severity: 'info' }],
+      warnings: [],
     });
   });
 });
