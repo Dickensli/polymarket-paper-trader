@@ -39,6 +39,15 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: 'Agents',
+    href: '/agents',
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h7.5M8.25 12h7.5m-7.5 5.25h7.5M5.25 3.75h13.5A2.25 2.25 0 0121 6v12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18V6a2.25 2.25 0 012.25-2.25z" />
+      </svg>
+    ),
+  },
+  {
     label: 'Settings',
     href: '/settings',
     icon: (

@@ -573,12 +573,12 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 8 - UI
 
-- [ ] Add strategy registry dashboard.
-- [ ] Add reports viewer.
-- [ ] Add per-strategy portfolio snapshots.
-- [ ] Add real-trade audit log viewer.
-- [ ] Add reconciliation warning dashboard.
-- [ ] Add filters by platform and mode.
+- [x] Add strategy registry dashboard.
+- [x] Add reports viewer.
+- [x] Add per-strategy portfolio snapshots.
+- [x] Add real-trade audit log viewer.
+- [x] Add reconciliation warning dashboard.
+- [x] Add filters by platform and mode.
 
 ### Phase 9 - Tests
 
