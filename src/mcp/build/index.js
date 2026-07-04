@@ -565,7 +565,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "Strategy account name, e.g. dickens_smith(\"conservative_arb\")" },
+                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
                         content: { type: "string", description: "Markdown report content" },
                         filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" }
                     },
