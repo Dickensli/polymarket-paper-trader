@@ -1,6 +1,6 @@
 # Multi-Agent MCP Trading Architecture
 
-Last updated: 2026-07-02
+Last updated: 2026-07-04
 
 This document captures the target design for a mature Codex/Gemini-style multi-agent trading system spanning Polymarket International, Kalshi, and Polymarket US. It is intended to be the durable reference for future MCP, server, Supabase, and strategy-agent work.
 
@@ -98,31 +98,88 @@ To prevent AI hallucination leading to catastrophic trading mistakes (e.g., exec
      - **API Idempotency (Defense in Depth)**: If `register_strategy` is called repeatedly, the server handles it gracefully, returning the existing state and a success status without altering configuration or throwing errors.
      - **Host Script Prompt Modification**: The cron runner script checks database state prior to invoking the LLM and dynamically omits setup instructions if initialization has already occurred.
 
-## Required MCP Tool Shape
+## Per-Platform MCP Servers & Skills
 
-Tools are split between administrative setup and streamlined execution. Execution tools require only the strategy identifier, leaving platform routing to the server context.
+Each platform has its own dedicated MCP server and a corresponding Jetski skill. This avoids tool-name collisions (e.g. `get_order_book` vs `get_orderbook` vs `get_market_book`) and ensures agents never reference tools that don't exist on their platform.
 
-### Required Fields for Setup/Context Tools
+| MCP Server | Platform | Skill | Tools |
+| --- | --- | --- | --- |
+| `polytraders-web` | Polymarket (International) | `polymarket-trading` | 35 |
+| `kalshi-mcp` (kalshi-paper-trader-mcp) | Kalshi | `kalshi-trading` | 20 |
+| `polymarket-us-mcp` (polymarket-us-paper-trader-mcp) | Polymarket US | `polymarket-us-trading` | 18 |
 
-- `strategy_name`: stable strategy/account name, for example `dickens_smith("conservative_arb")`.
+Skills are stored in `~/.gemini/config/skills/{skill-name}/SKILL.md` and provide:
 
-### Core Tools
+- Exact tool inventory for the platform (no cross-platform tool references).
+- Data trust boundaries.
+- Risk management rules.
+- Trading philosophy.
+- Session lifecycle (server-side stateless wakeup).
+- Critical safety rules (never call `init_account` unless instructed, etc.).
 
-| Tool | Parameters | Purpose |
-| --- | --- | --- |
-| `register_strategy` | `strategy_name`, `agent_mode`, `platform`, `starting_balance` | Register strategy identity on the server and lock in its mode and platform. Returns `{ registered: true, is_new: boolean }`. Safe to call repeatedly (idempotent). |
-| `get_strategy_context` | `strategy_name` | Returns registered strategy details, prior portfolio state, recent trades/orders, recent reports, and system warnings. |
-| `write_strategy_report`| `strategy_name`, `content`, `filename` | Persist markdown/structured reflection after a run. |
-| `list_strategy_reports` | `strategy_name`, `limit` | List prior reports for cross-session memory. |
-| `read_strategy_report` | `strategy_name`, `filename` | Read a specific prior report. |
-| `buy` / `sell` | `strategy_name`, `slug`/`ticker`, `outcome`, `shares`/`amount`, `price` | Execute a buy/sell trade. The server automatically routes the trade to the correct venue (Kalshi, Polymarket US, etc.) and mode (paper/real) based on the strategy's server-side binding. |
-| `cancel_order` | `strategy_name`, `order_id` | Cancel a trade order on the bound platform. |
-| `reconcile_portfolio` | `strategy_name` | For real trading: compare official venue balances/positions with local snapshots and log discrepancies. |
-| `get_official_market_data` | `slug`/`ticker` | Unified read tool backed by official venue APIs. |
+### Shared Core Tools (all 3 platforms)
 
-### MCP Resources
+| Tool | Purpose |
+| --- | --- |
+| `register_strategy` | Register strategy identity. Idempotent. |
+| `get_strategy_context` | Full bootstrap context. Call first on every run. |
+| `init_account` | ⚠️ DESTRUCTIVE — resets all state. |
+| `get_balance` | Quick portfolio summary. |
+| `buy` / `sell` | Execute trades. Server routes to correct venue/mode. |
+| `portfolio` | Full portfolio with positions. |
+| `history` | Recent trade history. |
+| `stats` | Performance statistics. |
+| `search_markets` | Full-text market search. |
+| `get_market` | Detailed market data. |
+| `get_event` | Event-level data. |
+| `backtest` | Backtest simulation. |
+| `save_report` | Persist session report (cross-session memory). |
+| `list_reports` | List prior reports. |
+| `read_report` | Read a specific report. |
 
-- `strategy_state://{strategy_name}`: Returns JSON containing current registration parameters, status, and whether initialization is complete (e.g. `{"is_setup": true, "agent_mode": "paper", "platform": "polymarket_us"}`).
+### Platform-Specific Tools
+
+#### Polymarket Only (`polytraders-web`)
+
+| Tool | Purpose |
+| --- | --- |
+| `reset_account` | ⚠️ DESTRUCTIVE — alias for init_account. |
+| `list_markets` | Paginated market listing. |
+| `get_order_book` | Live order book. |
+| `get_tags` / `get_markets_by_tag` | Tag-based market filtering. |
+| `watch_prices` | Live midpoint prices. |
+| `place_limit_order` / `list_orders` / `cancel_order` / `cancel_all_orders` / `check_orders` | Limit order management. |
+| `resolve` / `resolve_all` | Settle closed market positions. |
+| `stats_card` / `pk_card` / `leaderboard_card` / `leaderboard_entry` / `pk_battle` / `share_content` | Social/sharing. |
+
+#### Kalshi Only (`kalshi-mcp`)
+
+| Tool | Purpose |
+| --- | --- |
+| `get_orderbook` | Live order book (note: no underscore). |
+| `get_candlesticks` | Historical price candlestick data. |
+| `get_public_trades` | Public trade history. |
+| `search_events` | Event search by keyword. |
+
+#### Polymarket US Only (`polymarket-us-mcp`)
+
+| Tool | Purpose |
+| --- | --- |
+| `get_market_book` | Live order book (note: different name). |
+| `get_events` | List/search events (plural). |
+
+### Required Fields for All Execution Tools
+
+All state-touching tools require the following identity and isolation parameters:
+
+- `agent_user_id`: The human or AI agent's master account/identity name (e.g. `dickens_smith`). Can be passed as an optional tool argument (defaults to the workspace environment's `AGENT_USER_ID` configuration).
+- `strategy_name` (previously `account`): The specific strategy logic to execute (e.g. `conservative`). Passed on all subsequent calls to isolate portfolios (the server maps this to the `x-agent-account` header context).
+
+Execution tools (`buy`, `sell`, `portfolio`, etc.) must NOT require the agent to specify `agent_mode` or `platform` dynamically — the server resolves these from the strategy's registration parameters using the authenticated identity resolved from headers.
+
+### MCP Resources (Planned)
+
+- `strategy_state://{agent_user_id}/{strategy_name}`: Returns JSON containing current registration parameters, status, and whether initialization is complete (e.g. `{"is_setup": true, "agent_mode": "paper", "platform": "polymarket_us"}`).
 
 
 ## Server Responsibilities
@@ -343,7 +400,7 @@ The attached Smith/Gemini config shows the desired pattern:
 
 - One MCP server: `polytraders-web`.
 - Strategy runs are scheduled by cron.
-- Each prompt pins a strategy account such as `dickens_smith("conservative_arb")`.
+- Each prompt pins a strategy account (e.g. `conservative_arb`).
 - Each strategy must use MCP for all reads and writes.
 - Retro strategies require cross-session memory:
   - `list_reports`
@@ -495,6 +552,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `register_strategy` tool (all 3 MCP servers).
 - [x] Add `get_strategy_context` tool (all 3 MCP servers).
 - [x] Add `save_report` / `list_reports` / `read_report` tools (all 3 MCP servers).
+- [x] Create per-platform Jetski skills with verified tool inventories (`polymarket-trading`, `kalshi-trading`, `polymarket-us-trading`).
+- [x] Document per-platform tool comparison matrix in architecture doc.
 - [ ] Add `record_paper_trade` tool (unified).
 - [ ] Add `submit_real_trade` tool.
 - [ ] Add `cancel_real_order` tool.

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/auth', () => ({
   auth: vi.fn(),
+  resolveTargetUserId: vi.fn(() => 'user-1'),
 }));
 
 vi.mock('@/lib/db', async (importOriginal) => ({
@@ -128,7 +129,7 @@ describe('agent route handlers', () => {
     db.query.strategies.findFirst.mockResolvedValueOnce(null);
     db.insertResults.push({
       id: 'strategy-1',
-      strategyName: 'arb',
+      strategyId: 'arb',
       agentMode: 'paper',
       platform: 'kalshi',
       status: 'active',
@@ -139,18 +140,18 @@ describe('agent route handlers', () => {
     });
 
     const created = await POST(makeRequest({
-      body: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+      body: { strategy_id: 'arb', account_id: 'default', is_paper_trading: true, platform: 'kalshi' },
     }) as never);
     expect(created.status).toBe(201);
     await expect(created.json()).resolves.toMatchObject({
       registered: true,
       is_new: true,
-      strategy: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+      strategy: { strategy_id: 'arb', agent_mode: 'paper', platform: 'kalshi' },
     });
 
     db.query.strategies.findFirst.mockResolvedValueOnce({
       id: 'strategy-1',
-      strategyName: 'arb',
+      strategyId: 'arb',
       agentMode: 'paper',
       platform: 'kalshi',
       status: 'active',
@@ -161,13 +162,13 @@ describe('agent route handlers', () => {
     });
 
     const existing = await POST(makeRequest({
-      body: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+      body: { strategy_id: 'arb', account_id: 'default', is_paper_trading: true, platform: 'kalshi' },
     }) as never);
     expect(existing.status).toBe(200);
     await expect(existing.json()).resolves.toMatchObject({
       registered: true,
       is_new: false,
-      strategy: { strategy_name: 'arb', agent_mode: 'paper', platform: 'kalshi' },
+      strategy: { strategy_id: 'arb', agent_mode: 'paper', platform: 'kalshi' },
     });
   });
 
@@ -175,13 +176,13 @@ describe('agent route handlers', () => {
     const reportsRoute = await import('@/app/api/agent/reports/route');
     const reportByIdRoute = await import('@/app/api/agent/reports/[id]/route');
 
-    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', strategyName: 'arb' });
+    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', strategyId: 'arb' });
     db.query.agentReports.findFirst.mockResolvedValueOnce(null);
     db.insertResults.push({
       id: 'report-1',
       strategyId: 'strategy-1',
       runId: null,
-      account: 'arb',
+      strategyName: 'arb',
       filename: 'run.md',
       content: '# Report',
       title: 'Run',
@@ -189,7 +190,7 @@ describe('agent route handlers', () => {
 
     const written = await reportsRoute.POST(makeRequest({
       body: {
-        strategy_name: 'arb',
+        strategy_id: 'arb',
         filename: 'run.md',
         content: '# Report',
         title: 'Run',
@@ -208,7 +209,7 @@ describe('agent route handlers', () => {
       createdAt: new Date('2026-07-03T00:00:00.000Z'),
     });
     const listed = await reportsRoute.GET(makeRequest({
-      url: 'https://example.test/api/agent/reports?strategy_name=arb&limit=5',
+      url: 'https://example.test/api/agent/reports?strategy_id=arb&limit=5',
     }) as never);
     await expect(listed.json()).resolves.toMatchObject({
       data: [{ id: 'report-1', filename: 'run.md', title: 'Run' }],
@@ -220,7 +221,7 @@ describe('agent route handlers', () => {
       strategyId: 'strategy-1',
       runId: null,
       userId: 'user-1',
-      account: 'arb',
+      strategyName: 'arb',
       filename: 'run.md',
       content: '# Report',
       title: 'Run',
@@ -248,7 +249,7 @@ describe('agent route handlers', () => {
 
     const response = await POST(makeRequest({
       headers: { 'x-idempotency-key': 'idem-1' },
-      body: { strategy_name: 'arb', slug: 'market', amount: 10 },
+      body: { strategy_id: 'arb', slug: 'market', amount: 10 },
     }) as never);
 
     expect(response.status).toBe(200);
@@ -266,7 +267,7 @@ describe('agent route handlers', () => {
     db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1',
-      strategyName: 'arb',
+      strategyId: 'arb',
       agentMode: 'paper',
       platform: 'kalshi',
       status: 'active',
@@ -313,7 +314,7 @@ describe('agent route handlers', () => {
     const response = await POST(makeRequest({
       headers: { 'x-idempotency-key': 'idem-2' },
       body: {
-        strategy_name: 'arb',
+        strategy_id: 'arb',
         slug: 'KXTEST',
         outcome: 'YES',
         side: 'BUY',
@@ -343,7 +344,7 @@ describe('agent route handlers', () => {
 
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1',
-      strategyName: 'real-arb',
+      strategyId: 'real-arb',
       agentMode: 'real',
       platform: 'kalshi',
       status: 'active',
@@ -357,7 +358,7 @@ describe('agent route handlers', () => {
 
     const response = await POST(makeRequest({
       body: {
-        strategy_name: 'real-arb',
+        strategy_id: 'real-arb',
         slug: 'KXTEST',
         outcome: 'YES',
         side: 'BUY',
@@ -387,7 +388,7 @@ describe('agent route handlers', () => {
 
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1',
-      strategyName: 'real-arb',
+      strategyId: 'real-arb',
       agentMode: 'real',
       platform: 'kalshi',
       status: 'active',
@@ -419,7 +420,7 @@ describe('agent route handlers', () => {
 
     const response = await POST(makeRequest({
       body: {
-        strategy_name: 'real-arb',
+        strategy_id: 'real-arb',
         slug: 'KXTEST',
         outcome: 'YES',
         side: 'BUY',
@@ -502,7 +503,7 @@ describe('agent route handlers', () => {
 
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1',
-      strategyName: 'real-arb',
+      strategyId: 'real-arb',
       agentMode: 'real',
       platform: 'kalshi',
     });
@@ -556,7 +557,7 @@ describe('agent route handlers', () => {
     );
 
     const response = await POST(makeRequest({
-      body: { strategy_name: 'real-arb' },
+      body: { strategy_id: 'real-arb' },
     }) as never);
 
     expect(response.status).toBe(200);
@@ -588,7 +589,7 @@ describe('agent route handlers', () => {
 
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1',
-      strategyName: 'paper-arb',
+      strategyId: 'paper-arb',
       agentMode: 'paper',
       platform: 'polymarket_us',
     });
@@ -606,7 +607,7 @@ describe('agent route handlers', () => {
     );
 
     const response = await POST(makeRequest({
-      body: { strategy_name: 'paper-arb' },
+      body: { strategy_id: 'paper-arb' },
     }) as never);
 
     expect(response.status).toBe(200);

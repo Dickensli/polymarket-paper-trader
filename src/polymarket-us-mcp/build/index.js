@@ -13,7 +13,9 @@ function generateIdempotencyKey() {
     });
 }
 function getAgentHeaders(args, idempotencyKey) {
-    const account = typeof args?.account === "string" ? args.account : "default";
+    const account = typeof args?.strategy_name === "string"
+        ? args.strategy_name
+        : (typeof args?.account === "string" ? args.account : "default");
     const userId = typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID;
     return {
         "Content-Type": "application/json",
@@ -43,8 +45,8 @@ function json(data) {
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 const accountProps = {
-    account: { type: "string", description: "Strategy/profile name to isolate Polymarket US paper portfolios." },
-    agent_user_id: { type: "string", description: "Optional agent user ID override." },
+    strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
+    agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent (e.g. 'dickens_codex_poly_usa')." },
 };
 const server = new Server({ name: "polymarket-us-paper-trader-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -55,13 +57,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: { balance: { type: "number", description: "Starting USD balance, default 10000." }, ...accountProps },
-                required: ["account"],
+                required: ["strategy_name"],
             },
         },
         {
             name: "get_balance",
             description: "Get Polymarket US paper cash, positions value, total value, and P&L.",
-            inputSchema: { type: "object", properties: accountProps, required: ["account"] },
+            inputSchema: { type: "object", properties: accountProps, required: ["strategy_name"] },
         },
         {
             name: "search_markets",
@@ -129,7 +131,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     price: { type: "number", description: "Optional override execution price, 0-1." },
                     ...accountProps,
                 },
-                required: ["slug", "account"],
+                required: ["slug", "strategy_name"],
             },
         },
         {
@@ -145,23 +147,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     price: { type: "number", description: "Optional override execution price, 0-1." },
                     ...accountProps,
                 },
-                required: ["account"],
+                required: ["strategy_name"],
             },
         },
         {
             name: "portfolio",
             description: "Get the complete Polymarket US paper portfolio including positions and trade history.",
-            inputSchema: { type: "object", properties: accountProps, required: ["account"] },
+            inputSchema: { type: "object", properties: accountProps, required: ["strategy_name"] },
         },
         {
             name: "history",
             description: "Get recent Polymarket US paper trade history.",
-            inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["account"] },
+            inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["strategy_name"] },
         },
         {
             name: "stats",
             description: "Summarize Polymarket US paper trading performance.",
-            inputSchema: { type: "object", properties: accountProps, required: ["account"] },
+            inputSchema: { type: "object", properties: accountProps, required: ["strategy_name"] },
         },
         // ── Agent Reports (Retro) ──────────────────────────────────────
         {
@@ -174,7 +176,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" },
                     ...accountProps,
                 },
-                required: ["account", "content", "filename"],
+                required: ["strategy_name", "content", "filename"],
             },
         },
         {
@@ -186,7 +188,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     limit: { type: "number", description: "Max reports to return (default 3)" },
                     ...accountProps,
                 },
-                required: ["account"],
+                required: ["strategy_name"],
             },
         },
         {
@@ -198,7 +200,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     filename: { type: "string", description: "Report filename to read" },
                     ...accountProps,
                 },
-                required: ["account", "filename"],
+                required: ["strategy_name", "filename"],
             },
         },
         // ── Backtesting ────────────────────────────────────────────────
@@ -241,9 +243,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'" },
                     platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
                     starting_balance: { type: "number", description: "Starting paper balance in USD" },
-                    ...accountProps,
+                    agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent (e.g. 'dickens_codex_poly_usa', 'lily_claude_kalshi')." }
                 },
-                required: ["strategy_name"],
+                required: ["strategy_name", "agent_user_id"],
             },
         },
         {
@@ -253,9 +255,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 type: "object",
                 properties: {
                     strategy_name: { type: "string", description: "Strategy name to get context for" },
-                    ...accountProps,
+                    agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent." }
                 },
-                required: ["strategy_name"],
+                required: ["strategy_name", "agent_user_id"],
             },
         },
         {
@@ -424,11 +426,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // ── Agent Reports (Retro) ──────────────────────────────────────
         case "save_report": {
-            const account = String(args.account);
+            const account = String(args.strategy_name || args.account);
             const content = String(args.content);
             const filename = String(args.filename);
             if (!account || !content || !filename) {
-                throw new Error("Missing required fields: account, content, filename");
+                throw new Error("Missing required fields: strategy_name, content, filename");
             }
             const data = await callPolyTrader("/reports", {
                 method: "POST",
@@ -438,18 +440,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return json({ ok: true, data: data.data ?? data });
         }
         case "list_reports": {
-            const account = String(args.account);
+            const account = String(args.strategy_name || args.account);
             if (!account)
-                throw new Error("Missing required field: account");
+                throw new Error("Missing required field: strategy_name");
             const limit = Number(args.limit || 3);
             const data = await callPolyTrader(`/reports?account=${encodeURIComponent(account)}&limit=${limit}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         case "read_report": {
-            const account = String(args.account);
+            const account = String(args.strategy_name || args.account);
             const filename = String(args.filename);
             if (!account || !filename)
-                throw new Error("Missing required fields: account, filename");
+                throw new Error("Missing required fields: strategy_name, filename");
             const data = await callPolyTrader(`/reports/${encodeURIComponent(filename)}?account=${encodeURIComponent(account)}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
@@ -475,10 +477,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const agent_mode = String(args.agent_mode || "paper");
             const platform = String(args.platform || "polymarket_us");
             const starting_balance = Number(args.starting_balance || 10000);
+            const instance_name = args.instance_name ? String(args.instance_name) : undefined;
             const data = await callPolyTrader("/agent/strategies/register", {
                 method: "POST",
                 headers: getAgentHeaders(args),
-                body: JSON.stringify({ strategy_name, agent_mode, platform, starting_balance }),
+                body: JSON.stringify({ strategy_name, instance_name, agent_mode, platform, starting_balance }),
             });
             return json({ ok: true, data: data.data ?? data });
         }

@@ -32,10 +32,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const strategyName = request.nextUrl.searchParams.get('strategy_name');
-    if (!strategyName) {
+    const strategyId = request.nextUrl.searchParams.get('strategy_id') || 
+                      request.nextUrl.searchParams.get('strategy_name');
+    if (!strategyId) {
       return NextResponse.json(
-        { error: 'Missing required query parameter: strategy_name' },
+        { error: 'Missing required query parameter: strategy_id or strategy_name' },
         { status: 400 },
       );
     }
@@ -44,7 +45,10 @@ export async function GET(request: NextRequest) {
 
     // ── 1. Strategy registration state ─────────────────────────
     const strategy = await db.query.strategies.findFirst({
-      where: eq(strategies.strategyName, strategyName),
+      where: and(
+        eq(strategies.userId, session.user.id),
+        eq(strategies.strategyId, strategyId),
+      ),
     });
 
     const is_setup = !!strategy;
@@ -105,22 +109,22 @@ export async function GET(request: NextRequest) {
       executed_at: t.executedAt,
     }));
 
-    // ── 5. Recent reports ──────────────────────────────────────
-    const accountName = request.nextUrl.searchParams.get('account') || strategyName;
-    const recentReports = await db
-      .select({
-        filename: agentReports.filename,
-        createdAt: agentReports.createdAt,
-      })
-      .from(agentReports)
-      .where(
-        and(
-          eq(agentReports.userId, session.user.id),
-          eq(agentReports.account, accountName),
-        ),
-      )
-      .orderBy(desc(agentReports.createdAt))
-      .limit(5);
+    const recentReports = strategy
+      ? await db
+          .select({
+            filename: agentReports.filename,
+            createdAt: agentReports.createdAt,
+          })
+          .from(agentReports)
+          .where(
+            and(
+              eq(agentReports.userId, session.user.id),
+              eq(agentReports.strategyId, strategy.id),
+            ),
+          )
+          .orderBy(desc(agentReports.createdAt))
+          .limit(5)
+      : [];
 
     // ── 6. Compute summary values ──────────────────────────────
     const positionsValue = positionsSummary.reduce(
@@ -149,7 +153,7 @@ export async function GET(request: NextRequest) {
       strategy: strategy
         ? {
             id: strategy.id,
-            strategy_name: strategy.strategyName,
+            strategy_id: strategy.strategyId,
             agent_mode: strategy.agentMode,
             platform: strategy.platform,
             status: strategy.status,

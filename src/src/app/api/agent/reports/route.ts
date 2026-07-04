@@ -5,7 +5,7 @@ import { auth } from '@/lib/auth';
 import { agentReports, getDb, strategies } from '@/lib/db';
 
 const reportSchema = z.object({
-  strategy_name: z.string().min(1).max(255),
+  strategy_id: z.string().min(1).max(255),
   filename: z.string().min(1).max(255),
   content: z.string().min(1),
   title: z.string().max(255).optional(),
@@ -23,10 +23,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const strategyName = request.nextUrl.searchParams.get('strategy_name');
-    if (!strategyName) {
+    const strategyId = request.nextUrl.searchParams.get('strategy_id');
+    if (!strategyId) {
       return NextResponse.json(
-        { error: 'Missing required query parameter: strategy_name' },
+        { error: 'Missing required query parameter: strategy_id' },
         { status: 400 },
       );
     }
@@ -37,8 +37,32 @@ export async function GET(request: NextRequest) {
     );
     const db = getDb();
     const strategy = await db.query.strategies.findFirst({
-      where: eq(strategies.strategyName, strategyName),
+      where: and(
+        eq(strategies.userId, session.user.id),
+        eq(strategies.strategyId, strategyId),
+      ),
     });
+
+    if (!strategy) {
+      return NextResponse.json({ error: `Strategy "${strategyId}" not registered.` }, { status: 404 });
+    }
+
+    const filename = request.nextUrl.searchParams.get('filename');
+    if (filename) {
+      const report = await db.query.agentReports.findFirst({
+        where: and(
+          eq(agentReports.userId, session.user.id),
+          eq(agentReports.strategyId, strategy.id),
+          eq(agentReports.filename, filename),
+        ),
+      });
+
+      if (!report) {
+        return NextResponse.json({ error: 'Report not found' }, { status: 404 });
+      }
+
+      return NextResponse.json({ data: report });
+    }
 
     const reports = await db
       .select({
@@ -51,9 +75,7 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           eq(agentReports.userId, session.user.id),
-          strategy
-            ? eq(agentReports.strategyId, strategy.id)
-            : eq(agentReports.account, strategyName),
+          eq(agentReports.strategyId, strategy.id),
         ),
       )
       .orderBy(desc(agentReports.createdAt))
@@ -87,12 +109,15 @@ export async function POST(request: NextRequest) {
     const report = parsed.data;
     const db = getDb();
     const strategy = await db.query.strategies.findFirst({
-      where: eq(strategies.strategyName, report.strategy_name),
+      where: and(
+        eq(strategies.userId, session.user.id),
+        eq(strategies.strategyId, report.strategy_id),
+      ),
     });
 
     if (!strategy) {
       return NextResponse.json(
-        { error: `Strategy "${report.strategy_name}" is not registered.` },
+        { error: `Strategy "${report.strategy_id}" is not registered.` },
         { status: 404 },
       );
     }
@@ -100,7 +125,7 @@ export async function POST(request: NextRequest) {
     const existing = await db.query.agentReports.findFirst({
       where: and(
         eq(agentReports.userId, session.user.id),
-        eq(agentReports.account, report.strategy_name),
+        eq(agentReports.strategyId, strategy.id),
         eq(agentReports.filename, report.filename),
       ),
     });
@@ -109,7 +134,7 @@ export async function POST(request: NextRequest) {
       strategyId: strategy.id,
       runId: report.run_id ?? null,
       userId: session.user.id,
-      account: report.strategy_name,
+      strategyName: report.strategy_id,
       filename: report.filename,
       content: report.content,
       title: report.title ?? null,

@@ -10,7 +10,7 @@ import {
 } from '@/lib/official-trading';
 
 const realTradeSchema = z.object({
-  strategy_name: z.string().min(1).max(255),
+  strategy_id: z.string().min(1).max(255),
   slug: z.string().min(1).max(500).describe('Market slug, ticker, or venue market id'),
   outcome: z.enum(['YES', 'NO']).default('YES'),
   side: z.enum(['BUY', 'SELL']).default('BUY'),
@@ -59,14 +59,15 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     const strategy = await db.query.strategies.findFirst({
       where: and(
-        eq(strategies.strategyName, order.strategy_name),
+        eq(strategies.userId, session.user.id),
+        eq(strategies.strategyId, order.strategy_id),
         eq(strategies.agentMode, 'real'),
       ),
     });
 
     if (!strategy) {
       return NextResponse.json(
-        { error: `Real strategy "${order.strategy_name}" is not registered.` },
+        { error: `Real strategy "${order.strategy_id}" is not registered.` },
         { status: 404 },
       );
     }

@@ -16,7 +16,7 @@ import {
 import { getPortfolio } from '@/lib/trading-engine';
 
 const reconcileSchema = z.object({
-  strategy_name: z.string().min(1).max(255),
+  strategy_id: z.string().min(1).max(255),
   run_id: z.string().uuid().optional(),
   thresholds: z.object({
     cash: z.number().nonnegative().optional(),
@@ -338,16 +338,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { strategy_name, run_id } = parsed.data;
+    const { strategy_id, run_id } = parsed.data;
     const thresholds = { ...DEFAULT_THRESHOLDS, ...parsed.data.thresholds };
     const db = getDb();
     const strategy = await db.query.strategies.findFirst({
-      where: eq(strategies.strategyName, strategy_name),
+      where: and(
+        eq(strategies.userId, session.user.id),
+        eq(strategies.strategyId, strategy_id),
+      ),
     });
 
     if (!strategy) {
       return NextResponse.json(
-        { error: `Strategy "${strategy_name}" is not registered.` },
+        { error: `Strategy "${strategy_id}" is not registered.` },
         { status: 404 },
       );
     }
@@ -409,7 +412,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         reconciled: true,
-        strategy_name,
+        strategy_id,
         platform: strategy.platform,
         agent_mode: strategy.agentMode,
         local_snapshot: snapshot,
@@ -440,7 +443,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         reconciled: false,
-        strategy_name,
+        strategy_id,
         platform: strategy.platform,
         agent_mode: strategy.agentMode,
         local_snapshot: snapshot,
@@ -475,7 +478,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         reconciled: false,
-        strategy_name,
+        strategy_id,
         platform: strategy.platform,
         agent_mode: strategy.agentMode,
         local_snapshot: snapshot,
@@ -537,7 +540,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       reconciled: differences.every((difference) => difference.severity === 'info'),
-      strategy_name,
+      strategy_id,
       platform: strategy.platform,
       agent_mode: strategy.agentMode,
       local_snapshot: snapshot,

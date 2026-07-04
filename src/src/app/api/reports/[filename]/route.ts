@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getDb, agentReports } from '@/lib/db';
+import { getDb, agentReports, strategies } from '@/lib/db';
 import { eq, and } from 'drizzle-orm';
 
 /**
  * Read a single agent report by filename.
  *
- * GET /api/reports/[filename]?account=...
+ * GET /api/reports/[filename]?strategy_id=...
  */
 export async function GET(
   request: NextRequest,
@@ -21,17 +21,30 @@ export async function GET(
 
     const { filename } = await params;
     const { searchParams } = request.nextUrl;
-    const account = searchParams.get('account');
+    const strategyId = searchParams.get('strategy_id');
 
-    if (!account) {
-      return NextResponse.json({ error: 'Missing account parameter' }, { status: 400 });
+    if (!strategyId) {
+      return NextResponse.json({ error: 'Missing strategy_id parameter' }, { status: 400 });
     }
 
     const db = getDb();
+
+    // Resolve strategy to get UUID
+    const strategy = await db.query.strategies.findFirst({
+      where: and(
+        eq(strategies.userId, userId),
+        eq(strategies.strategyId, strategyId),
+      ),
+    });
+
+    if (!strategy) {
+      return NextResponse.json({ error: `Strategy "${strategyId}" not registered.` }, { status: 404 });
+    }
+
     const report = await db.query.agentReports.findFirst({
       where: and(
         eq(agentReports.userId, userId),
-        eq(agentReports.account, account),
+        eq(agentReports.strategyId, strategy.id),
         eq(agentReports.filename, decodeURIComponent(filename)),
       ),
     });
@@ -44,7 +57,7 @@ export async function GET(
       data: {
         id: report.id,
         filename: report.filename,
-        account: report.account,
+        strategy_id: report.strategyName,
         content: report.content,
         createdAt: report.createdAt,
       },

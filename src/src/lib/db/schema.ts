@@ -56,8 +56,8 @@ export const strategies = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    /** Stable strategy name, e.g. 'conservative_arb' or 'dickens_smith("aggressive")' */
-    strategyName: varchar('strategy_name', { length: 255 }).notNull(),
+    /** Stable strategy ID, e.g. 'conservative_arb' */
+    strategyId: varchar('strategy_id', { length: 255 }).notNull(),
     /** Paper or real trading mode — locked at registration */
     agentMode: agentModeEnum('agent_mode').notNull().default('paper'),
     /** Target platform — locked at registration */
@@ -76,9 +76,9 @@ export const strategies = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('strategies_unique_idx').on(table.strategyName, table.agentMode, table.platform),
+    uniqueIndex('strategies_unique_idx').on(table.userId),
     index('strategies_user_idx').on(table.userId),
-    index('strategies_name_idx').on(table.strategyName),
+    index('strategies_id_idx').on(table.strategyId),
     index('strategies_status_idx').on(table.status),
   ],
 );
@@ -600,7 +600,7 @@ export const agentReports = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    account: varchar('account', { length: 255 }).notNull(),
+    strategyName: varchar('strategy_name', { length: 255 }).notNull(),
     filename: varchar('filename', { length: 255 }).notNull(),
     content: text('content').notNull(),
     title: varchar('title', { length: 255 }),
@@ -611,11 +611,11 @@ export const agentReports = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index('agent_reports_strategy_idx').on(table.strategyId),
+    index('agent_reports_strategy_uuid_idx').on(table.strategyId),
     index('agent_reports_run_idx').on(table.runId),
     index('agent_reports_user_idx').on(table.userId),
-    index('agent_reports_account_idx').on(table.account),
+    index('agent_reports_strategy_name_idx').on(table.strategyName),
     index('agent_reports_created_idx').on(table.createdAt),
-    uniqueIndex('agent_reports_unique_idx').on(table.userId, table.account, table.filename),
+    uniqueIndex('agent_reports_unique_idx').on(table.userId, table.strategyName, table.filename),
   ],
 );

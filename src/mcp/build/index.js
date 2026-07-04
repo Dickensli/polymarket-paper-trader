@@ -10,21 +10,10 @@ const CLOB_API_URL = "https://clob.polymarket.com";
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 function getAgentHeaders(args) {
-    const accountName = typeof args?.account === "string" ? args.account : "default";
+    const accountName = typeof args?.strategy_name === "string"
+        ? args.strategy_name
+        : (typeof args?.account === "string" ? args.account : "default");
     const userId = typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID;
-    const isDickensSmithUser = userId === "dickens_smith" || userId.startsWith("dickens_smith");
-    if (isDickensSmithUser && (accountName === "default" || !accountName.startsWith("dickens_smith("))) {
-        throw new Error(`Account name ${JSON.stringify(accountName)} is not allowed for dickens_smith. You must use the format: dickens_smith("strategy_name")`);
-    }
-    if (accountName === "dickens_smith" || accountName.startsWith("dickens_smith")) {
-        if (accountName === "dickens_smith") {
-            throw new Error(`Account name 'dickens_smith' must include a strategy suffix, e.g., dickens_smith("conservative_arb")`);
-        }
-        const pattern = /^dickens_smith\((["'])([a-zA-Z0-9_\u4e00-\u9fa5-]+)\1\)$/;
-        if (!pattern.test(accountName)) {
-            throw new Error(`Account name ${JSON.stringify(accountName)} must match format: dickens_smith("strategy_name")`);
-        }
-    }
     return {
         "Content-Type": "application/json",
         "x-agent-secret": AGENT_SECRET,
@@ -206,10 +195,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         balance: { type: "number", description: "Starting USD balance (default: 10,000)" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             {
@@ -218,10 +207,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             {
@@ -230,10 +219,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             // ── Market Discovery ────────────────────────────────────────────
@@ -334,12 +323,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         outcome: { type: "string", description: "Outcome to buy ('YES', 'NO', 'OVER', 'UNDER')" },
                         amount_usd: { type: "number", description: "USD cash amount to spend" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
                         override_price: { type: "number", description: "Optional exact execution price per share to enforce" },
                         override_shares: { type: "number", description: "Optional exact share quantity to purchase" }
                     },
-                    required: ["slug_or_id", "outcome", "amount_usd", "account"]
+                    required: ["slug_or_id", "outcome", "amount_usd", "strategy_name"]
                 }
             },
             {
@@ -352,11 +341,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         outcome: { type: "string", description: "Outcome to sell ('YES', 'NO')" },
                         shares: { type: "number", description: "Number of shares to sell" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
                         override_price: { type: "number", description: "Optional exact execution price per share to enforce" }
                     },
-                    required: ["slug_or_id", "outcome", "shares", "account"]
+                    required: ["slug_or_id", "outcome", "shares", "strategy_name"]
                 }
             },
             // ── Portfolios & Trades ─────────────────────────────────────────
@@ -366,10 +355,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             {
@@ -379,10 +368,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         limit: { type: "number", description: "Max history rows (default: 50)" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             // ── Limit Orders ────────────────────────────────────────────────
@@ -399,7 +388,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         limit_price: { type: "number", description: "Target price limit (0.01 - 0.99)" },
                         order_type: { type: "string", enum: ["gtc", "gtd"], description: "GTC or GTD (default: gtc)" },
                         expires_at: { type: "string", description: "ISO 8601 expiry datetime (required for GTD orders)" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["slug_or_id", "outcome", "side", "amount", "limit_price"]
@@ -411,7 +400,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
@@ -423,10 +412,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         order_id: { type: "string", description: "The UUID of the order" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["order_id", "account"]
+                    required: ["order_id", "strategy_name"]
                 }
             },
             {
@@ -435,7 +424,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
@@ -446,7 +435,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
@@ -459,7 +448,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         slug_or_id: { type: "string", description: "Market slug, ID or condition ID" },
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["slug_or_id"]
@@ -471,7 +460,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
@@ -482,10 +471,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             {
@@ -494,7 +483,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
                         format: { type: "string", description: "Output format: 'markdown' or 'plain' (default: 'markdown')" }
                     }
@@ -506,7 +495,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
@@ -517,7 +506,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
@@ -577,7 +566,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             },
                         },
                         starting_balance: { type: "number", description: "Starting balance (default 10000)" },
-                        account: { type: "string", description: "The trading strategy or profile name" },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         agent_user_id: { type: "string", description: "Optional override for the agent user ID" },
                     },
                     required: ["trades"]
@@ -590,11 +579,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "Strategy account name, e.g. dickens_smith(\"conservative_arb\")" },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         content: { type: "string", description: "Markdown report content" },
                         filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" }
                     },
-                    required: ["account", "content", "filename"]
+                    required: ["strategy_name", "content", "filename"]
                 }
             },
             {
@@ -603,10 +592,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "Strategy account name" },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         limit: { type: "number", description: "Max reports to return (default 3)" }
                     },
-                    required: ["account"]
+                    required: ["strategy_name"]
                 }
             },
             {
@@ -615,13 +604,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "Strategy account name" },
+                        strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
                         filename: { type: "string", description: "Report filename to read" }
                     },
-                    required: ["account", "filename"]
+                    required: ["strategy_name", "filename"]
                 }
             },
-            // ── Agent Strategy Lifecycle ────────────────────────────────
             {
                 name: "register_strategy",
                 description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
@@ -632,10 +620,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'" },
                         platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
                         starting_balance: { type: "number", description: "Starting paper balance in USD" },
-                        account: { type: "string", description: "Strategy account name" },
-                        agent_user_id: { type: "string", description: "Optional agent user ID override" }
+                        agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent (e.g. 'dickens_codex_poly_usa', 'lily_claude_kalshi')." }
                     },
-                    required: ["strategy_name"]
+                    required: ["strategy_name", "agent_user_id"]
                 }
             },
             {
@@ -645,10 +632,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         strategy_name: { type: "string", description: "Strategy name to get context for" },
-                        account: { type: "string", description: "Strategy account name" },
-                        agent_user_id: { type: "string", description: "Optional agent user ID override" }
+                        agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent." }
                     },
-                    required: ["strategy_name"]
+                    required: ["strategy_name", "agent_user_id"]
                 }
             },
             {
@@ -1480,11 +1466,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             // ── Agent Reports ──────────────────────────────────────────
             case "save_report": {
-                const account = args?.account;
+                const account = (args?.strategy_name || args?.account);
                 const content = args?.content;
                 const filename = args?.filename;
                 if (!account || !content || !filename) {
-                    throw new Error("Missing required fields: account, content, filename");
+                    throw new Error("Missing required fields: strategy_name, content, filename");
                 }
                 const saveRes = await fetch(`${POLYTRADER_API_URL}/reports`, {
                     method: "POST",
@@ -1504,9 +1490,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 };
             }
             case "list_reports": {
-                const account = args?.account;
+                const account = (args?.strategy_name || args?.account);
                 if (!account)
-                    throw new Error("Missing required field: account");
+                    throw new Error("Missing required field: strategy_name");
                 const limit = args?.limit || 3;
                 const listRes = await fetch(`${POLYTRADER_API_URL}/reports?account=${encodeURIComponent(account)}&limit=${limit}`, { headers: getAgentHeaders(args) });
                 if (!listRes.ok) {
@@ -1522,10 +1508,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 };
             }
             case "read_report": {
-                const account = args?.account;
+                const account = (args?.strategy_name || args?.account);
                 const filename = args?.filename;
                 if (!account || !filename)
-                    throw new Error("Missing required fields: account, filename");
+                    throw new Error("Missing required fields: strategy_name, filename");
                 const readRes = await fetch(`${POLYTRADER_API_URL}/reports/${encodeURIComponent(filename)}?account=${encodeURIComponent(account)}`, { headers: getAgentHeaders(args) });
                 if (!readRes.ok) {
                     if (readRes.status === 404) {
@@ -1555,10 +1541,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const agent_mode = args?.agent_mode || "paper";
                 const platform = args?.platform || "polymarket";
                 const starting_balance = args?.starting_balance || 10000;
+                const instance_name = args?.instance_name;
                 const res = await fetch(`${POLYTRADER_API_URL}/agent/strategies/register`, {
                     method: "POST",
                     headers: getAgentHeaders(args),
-                    body: JSON.stringify({ strategy_name, agent_mode, platform, starting_balance }),
+                    body: JSON.stringify({ strategy_name, instance_name, agent_mode, platform, starting_balance }),
                 });
                 if (!res.ok) {
                     const errBody = await res.text();

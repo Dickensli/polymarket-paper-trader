@@ -25,7 +25,7 @@ import { getPolymarketUsOutcomePrice, getPolymarketUsMarket, polymarketUsTokenId
 // ---------------------------------------------------------------------------
 
 const paperTradeSchema = z.object({
-  strategy_name: z.string().min(1).max(255),
+  strategy_id: z.string().min(1).max(255),
   slug: z.string().min(1).max(500).describe('Market slug, ticker, or conditionId'),
   outcome: z.enum(['YES', 'NO']).default('YES'),
   side: z.enum(['BUY', 'SELL']).default('BUY'),
@@ -89,13 +89,16 @@ export async function POST(request: NextRequest) {
 
     // ── Resolve strategy ──────────────────────────────────────
     const strategy = await db.query.strategies.findFirst({
-      where: eq(strategies.strategyName, order.strategy_name),
+      where: and(
+        eq(strategies.userId, session.user.id),
+        eq(strategies.strategyId, order.strategy_id),
+      ),
     });
 
     if (!strategy) {
       return NextResponse.json(
         {
-          error: `Strategy "${order.strategy_name}" not registered. Call register_strategy first.`,
+          error: `Strategy "${order.strategy_id}" not registered. Call register_strategy first.`,
         },
         { status: 404 },
       );
@@ -268,7 +271,7 @@ export async function POST(request: NextRequest) {
         reportId: currentReport?.id ?? null,
         platform,
         metadata: {
-          strategy_name: order.strategy_name,
+          strategy_id: order.strategy_id,
           source: 'agent_paper_trades',
           report_id: currentReport?.id ?? null,
           run_id: runId,
@@ -342,7 +345,7 @@ export async function POST(request: NextRequest) {
         pnl: portfolio.totalPnL,
       },
       platform,
-      strategy_name: order.strategy_name,
+      strategy_id: order.strategy_id,
     });
   } catch (err) {
     if (err instanceof TradingError) {

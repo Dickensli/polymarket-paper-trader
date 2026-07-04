@@ -19,16 +19,18 @@ function generateIdempotencyKey(): string {
 }
 
 function getAgentHeaders(args?: any, idempotencyKey?: string) {
-  const account = typeof args?.account === "string" ? args.account : "default";
-  const userId = typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID;
+  const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id : "default";
+  const accountId = typeof args?.account_id === "string" ? args.account_id : AGENT_USER_ID;
 
   return {
     "Content-Type": "application/json",
     "x-agent-secret": AGENT_SECRET,
-    "x-agent-user-id": userId,
-    "x-agent-account": account,
+    "x-agent-account-id": accountId,
+    "x-agent-strategy-id": strategyId,
     "x-agent-platform": "polymarket_us",
     ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
+  };
+} : {}),
   };
 }
 
@@ -53,7 +55,7 @@ function json(data: unknown) {
 
 const accountProps = {
   account: { type: "string", description: "Strategy/profile name to isolate Polymarket US paper portfolios." },
-  agent_user_id: { type: "string", description: "Optional agent user ID override." },
+  account_id: { type: "string", description: "Optional agent user ID override." },
 };
 
 const server = new Server(
@@ -238,7 +240,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
               required: ["market", "outcome", "amount", "entry_price", "exit_price"],
             },
           },
-          starting_balance: { type: "number", description: "Starting balance (default 10000)" },
+          balance: { type: "number", description: "Starting balance (default 10000)" },
           ...accountProps,
         },
         required: ["trades"],
@@ -251,13 +253,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          strategy_name: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
-          agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'" },
+          strategy_id: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+          is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode (default true)", default: true },
           platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
-          starting_balance: { type: "number", description: "Starting paper balance in USD" },
+          balance: { type: "number", description: "Starting paper balance in USD" },
           ...accountProps,
         },
-        required: ["strategy_name"],
+        required: ["strategy_id"],
       },
     },
     {
@@ -266,10 +268,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          strategy_name: { type: "string", description: "Strategy name to get context for" },
+          strategy_id: { type: "string", description: "Strategy name to get context for" },
           ...accountProps,
         },
-        required: ["strategy_name"],
+        required: ["strategy_id"],
       },
     },
     {
@@ -278,7 +280,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          strategy_name: { type: "string", description: "Registered real strategy name" },
+          strategy_id: { type: "string", description: "Registered real strategy name" },
           slug: { type: "string", description: "Polymarket US market slug" },
           outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
           side: { type: "string", enum: ["BUY", "SELL"], description: "Trade side" },
@@ -289,7 +291,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
           ...accountProps,
         },
-        required: ["strategy_name", "slug", "outcome", "side", "price"],
+        required: ["strategy_id", "slug", "outcome", "side", "price"],
       },
     },
     {
@@ -435,35 +437,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     // ── Agent Reports (Retro) ──────────────────────────────────────
     case "save_report": {
-      const account = String((args as any).account);
+      const strategy_id = String((args as any).strategy_id);
       const content = String((args as any).content);
       const filename = String((args as any).filename);
-      if (!account || !content || !filename) {
-        throw new Error("Missing required fields: account, content, filename");
+      if (!strategy_id || !content || !filename) {
+        throw new Error("Missing required fields: strategy_id, content, filename");
       }
       const data = await callPolyTrader("/reports", {
         method: "POST",
         headers: getAgentHeaders(args),
-        body: JSON.stringify({ account, content, filename }),
+        body: JSON.stringify({ strategy_id, content, filename }),
       });
       return json({ ok: true, data: data.data ?? data });
     }
     case "list_reports": {
-      const account = String((args as any).account);
-      if (!account) throw new Error("Missing required field: account");
+      const strategy_id = String((args as any).strategy_id);
+      if (!strategy_id) throw new Error("Missing required field: account");
       const limit = Number((args as any).limit || 3);
       const data = await callPolyTrader(
-        `/reports?account=${encodeURIComponent(account)}&limit=${limit}`,
+        `/reports?strategy_id=${encodeURIComponent(strategy_id)}&limit=${limit}`,
         { headers: getAgentHeaders(args) },
       );
       return json({ ok: true, data: data.data ?? data });
     }
     case "read_report": {
-      const account = String((args as any).account);
+      const strategy_id = String((args as any).strategy_id);
       const filename = String((args as any).filename);
-      if (!account || !filename) throw new Error("Missing required fields: account, filename");
+      if (!strategy_id || !filename) throw new Error("Missing required fields: account, filename");
       const data = await callPolyTrader(
-        `/reports/${encodeURIComponent(filename)}?account=${encodeURIComponent(account)}`,
+        `/reports/${encodeURIComponent(filename)}?strategy_id=${encodeURIComponent(strategy_id)}`,
         { headers: getAgentHeaders(args) },
       );
       return json({ ok: true, data: data.data ?? data });
@@ -471,54 +473,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // ── Backtesting ────────────────────────────────────────────────
     case "backtest": {
       const trades = (args as any).trades;
-      const startingBalance = Number((args as any).starting_balance || 10000);
+      const startingBalance = Number((args as any).balance || 10000);
       if (!Array.isArray(trades) || trades.length === 0) {
         throw new Error("trades must be a non-empty array");
       }
       const data = await callPolyTrader("/backtest", {
         method: "POST",
         headers: getAgentHeaders(args),
-        body: JSON.stringify({ platform: "polymarket_us", trades, starting_balance: startingBalance }),
+        body: JSON.stringify({ platform: "polymarket_us", trades, balance: startingBalance }),
       });
       return json({ ok: true, data: data.data ?? data });
     }
     // ── Agent Strategy ─────────────────────────────────────────────
     case "register_strategy": {
-      const strategy_name = String((args as any).strategy_name);
-      if (!strategy_name) throw new Error("Missing required field: strategy_name");
-      const agent_mode = String((args as any).agent_mode || "paper");
-      const platform = String((args as any).platform || "polymarket_us");
-      const starting_balance = Number((args as any).starting_balance || 10000);
+      const strategy_id = String((args as any).strategy_id);
+      if (!strategy_id) throw new Error("Missing required field: strategy_id");
+      const account_id = String((args as any).account_id);
+      if (!account_id) throw new Error("Missing required field: account_id");
       const data = await callPolyTrader("/agent/strategies/register", {
         method: "POST",
         headers: getAgentHeaders(args),
-        body: JSON.stringify({ strategy_name, agent_mode, platform, starting_balance }),
+        body: JSON.stringify({
+          strategy_id,
+          account_id,
+          is_paper_trading: (args as any).is_paper_trading !== false,
+          platform: (args as any).platform || "polymarket_us",
+          balance: Number((args as any).balance || 10000),
+        }),
       });
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_strategy_context": {
-      const strategy_name = String((args as any).strategy_name);
-      if (!strategy_name) throw new Error("Missing required field: strategy_name");
+      const strategy_id = String((args as any).strategy_id);
+      if (!strategy_id) throw new Error("Missing required field: strategy_id");
       const data = await callPolyTrader(
-        `/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`,
+        `/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`,
         { headers: getAgentHeaders(args) },
       );
       return json({ ok: true, data: data.data ?? data });
     }
     case "submit_real_trade": {
-      const strategy_name = String((args as any).strategy_name);
+      const strategy_id = String((args as any).strategy_id);
       const slug = String((args as any).slug);
       const outcome = String((args as any).outcome);
       const side = String((args as any).side);
       const price = Number((args as any).price);
-      if (!strategy_name || !slug || !outcome || !side || !Number.isFinite(price)) {
-        throw new Error("Missing required fields: strategy_name, slug, outcome, side, price");
+      if (!strategy_id || !slug || !outcome || !side || !Number.isFinite(price)) {
+        throw new Error("Missing required fields: strategy_id, slug, outcome, side, price");
       }
       const data = await callPolyTrader("/agent/real-trades", {
         method: "POST",
         headers: getAgentHeaders(args),
         body: JSON.stringify({
-          strategy_name,
+          strategy_id,
           slug,
           outcome,
           side,

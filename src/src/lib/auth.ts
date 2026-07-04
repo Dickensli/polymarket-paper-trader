@@ -4,7 +4,7 @@ import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { getDb } from '@/lib/db';
 import crypto from 'crypto';
 
-function getDeterministicUuid(userId: string, accountName: string): string {
+export function getDeterministicUuid(userId: string, accountName: string): string {
   const hash = crypto.createHash('sha256').update(`${userId}:${accountName}`).digest('hex');
   return [
     hash.substring(0, 8),
@@ -13,6 +13,21 @@ function getDeterministicUuid(userId: string, accountName: string): string {
     ((parseInt(hash.substring(16, 18), 16) & 0x3f) | 0x80).toString(16) + hash.substring(18, 20),
     hash.substring(20, 32)
   ].join('-');
+}
+
+export function resolveTargetUserId(accountId: string, strategyId: string, platform: string): string {
+  const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+  let masterUserId = accountId;
+  if (!isUuid(accountId)) {
+    masterUserId = getDeterministicUuid(accountId, 'master');
+  }
+  if (strategyId !== 'default') {
+    const accountKey = platform === 'kalshi' ? `${platform}:${strategyId}` : strategyId;
+    return getDeterministicUuid(masterUserId, accountKey);
+  } else if (platform === 'kalshi') {
+    return getDeterministicUuid(masterUserId, 'kalshi:default');
+  }
+  return masterUserId;
 }
 
 import { accounts, sessions, users, verificationTokens, portfolios } from '@/lib/db/schema';
@@ -115,8 +130,8 @@ export const auth = async (...args: any[]) => {
     const { headers } = await import('next/headers');
     const reqHeaders = await headers();
     const agentSecret = reqHeaders.get('x-agent-secret');
-    const rawUserIdHeader = reqHeaders.get('x-agent-user-id') || '815c03ff-dad9-4535-a427-20422812424a';
-    const agentAccount = reqHeaders.get('x-agent-account') || 'default';
+    const rawUserIdHeader = reqHeaders.get('x-agent-account-id') || '815c03ff-dad9-4535-a427-20422812424a';
+    const agentAccount = reqHeaders.get('x-agent-strategy-id') || 'default';
     const platform = normalizePlatform(reqHeaders.get('x-agent-platform'));
 
     const isProd = process.env.NODE_ENV === 'production';
@@ -133,15 +148,13 @@ export const auth = async (...args: any[]) => {
         masterUserId = getDeterministicUuid(rawUserIdHeader, 'master');
       }
 
-      let targetUserId = masterUserId;
+      let targetUserId = resolveTargetUserId(rawUserIdHeader, agentAccount, platform);
       let strategyName = rawAgentName;
       let strategyEmail = isUuid(rawUserIdHeader) 
         ? 'agent@polymarkettraders.com' 
         : `agent+${rawUserIdHeader.replace(/\s+/g, '_')}@polymarkettraders.com`;
 
       if (agentAccount !== 'default') {
-        const accountKey = platform === 'kalshi' ? `${platform}:${agentAccount}` : agentAccount;
-        targetUserId = getDeterministicUuid(masterUserId, accountKey);
         if (agentAccount.startsWith(rawAgentName)) {
           strategyName = agentAccount;
         } else {
@@ -151,7 +164,6 @@ export const auth = async (...args: any[]) => {
         const cleanAccount = agentAccount.replace(/[^a-zA-Z0-9_-]/g, '_');
         strategyEmail = `agent+${platform}+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
       } else if (platform === 'kalshi') {
-        targetUserId = getDeterministicUuid(masterUserId, 'kalshi:default');
         strategyName = rawAgentName;
         strategyEmail = `agent+kalshi+${rawAgentName.replace(/\s+/g, '_')}@polymarkettraders.com`;
       }
@@ -172,7 +184,7 @@ export const auth = async (...args: any[]) => {
             email: strategyEmail,
             name: strategyName,
             settings: {
-              strategyName: agentAccount,
+              strategyId: agentAccount,
               platform,
               defaultTradeSize: 100,
               slippageEnabled: false,

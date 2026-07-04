@@ -48,12 +48,11 @@ export async function POST(request: NextRequest) {
     const {
       platform = 'polymarket',
       trades,
-      starting_balance: startingBalance = 10000,
     } = body as {
       platform?: string;
       trades?: BacktestTrade[];
-      starting_balance?: number;
     };
+    const startingBalance = Number(body.balance ?? body.starting_balance ?? 10000);
 
     if (!trades || !Array.isArray(trades) || trades.length === 0) {
       return NextResponse.json(
