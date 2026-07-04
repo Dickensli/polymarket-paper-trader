@@ -89,11 +89,13 @@ function createMockDb() {
     })),
   }));
   const selectResult: unknown[] = [];
+  const selectResults: unknown[][] = [];
 
   return {
     insertResults,
     updateResults,
     selectResult,
+    selectResults,
     insertValues,
     updateSet,
     query: {
@@ -105,7 +107,7 @@ function createMockDb() {
     },
     insert: vi.fn(() => ({ values: insertValues })),
     update: vi.fn(() => ({ set: updateSet })),
-    select: vi.fn(() => createChain(selectResult)),
+    select: vi.fn(() => createChain(selectResults.length > 0 ? selectResults.shift() : selectResult)),
   };
 }
 
@@ -618,6 +620,133 @@ describe('agent route handlers', () => {
       official_snapshot: null,
       reconciliation_logs: [{ id: 'log-1', severity: 'info' }],
       warnings: [],
+    });
+  });
+
+  it('returns filtered agent dashboard data', async () => {
+    const { GET } = await import('@/app/api/agent/dashboard/route');
+
+    db.selectResults.push(
+      [
+        {
+          id: 'strategy-1',
+          userId: 'user-1',
+          strategyName: 'real-arb',
+          agentMode: 'real',
+          platform: 'kalshi',
+          status: 'active',
+          startingBalance: '10000.00',
+          riskConfig: {},
+          schedule: '0 * * * *',
+          metadata: { real_trading_enabled: true },
+          createdAt: new Date('2026-07-03T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-03T00:00:00.000Z'),
+        },
+        {
+          id: 'strategy-2',
+          userId: 'user-1',
+          strategyName: 'paper-polymarket',
+          agentMode: 'paper',
+          platform: 'polymarket',
+          status: 'active',
+          startingBalance: '10000.00',
+          riskConfig: {},
+          schedule: null,
+          metadata: {},
+          createdAt: new Date('2026-07-02T00:00:00.000Z'),
+          updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+        },
+      ],
+      [
+        {
+          id: 'report-1',
+          strategyId: 'strategy-1',
+          account: 'real-arb',
+          filename: 'run.md',
+          title: 'Run',
+          lessonsLearned: 'Tighten sizing',
+          nextSteps: 'Reconcile again',
+          createdAt: new Date('2026-07-03T01:00:00.000Z'),
+        },
+      ],
+      [
+        {
+          id: 'snapshot-1',
+          strategyId: 'strategy-1',
+          runId: null,
+          platform: 'kalshi',
+          agentMode: 'real',
+          source: 'official',
+          cash: '1000.00',
+          positionsValue: '25.00',
+          totalValue: '1025.00',
+          pnl: '25.000000',
+          positions: [],
+          orders: [],
+          capturedAt: new Date('2026-07-03T02:00:00.000Z'),
+        },
+      ],
+      [
+        {
+          id: 'order-1',
+          strategyId: 'strategy-1',
+          runId: null,
+          platform: 'kalshi',
+          officialOrderId: 'official-1',
+          clientOrderId: 'client-1',
+          marketId: null,
+          marketSlugOrTicker: 'KXTEST',
+          side: 'BUY',
+          quantity: '10.000000',
+          price: '0.250000',
+          status: 'SUBMITTED',
+          request: {},
+          officialResponse: {},
+          error: {},
+          createdAt: new Date('2026-07-03T03:00:00.000Z'),
+          updatedAt: new Date('2026-07-03T03:00:00.000Z'),
+        },
+      ],
+      [
+        {
+          id: 'log-1',
+          strategyId: 'strategy-1',
+          runId: null,
+          platform: 'kalshi',
+          severity: 'warning',
+          differenceType: 'balance',
+          diff: { cash: { delta: 25 } },
+          threshold: { cash: 1 },
+          message: 'Official and local balances differ beyond configured thresholds.',
+          createdAt: new Date('2026-07-03T04:00:00.000Z'),
+        },
+      ],
+    );
+
+    const response = await GET(makeRequest({
+      url: 'https://example.test/api/agent/dashboard?platform=kalshi&agent_mode=real',
+    }) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      summary: {
+        strategies: 1,
+        reports: 1,
+        snapshots: 1,
+        real_orders: 1,
+        open_real_orders: 1,
+        reconciliation_warnings: 1,
+      },
+      strategies: [
+        {
+          id: 'strategy-1',
+          strategy_name: 'real-arb',
+          latest_snapshot: { total_value: 1025, pnl: 25 },
+        },
+      ],
+      reports: [{ filename: 'run.md', strategy_name: 'real-arb' }],
+      real_orders: [{ id: 'order-1', status: 'SUBMITTED' }],
+      reconciliation_logs: [{ id: 'log-1', severity: 'warning' }],
     });
   });
 });
