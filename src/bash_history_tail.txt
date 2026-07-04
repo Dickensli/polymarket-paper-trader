@@ -1,0 +1,500 @@
+#1778543635
+build_clearner
+#1778543641
+build_cleaner
+#1778544082
+pod borgrun   --local   --node=beyond-api-gateway   --command=reload   --environment=staging-common   --priority=200   --accounting_user=beyond-dev-common-resources   --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1   --cell=je   --name_prefix=parallel_async
+#1778548820
+g4 sync
+#1778557215
+blaze run //experimental/beyond_live_debugging_studio:launch_job -- --force_create_new_experiment
+#1778557228
+g4d llm5
+#1778557234
+g4 llm5
+#1778557237
+clear
+#1778557243
+g4d llm4
+#1778557246
+g4 sync
+#1778557253
+blaze run //experimental/beyond_live_debugging_studio:launch_job -- --force_create_new_experiment
+#1778648035
+g4 sync
+#1778718174
+g4 fix
+#1778718178
+build_cleaner
+#1778252483
+/google/bin/releases/jetski-devs/jetski-web/run_jetski.par
+#1778728542
+cdcdcdcççcsdccdccdc
+#1778767869
+lear
+#1778767878
+g4d llm4
+#1778767892
+g4 sync
+#1778767936
+g4d llm4
+#1778767946
+blaze run //experimental/beyond_live_debugging_studio:launch_job -- --force_create_new_experiment
+#1778789705
+g4 sync
+#1778794020
+g4 fix
+#1778806447
+g4 sync
+#1778807249
+build_cleaner
+#1778806917
+pod borgrun   --local   --node=beyond-api-gateway   --command=reload   --environment=staging-common   --priority=200   --accounting_user=beyond-dev-common-resources   --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1   --cell=je   --name_prefix=parallel_async
+#1778807609
+g4 sync
+#1778807618
+g4 fix
+#1778807619
+build_cleaner
+#1778807692
+pod borgrun   --local   --node=beyond-api-gateway   --command=reload   --environment=staging-common   --priority=200   --accounting_user=beyond-dev-common-resources   --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1   --cell=je   --name_prefix=parallel_async
+#1778808211
+g4 sync
+#1778810582
+g4 fix
+#1778814488
+g4 sync
+#1778818863
+build_cleaner
+#1778818917
+g4 sync
+#1778818924
+g4 fix
+#1778767872
+/google/bin/releases/jetski-devs/jetski-web/run_jetski.par
+#1779236833
+g4 sync
+#1779472415
+clear
+#1779472416
+g4 sync
+#1779472465
+g4 fix
+#1779472470
+build_cleaner
+#1779472734
+g4 sync
+#1779472792
+g4 fix
+#1779473272
+g4 fix
+#1779473408
+build_cleaner
+#1779473433
+g4 sync
+#1779545078
+/google/bin/releases/jetski-devs/tools/cli web install
+#1779562169
+g4 sync
+#1779850484
+g4 fix
+#1779850491
+build_cleaner
+#1779545231
+/google/bin/releases/jetski-devs/jetski-web/run_jetski.par
+#1780538395
+g4 sync
+#1780540721
+clear
+#1780542348
+g4 sync
+#1780675632
+fileutil rm -rf /cns/gd-d/home/speech-team/dickensli/sl_engine
+#1780675718
+fileutil rm -f -a -R /cns/gd-d/home/speech-team/dickensli/
+#1780675738
+fileutil ls /cns/gd-d/home/speech-team/dickensli/
+#1780761122
+cleaar
+#1780761124
+clear
+#1780942192
+g4d viper1
+#1780942234
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780942376
+g4 sync
+#1780942511
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780945531
+nano ~/.tmux.conf
+#1780945576
+tmux source-file ~/.tmux.conf
+#1780945767
+g4d viper1
+#1780945769
+clear
+#1780945773
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780951801
+clear
+#1780951802
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780952015
+fuser -k -n tcp 8888
+#1780952016
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780954472
+fuser -k -n tcp 8888
+#1780954474
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780956057
+fuser -k -n tcp 8888
+#1780956063
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780956664
+fuser -k -n tcp 8888
+#1780956666
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1781018408
+clear
+#1781018422
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1780671600
+/google/bin/releases/jetski-devs/jetski-web/run_jetski.par
+#1781018653
+/google/bin/releases/jetski-devs/tools/cli web install
+#1781025916
+g4 sync
+#1781035529
+cleaar
+#1781035531
+g4 sync
+#1781104101
+sudo apt install jj-cli
+#1781121812
+g4 sync
+#1781018771
+/google/bin/releases/jetski-devs/jetski-web/run_jetski.par
+#1781205578
+tmux --session
+#1781205962
+tmx2 -CC new -A -s work
+#1781213291
+tmx2 attach -t work
+#1781213618
+unset TMUX
+#1781213628
+[hi on] dickensli@dickensli-cloudtop:~$ tmx2 attach -t work
+#1781213637
+tmx2 attach -t work
+#1781213651
+tmx2 --session
+#1781213789
+tmx2 ls
+#1781043080
+blaze run //experimental/users/cjzheng/thinker_talker:notebook
+#1781214245
+tmx2 ls
+#1781214629
+tmx2 list-clients
+#1781214697
+tmx2 attach -d -t work
+#1781215708
+/google/bin/releases/jetski-devs/tools/cli web install
+#1781227293
+clear
+#1781276049
+/google/bin/releases/jetski-devs/tools/cli web install
+#1781282760
+exit
+#1781213803
+tmx2 attach -t main
+#1781633048
+clear
+#1781637326
+/google/bin/releases/jetski-devs/tools/cli web install
+#1781637355
+/google/bin/releases/jetski-devs/tools/cli web restart
+#1781637945
+gcert
+#1781638828
+/google/bin/releases/jetski-devs/marina/marina list
+#1781639692
+/google/bin/releases/jetski-devs/marina/marina delete 4888e20e-9f46-4745-932b-802fa37c3786
+#1781639748
+/google/bin/releases/jetski-devs/marina/marina delete 319ea9ec-dd0b-42ef-8b9e-021e909e6d5
+#1781639757
+/google/bin/releases/jetski-devs/marina/marina delete 319ea9ec-dd0b-42ef-8b9e-021e909e6d5e
+#1781639767
+clear
+#1781732905
+ls /usr/local/google/home/dickensli/.gemini/jetski/knowledge/
+#1782103643
+mkdir -p ~/.gemini/config
+#1782105938
+exit
+#1782107061
+vim ~/scripts/renew_capsule.sh
+#1782107136
+clear
+#1782107145
+ls -al ~/scripts/renew_capsule.sh
+#1782107176
+makdir 640 ~/scripts
+#1782107183
+mkdir 640 ~/scripts
+#1782107192
+vim ~/scripts/renew_capsule.sh
+#1782107220
+chmod +x ~/scripts/renew_capsule.sh
+#1782107227
+crontab -e
+#1782107292
+ls /usr/local/google/home/$USER/scripts/renew_capsule.sh
+#1782107542
+vim .gemini/config/mcp_config.json
+#1782107885
+systemctl --user restart jetski_web.service
+#1782107916
+pkill -f run_jetski.par
+#1782107919
+/google/bin/releases/jetski-devs/jetski-web/run_jetski.par &> /dev/null &
+#1782108483
+vim .gemini/config/mcp_config.json
+#1782110112
+systemctl --user restart jetski-hub.service
+#1782110126
+systemctl --user status jetski-hub.service
+#1782110165
+clear
+#1782110662
+vim .gemini/config/mcp_config.json
+#1782110682
+systemctl --user restart jetski-hub.service
+#1782110703
+systemctl --user status jetski-hub.service
+#1782110709
+clear
+#1782110825
+vim ~/scripts/renew_capsule.sh 
+#1782161201
+exit
+#1782161202
+vim ~/scripts/renew_capsule.sh 
+#1782161214
+exit
+#1782161224
+ls
+#1782180391
+python3 -c '
+import os, re
+found = []
+for p in ["/Applications", os.path.expanduser("~/Applications")]:
+  if os.path.exists(p):
+    for r, d, fs in os.walk(p):
+      for f in fs:
+        if f.endswith(".js") and ("Jetski.app" in r or "Antigravity" in r):
+          fp = os.path.join(r, f)
+          try:
+            if "Unexpected setting key:" in open(fp, "r", errors="ignore").read():
+              found.append(fp)
+          except: pass
+if not found:
+  print("No settings provider files found to patch.")
+else:
+  for fp in found:
+    print("Found file:", fp)
+    try:
+      content = open(fp, "r", errors="ignore").read()
+      new_content = re.sub(r"throw\s+new\s+Error\(\s*[\"\`\x27]Unexpected setting key:.*?\)", "(console.warn(\"Unexpected setting key\"), undefined)", content)
+      with open(fp, "w") as file:
+        file.write(new_content)
+      print("  Successfully patched!")
+    except PermissionError:
+      print("  Permission denied! Please re-run this command with \"sudo \".")
+    except Exception as e:
+      print("  Error:", e)
+'
+#1782180399
+exit
+#1782190747
+fileutil mkdir -p /cns/pd-d/home/dickensli/smith
+#1782192101
+vim ~/scripts/renew_capsule.sh 
+#1782192566
+# 获取当前 Capsule 的主机名
+#1782192566
+CAPSULE_HOST=$(grep -A5 "^Host capsule" ~/.ssh/config | grep -i "Hostname" | head -n 1 | awk '{print $2}')
+#1782192566
+# 运行安装程序 (首次运行会引导你绑定 GCP 项目，按提示操作即可)
+#1782192566
+/google/bin/releases/deepmind/agents/smith/setup.par     --capsule="$CAPSULE_HOST"     --smith_dir="/cns/ig-d/home/dickensli/smith"
+#1782192666
+gcloud auth login --caa-account=dickensli@google.com
+#1782192995
+gcloud auth login
+#1782193132
+/google/bin/releases/deepmind/agents/smith/setup.par
+#1782193668
+systemctl --user stop smith.service
+#1782193676
+systemctl --user disable smith.service
+#1782193524
+CAPSULE_HOST=$(grep -A5 "^Host capsule" ~/.ssh/config | grep -i "Hostname" | head -n 1 | awk '{print $2}')
+#1782193524
+echo $CAPSULE_HOST  # 先确认有值
+#1782193524
+/google/bin/releases/deepmind/agents/smith/setup.par     --capsule="$CAPSULE_HOST"     --smith_dir="/cns/pd-d/home/dickensli/smith"
+#1782193700
+/google/bin/releases/deepmind/agents/smith/setup.par
+#1782194230
+echo $CAPSULE_HOST  # 先确认有值
+#1782194237
+CAPSULE_HOST=$(grep -A5 "^Host capsule" ~/.ssh/config | grep -i "Hostname" | head -n 1 | awk '{print $2}')
+#1782194239
+echo $CAPSULE_HOST  # 先确认有值
+#1782195194
+clear
+#1782195196
+~/scripts/renew_capsule.sh
+#1782197390
+systemctl --user stop smith.service
+#1782197402
+systemctl --user disable smith.service
+#1782197432
+CAPSULE_HOST=$(grep -A5 "^Host capsule" ~/.ssh/config | grep -i "Hostname" | head -n 1 | awk '{print $2}')
+#1782197436
+echo $CAPSULE_HOST  # 先确认有值
+#1782197445
+~/scripts/renew_capsule.sh
+#1782197571
+clear
+#1782197405
+/google/bin/releases/deepmind/agents/smith/setup.par
+#1782197632
+ls ~/private_skills/
+#1782197646
+~/scripts/renew_capsule.sh
+#1782252651
+ls /usr/local/google/home/dickensli/.gemini/jetski/scratch/config.textproto
+#1782254231
+gcloud pubsub subscriptions delete polytrader-chat-sub --project=smith-dickensli-k4rtp
+#1782254267
+gcloud pubsub subscriptions delete polytrader-chat-sub --project=smith-dickensli-k4rtpa
+#1782254273
+gcloud pubsub topics delete polytrader-chat-topic --project=smith-dickensli-k4rtpa
+#1782254286
+PROJECT_ID="polytrader"
+#1782254290
+gcloud pubsub topics create smith-chat-topic --project=$PROJECT_ID
+#1782254334
+PROJECT_ID="smith-dickensli-k4rtpa"
+#1782254338
+gcloud pubsub topics create smith-chat-topic --project=$PROJECT_ID
+#1782254345
+gcloud pubsub subscriptions create smith-chat-sub --topic=smith-chat-topic --project=$PROJECT_ID
+#1782254352
+gcloud pubsub topics add-iam-policy-binding smith-chat-topic     --project=$PROJECT_ID     --member="serviceAccount:chat-api-push@system.gserviceaccount.com"     --role="roles/pubsub.publisher"
+#1782254663
+systemctl --user stop smith.service
+#1782254672
+systemctl --user disable smith.service
+#1782254797
+/google/bin/releases/deepmind/agents/smith/setup.par
+#1782255145
+vim /usr/local/google/home/dickensli/.gemini/smith/config.textproto
+#1782283629
+ls /usr/local/google/home/dickensli/.gemini/smith/
+#1782283632
+ls /usr/local/google/home/dickensli/.gemini/
+#1782283640
+ls /usr/local/google/home/dickensli/.gemini/jetski
+#1782314827
+g4 ync
+#1782314834
+g4d llm5
+#1782314839
+g4 sync
+#1782331646
+mv ~/.gemini/jetski/brain ~/.gemini/jetski/brain.bak
+#1782331730
+systemctl --user restart smith-web.service
+#1782331898
+vim /usr/local/google/home/dickensli/.gemini/smith-web/config.textproto
+#1782331910
+clear
+#1782331921
+mv ~/.gemini/jetski/conversations ~/.gemini/jetski/conversations.bak
+#1782331925
+systemctl --user restart smith-web.service
+#1782337056
+colab local --ipynb_deps=//experimental/users/dickensli/beyond/asr_unary:verify_asr_unary_deps
+#1782339893
+cd /usr/local/google/home/dickensli/polymarket-paper-trader
+#1782339899
+git diff
+#1782339909
+clear
+#1782340744
+cd /usr/local/google/home/dickensli/polymarket-paper-trader
+#1782340249
+pod borgrun   --local   --node=beyond-api-gateway   --command=reload   --environment=staging-common   --priority=200   --accounting_user=beyond-dev-common-resources   --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1   --cell=je   --name_prefix=asr_unary
+#1782340748
+git push origin main
+#1782337765
+colab launch_local --ipynb_deps=//experimental/users/dickensli/beyond/asr_unary:verify_asr_unary_deps
+#1782350021
+pod borgrun   --local   --node=beyond-api-gateway   --command=reload   --environment=dev-common   --priority=200   --accounting_user=beyond-dev-common-resources   --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1   --cell=je   --name_prefix=asr_unary
+#1782351904
+git push
+#1782351701
+pod borgrun --local --node=beyond-api-gateway --command=reload --environment=staging-common --priority=200 --accounting_user=beyond-dev-common-resources --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1 --cell=je --name_prefix=asr_unary
+#1782352623
+git push origin main
+#1782355016
+rm ~/scripts/renew_capsule.sh 
+#1782404018
+colab local --ipynb_deps=//experimental/users/dickensli/beyond/asr_unary:verify_asr_unary_deps
+#1782404307
+/google/bin/releases/grp-ix-team/rapid/colab-cli/cli.par launch_local --ipynb_deps=//experimental/users/dickensli/beyond/asr_unary:verify_asr_unary_deps
+#1782411670
+clear
+#1782413719
+g4 sync
+#1782417410
+pod borgrun --local --node=beyond-api-gateway --command=reload --environment=staging-common --priority=200 --accounting_user=beyond-dev-common-resources --vars=override_total_memory=20G,beyond_use_local_config=true,default_tos_override=AF1,beyond_allow_all_recipe_config_overrides=true --cell=je --name_prefix=asr_unary
+#1782411671
+/google/bin/releases/grp-ix-team/rapid/colab-cli/cli.par launch_local --ipynb_deps=//experimental/users/dickensli/beyond/asr_unary:verify_asr_unary_deps
+#1782424563
+g4 sync
+#1782441207
+clear
+#1782441228
+/google/bin/releases/grp-ix-team/rapid/colab-cli/cli.par launch_local --ipynb_deps=//experimental/users/dickensli/beyond/asr_unary:verify_asr_unary_deps
+#1782485496
+clear
+#1782485679
+/google/bin/releases/jetski-devs/tools/cli web install
+#1782497848
+g4 resolve -am
+#1782778094
+g4 sync
+#1783034537
+git status
+#1783034767
+cd /usr/local/google/home/dickensli/polymarket-paper-trader
+#1783034773
+git push origin main
+#1783043730
+g4 sync
+#1783044724
+g4 sync
+#1783132750
+git push
+#1783132767
+cd /usr/local/google/home/dickensli/polymarket-paper-trader/
+#1783132768
+git push
+#1783134234
+npx vercel env run -e production -- npm --prefix src run db:migrate

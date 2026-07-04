@@ -170,16 +170,24 @@ Skills are stored in `~/.gemini/config/skills/{skill-name}/SKILL.md` and provide
 
 ### Required Fields for All Execution Tools
 
-All state-touching tools require the following identity and isolation parameters:
+All state-touching tools require the following identity and isolation parameters. The client can specify them separately or pass a consolidated identifier to the `account` parameter:
 
-- `agent_user_id`: The human or AI agent's master account/identity name (e.g. `dickens_smith`). Can be passed as an optional tool argument (defaults to the workspace environment's `AGENT_USER_ID` configuration).
-- `strategy_name` (previously `account`): The specific strategy logic to execute (e.g. `conservative`). Passed on all subsequent calls to isolate portfolios (the server maps this to the `x-agent-account` header context).
+- `agent_user_id`: The human or AI agent's master account/identity name (e.g. `dickens_smith`). Specified during `register_strategy` and passed on all subsequent calls.
+- `strategy_name`: The specific strategy logic to register/execute (e.g. `conservative`). Passed to `register_strategy` and `get_strategy_context`.
+- `instance_name`: The unique strategy instance name to isolate portfolios.
+  * **Auto-allocation**: When calling `register_strategy`, if you omit `instance_name`, the server will check for existing instances of this strategy.
+    - First/Base instance: Defaults to the strategy name itself (e.g. `conservative`). Returns session key `dickens_smith("conservative")`.
+    - Subsequent parallel instances: Increments to suffix indexes (e.g. `conservative, 1`, `conservative, 2`). Returns session key `dickens_smith("conservative", 1)`.
+  * **Consolidated Identifier**: On all subsequent execution calls (like `buy`, `sell`, `portfolio`, `get_balance`), pass the returned `account_id` directly to the `account` parameter:
+    - Base instance: `agent_user_id("strategy_name")` (e.g. `dickens_smith("conservative")`).
+    - Parallel instance: `agent_user_id("strategy_name", instance_id)` (e.g. `dickens_smith("conservative", 1)`).
+    - The MCP server parses this string and maps it to headers.
 
 Execution tools (`buy`, `sell`, `portfolio`, etc.) must NOT require the agent to specify `agent_mode` or `platform` dynamically — the server resolves these from the strategy's registration parameters using the authenticated identity resolved from headers.
 
 ### MCP Resources (Planned)
 
-- `strategy_state://{agent_user_id}/{strategy_name}`: Returns JSON containing current registration parameters, status, and whether initialization is complete (e.g. `{"is_setup": true, "agent_mode": "paper", "platform": "polymarket_us"}`).
+- `strategy_state://{strategy_name}`: Returns JSON containing current registration parameters, status, and whether initialization is complete (e.g. `{"is_setup": true, "agent_mode": "paper", "platform": "polymarket_us"}`).
 
 
 ## Server Responsibilities
@@ -493,13 +501,13 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `platform` enum: `polymarket`, `kalshi`, `polymarket_us`.
 - [x] Add `strategy_status` enum: `active`, `paused`, `disabled`.
 - [x] Add `strategies` table.
-- [x] Add `strategy_runs` table.
-- [x] Add `strategy_reports` table (extend existing `agent_reports` with strategy FK).
-- [x] Add `portfolio_snapshots` table.
-- [x] Add `paper_trade_orders` table or extend existing `paper_trades` with strategy/platform fields.
-- [x] Add `real_trade_orders` table.
-- [x] Add `reconciliation_logs` table.
-- [x] Generate and verify Drizzle migration.
+- [ ] Add `strategy_runs` table.
+- [ ] Add `strategy_reports` table (extend existing `agent_reports` with strategy FK).
+- [ ] Add `portfolio_snapshots` table.
+- [ ] Add `paper_trade_orders` table or extend existing `paper_trades` with strategy/platform fields.
+- [ ] Add `real_trade_orders` table.
+- [ ] Add `reconciliation_logs` table.
+- [ ] Generate and verify Drizzle migration.
 
 ### Phase 2 - Server APIs
 
@@ -507,12 +515,10 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `GET /api/agent/context`.
 - [x] Add `GET/POST /api/reports` (existing).
 - [x] Add `GET /api/reports/[filename]` (existing).
-- [x] Add `GET/POST /api/agent/reports`.
-- [x] Add `GET /api/agent/reports/[id]`.
-- [x] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
-- [x] Add `POST /api/agent/real-trades` (audit-first official real trade endpoint).
-- [x] Add `POST /api/agent/real-orders/[id]/cancel` (audit-first official cancel endpoint).
-- [x] Add `POST /api/agent/reconcile` (local snapshot/log placeholder; official snapshot fetch pending).
+- [ ] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
+- [ ] Add `POST /api/agent/real-trades`.
+- [ ] Add `POST /api/agent/real-orders/[id]/cancel`.
+- [ ] Add `POST /api/agent/reconcile`.
 - [x] Keep compatibility wrappers for old `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell`.
 
 ### Phase 3 - Paper Trading
@@ -521,31 +527,30 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Kalshi paper trading flow (via `/api/kalshi/trade/buy`, `/api/kalshi/trade/sell`).
 - [x] Polymarket US paper market-data client (via official `polymarket-us` SDK).
 - [x] Polymarket US paper fill simulator (via `/api/polymarket-us/trade/buy`, `/api/polymarket-us/trade/sell`).
-- [x] Normalize all three into unified `/api/agent/paper-trades`.
-- [x] Ensure unified agent paper trades write portfolio snapshot.
-- [x] Link paper trades to the current strategy report/run summary.
+- [ ] Normalize all three into unified `/api/agent/paper-trades`.
+- [ ] Ensure all paper trades write portfolio snapshot and report link.
 - [x] Idempotency enforcement per strategy/platform.
 
 ### Phase 4 - Real Trading
 
-- [x] Move or reuse Kalshi official trading client server-side.
-- [x] Move or reuse Polymarket US official trading client server-side.
-- [x] Add real-trading enable flag per strategy (`metadata.real_trading_enabled`).
-- [x] Add `submit_real_trade` MCP flow for Kalshi.
-- [x] Add `submit_real_trade` MCP flow for Polymarket US.
-- [x] Add cancel-order flow for both real platforms.
-- [x] Persist every attempted official request/response/error in `real_trade_orders`.
-- [x] Add official portfolio snapshot after each real write.
+- [ ] Move or reuse Kalshi official trading client server-side.
+- [ ] Move or reuse Polymarket US official trading client server-side.
+- [ ] Add real-trading enable flags per platform and per strategy.
+- [ ] Add `submit_real_trade` MCP flow for Kalshi.
+- [ ] Add `submit_real_trade` MCP flow for Polymarket US.
+- [ ] Add cancel-order flow for both real platforms.
+- [ ] Persist every official request/response in `real_trade_orders`.
+- [ ] Add official portfolio snapshot after each real write.
 
 ### Phase 5 - Reconciliation
 
-- [x] Implement official Kalshi portfolio/order/fill snapshot fetch.
-- [x] Implement official Polymarket US portfolio/order/activity snapshot fetch.
-- [x] Compare official vs local balances.
-- [x] Compare official vs local positions.
-- [x] Compare official vs local open orders/fills.
-- [x] Write `reconciliation_logs` for local snapshot / pending-official reconciliation state.
-- [x] Return warnings to MCP client when official reconciliation is unavailable or fails.
+- [ ] Implement official Kalshi portfolio/order/fill snapshot fetch.
+- [ ] Implement official Polymarket US portfolio/order/activity snapshot fetch.
+- [ ] Compare official vs local balances.
+- [ ] Compare official vs local positions.
+- [ ] Compare official vs local open orders/fills.
+- [ ] Write `reconciliation_logs` for material differences.
+- [ ] Return warnings to MCP client when differences exceed threshold.
 
 ### Phase 6 - MCP
 
@@ -555,8 +560,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Create per-platform Jetski skills with verified tool inventories (`polymarket-trading`, `kalshi-trading`, `polymarket-us-trading`).
 - [x] Document per-platform tool comparison matrix in architecture doc.
 - [ ] Add `record_paper_trade` tool (unified).
-- [x] Add `submit_real_trade` tool.
-- [x] Add `cancel_real_order` tool.
+- [ ] Add `submit_real_trade` tool.
+- [ ] Add `cancel_real_order` tool.
 - [ ] Add `reconcile_portfolio` tool.
 - [x] Execution tools (buy/sell) use only `strategy_name` — server resolves platform via server-side binding.
 - [ ] Expose MCP Resource `strategy_state://{strategy_name}` for initialization state sync.
@@ -573,25 +578,22 @@ This keeps real venue credentials away from frontend code and away from strategy
 
 ### Phase 8 - UI
 
-- [x] Add strategy registry dashboard.
-- [x] Add reports viewer.
-- [x] Add per-strategy portfolio snapshots.
-- [x] Add real-trade audit log viewer.
-- [x] Add reconciliation warning dashboard.
-- [x] Add filters by platform and mode.
+- [ ] Add strategy registry dashboard.
+- [ ] Add reports viewer.
+- [ ] Add per-strategy portfolio snapshots.
+- [ ] Add real-trade audit log viewer.
+- [ ] Add reconciliation warning dashboard.
+- [ ] Add filters by platform and mode.
 
 ### Phase 9 - Tests
 
-- [x] Unit test strategy registration (idempotency, mode/platform binding).
-- [x] Unit test report write/read/list.
-- [x] Unit test paper trade idempotency.
-- [x] Unit test unified paper trade writes normalized order and portfolio snapshot.
-- [x] Unit test unified paper trade links current strategy report/run summary.
-- [x] Unit test real-trade/cancel flows persist audit state with mocked official clients.
-- [x] Unit test reconciliation local snapshot/log placeholder.
+- [ ] Unit test strategy registration (idempotency, mode/platform binding).
+- [ ] Unit test report write/read/list.
+- [ ] Unit test paper trade idempotency.
 - [ ] Integration test Polymarket paper flow.
 - [ ] Integration test Kalshi paper flow.
 - [ ] Integration test Polymarket US paper flow.
-- [x] Mock official real trade clients for route-level real trade and cancel tests.
-- [ ] Test reconciliation thresholds.
+- [ ] Mock official real trade clients for Kalshi and Polymarket US.
+- [ ] Test reconciliation thresholds and log creation.
 - [ ] MCP smoke test listing and calling new tools.
+

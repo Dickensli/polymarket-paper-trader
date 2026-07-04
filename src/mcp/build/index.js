@@ -6,19 +6,24 @@ import fetch from "node-fetch";
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
 const GAMMA_API_URL = "https://gamma-api.polymarket.com";
 const CLOB_API_URL = "https://clob.polymarket.com";
-// A unique user ID and secret for agent session authentication bypass
-const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
+// AGENT_USER_ID MUST be set via environment variable — no fallback to prevent
+// accidentally operating on a real human account.
+if (!process.env.AGENT_USER_ID) {
+    console.error("[MCP] FATAL: AGENT_USER_ID environment variable is not set. Exiting.");
+    process.exit(1);
+}
+const AGENT_USER_ID = process.env.AGENT_USER_ID;
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 function getAgentHeaders(args) {
     const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id :
         (typeof args?.account === "string" ? args.account : "default");
-    const accountId = typeof args?.account_id === "string" ? args.account_id :
-        (typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID);
+    // account_id is ALWAYS from env var — agents cannot override it.
+    // This ensures (AGENT_USER_ID, strategy_id) is the only valid identifier pair.
     return {
         "Content-Type": "application/json",
         "x-agent-secret": AGENT_SECRET,
-        "x-agent-account-id": accountId,
-        "x-agent-strategy-id": strategyId
+        "x-agent-account-id": AGENT_USER_ID,
+        "x-agent-strategy-id": strategyId,
     };
 }
 function generateIdempotencyKey() {
@@ -196,7 +201,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         balance: { type: "number", description: "Starting USD balance (default: 10,000)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["account"]
                 }
@@ -208,7 +212,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["account"]
                 }
@@ -220,7 +223,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["account"]
                 }
@@ -324,7 +326,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         amount_usd: { type: "number", description: "USD cash amount to spend" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
                         override_price: { type: "number", description: "Optional exact execution price per share to enforce" },
                         override_shares: { type: "number", description: "Optional exact share quantity to purchase" }
                     },
@@ -342,7 +343,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         shares: { type: "number", description: "Number of shares to sell" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
                         override_price: { type: "number", description: "Optional exact execution price per share to enforce" }
                     },
                     required: ["slug_or_id", "outcome", "shares", "account"]
@@ -356,7 +356,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["account"]
                 }
@@ -369,7 +368,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         limit: { type: "number", description: "Max history rows (default: 50)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["account"]
                 }
@@ -389,7 +387,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         order_type: { type: "string", enum: ["gtc", "gtd"], description: "GTC or GTD (default: gtc)" },
                         expires_at: { type: "string", description: "ISO 8601 expiry datetime (required for GTD orders)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["slug_or_id", "outcome", "side", "amount", "limit_price"]
                 }
@@ -401,7 +398,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
             },
@@ -413,7 +409,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         order_id: { type: "string", description: "The UUID of the order" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["order_id", "account"]
                 }
@@ -425,7 +420,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
             },
@@ -436,7 +430,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
             },
@@ -449,7 +442,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         slug_or_id: { type: "string", description: "Market slug, ID or condition ID" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["slug_or_id"]
                 }
@@ -461,7 +453,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
             },
@@ -472,7 +463,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     },
                     required: ["account"]
                 }
@@ -484,7 +474,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" },
                         format: { type: "string", description: "Output format: 'markdown' or 'plain' (default: 'markdown')" }
                     }
                 }
@@ -496,7 +485,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
                     }
                 }
             },
@@ -506,8 +494,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
-                        account_id: { type: "string", description: "Optional override for the agent user ID (UUID)" }
+                        account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." }
                     }
                 }
             },
@@ -567,7 +554,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         },
                         balance: { type: "number", description: "Starting balance (default 10000)" },
                         account: { type: "string", description: "The trading strategy or profile name" },
-                        account_id: { type: "string", description: "Optional override for the agent user ID" },
                     },
                     required: ["trades"]
                 }
@@ -622,7 +608,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
                         balance: { type: "number", description: "Starting paper balance in USD" },
                         account: { type: "string", description: "Strategy account name" },
-                        account_id: { type: "string", description: "Optional agent user ID override" }
                     },
                     required: ["strategy_id"]
                 }
@@ -635,7 +620,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         strategy_id: { type: "string", description: "Strategy name to get context for" },
                         account: { type: "string", description: "Strategy account name" },
-                        account_id: { type: "string", description: "Optional agent user ID override" }
                     },
                     required: ["strategy_id"]
                 }
@@ -656,7 +640,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         client_order_id: { type: "string", description: "Optional venue client order id" },
                         time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
                         account: { type: "string", description: "Strategy account name" },
-                        account_id: { type: "string", description: "Optional agent user ID override" }
                     },
                     required: ["strategy_id", "slug", "outcome", "side", "price"]
                 }
@@ -669,7 +652,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         order_id: { type: "string", description: "Local real_trade_orders UUID" },
                         account: { type: "string", description: "Strategy account name" },
-                        account_id: { type: "string", description: "Optional agent user ID override" }
                     },
                     required: ["order_id"]
                 }
@@ -1542,9 +1524,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const strategy_id = (args?.strategy_id || args?.strategy_name);
                 if (!strategy_id)
                     throw new Error("Missing required field: strategy_id or strategy_name");
-                const account_id = (args?.account_id || args?.agent_user_id || args?.account);
-                if (!account_id)
-                    throw new Error("Missing required field: account_id or agent_user_id");
+                const account_id = AGENT_USER_ID;
                 const is_paper_trading = args?.is_paper_trading !== false;
                 const platform = args?.platform || "polymarket";
                 const balance = args?.balance || 10000;

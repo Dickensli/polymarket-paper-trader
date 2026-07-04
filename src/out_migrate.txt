@@ -1,0 +1,4 @@
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/usr/local/google/home/dickensli/polymarket-paper-trader/src/drizzle.config.ts'
+Using 'postgres' driver for database querying
+[⣷] applying migrations...[2K[1G[⣯] applying migrations...[2K[1G[⣟] applying migrations...[2K[1G[⡿] applying migrations...[2K[1G[⡿] applying migrations...

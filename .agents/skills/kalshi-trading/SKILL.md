@@ -13,13 +13,16 @@ Your goal is to **maximise risk-adjusted returns** while preserving capital thro
 
 ## MCP Server
 
-All trading tools come from the ****`kalshi-mcp`**** MCP server.
+All tools below are exposed through the **kalshi-mcp** server (registered as `kalshi-paper-trader` in the MCP configuration).
+Every tool that touches trading state requires both the strategy's portfolio identifier (`account`) and the agent's master identity/account name (`agent_user_id`).
+- **`agent_user_id`** represents the human or AI agent's master name (e.g. 'dickens_codex_poly_usa', 'lily_claude_kalshi').
+- **`strategy_name`** represents the specific trading logic (e.g. 'conservative_arb').
+- **`account`** isolates the specific portfolio instance (typically matching `strategy_name`).
+Both `strategy_name` and `agent_user_id` (along with `account`) must be explicitly specified when calling `register_strategy` and passed consistently on every subsequent call.
 
-To route trades to the correct isolated portfolio, you must identify your session:
-- **`strategy_id`** represents the specific trading strategy name (e.g. `conservative`). Pass this to the `strategy_id` parameter of all tools.
-- **`account_id`** (optional) represents the stable account name / identity representing the human or AI agent.
+---
 
-Both `strategy_id` and `account_id` must be specified when calling `register_strategy` to initialize the portfolio.## Tools
+## Tools
 
 ### Account & Lifecycle
 
@@ -46,8 +49,8 @@ Both `strategy_id` and `account_id` must be specified when calling `register_str
 
 | Tool | Purpose |
 | --- | --- |
-| `buy` | Buy contracts. Requires `ticker`, `outcome`, `amount_usd`, `strategy_id`. |
-| `sell` | Sell contracts. Requires `ticker`, `outcome`, `shares`, `strategy_id`. |
+| `buy` | Buy contracts. Requires `ticker`, `outcome`, `amount_usd`, `account`. |
+| `sell` | Sell contracts. Requires `ticker`, `outcome`, `shares`, `account`. |
 
 ### Portfolio & History
 
@@ -79,7 +82,6 @@ Both `strategy_id` and `account_id` must be specified when calling `register_str
 | MCP `get_candlesticks` / `get_public_trades` | **Authoritative** | Historical price and volume data. |
 | Web Search (if available, e.g. `search_web`) | **Informational** | News, analysis, event research. Use this to search the public web. |
 | Your own memory / prior context | **Stale** | Cross-session state may be outdated. Always verify against MCP before acting. |
-| Proprietary/Internal Codebase Search | **⛔ Forbidden** | **NEVER** use internal workspace code search, internal documentation wikis, or internal QA tools for trading research. They do not contain public market data. |
 
 **Key rule**: After every trade, re-read `portfolio` or `get_balance` to confirm actual state. Never rely on your own running tallies — the server is the source of truth.
 
@@ -128,7 +130,7 @@ Both `strategy_id` and `account_id` must be specified when calling `register_str
 
 ### Phase 1 — Bootstrap
 
-1. **Read strategy context**: Call `get_strategy_context(strategy_id)`.
+1. **Read strategy context**: Call `get_strategy_context(strategy_name)`.
    - If `is_setup` is `true` → proceed to Phase 2.
    - If `is_setup` is `false` → call `register_strategy` first, then proceed.
    - If `warnings` contains `"Strategy is paused"` or `"Strategy is disabled"` → stop immediately and report.
@@ -144,7 +146,7 @@ Both `strategy_id` and `account_id` must be specified when calling `register_str
 
 ### Phase 3 — Execute
 
-1. **Place trades**: Use `buy` / `sell` with your `strategy_id` parameter.
+1. **Place trades**: Use `buy` / `sell` with your `account` parameter.
 2. **Verify**: After each trade, call `portfolio` or `get_balance` to confirm the server-side state matches expectations.
 
 ### Phase 4 — Report & Persist
@@ -166,5 +168,5 @@ Both `strategy_id` and `account_id` must be specified when calling `register_str
 - ⛔ **NEVER** specify `agent_mode` or `platform` on trading tools — the server resolves these from your strategy registration.
 - ⛔ **NEVER** trade without first reading `get_strategy_context`.
 - ⛔ **NEVER** trust your own arithmetic over the server's `portfolio` / `get_balance` response.
-- ✅ **ALWAYS** pass the correct `strategy_id` and `account_id` parameters matching what was registered on every state-touching tool call.
+- ✅ **ALWAYS** pass the correct `account` and `agent_user_id` parameters matching what was registered on every state-touching tool call.
 - ✅ **ALWAYS** write a `save_report` at the end of every session.
