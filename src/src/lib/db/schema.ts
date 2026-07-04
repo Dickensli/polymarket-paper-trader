@@ -252,6 +252,8 @@ export const paperTrades = pgTable(
       .references(() => strategies.id, { onDelete: 'set null' }),
     runId: uuid('run_id')
       .references(() => strategyRuns.id, { onDelete: 'set null' }),
+    reportId: uuid('report_id')
+      .references(() => agentReports.id, { onDelete: 'set null' }),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -277,6 +279,7 @@ export const paperTrades = pgTable(
   (table) => [
     index('paper_trades_strategy_idx').on(table.strategyId),
     index('paper_trades_run_idx').on(table.runId),
+    index('paper_trades_report_idx').on(table.reportId),
     index('paper_trades_user_idx').on(table.userId),
     index('paper_trades_portfolio_idx').on(table.portfolioId),
     index('paper_trades_market_idx').on(table.marketId),
@@ -300,6 +303,8 @@ export const paperTradeOrders = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     runId: uuid('run_id')
       .references(() => strategyRuns.id, { onDelete: 'set null' }),
+    reportId: uuid('report_id')
+      .references(() => agentReports.id, { onDelete: 'set null' }),
     paperTradeId: uuid('paper_trade_id')
       .references(() => paperTrades.id, { onDelete: 'set null' }),
     platform: platformEnum('platform').notNull(),
@@ -321,6 +326,7 @@ export const paperTradeOrders = pgTable(
     index('paper_trade_orders_strategy_idx').on(table.strategyId),
     index('paper_trade_orders_user_idx').on(table.userId),
     index('paper_trade_orders_run_idx').on(table.runId),
+    index('paper_trade_orders_report_idx').on(table.reportId),
     index('paper_trade_orders_market_idx').on(table.marketId),
     uniqueIndex('paper_trade_orders_idempotency_idx').on(table.strategyId, table.idempotencyKey),
   ],

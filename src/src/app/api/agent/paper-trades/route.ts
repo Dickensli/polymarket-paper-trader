@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import {
   strategies,
+  agentReports,
   paperTrades,
   paperTradeOrders,
   portfolioSnapshots,
@@ -120,6 +121,7 @@ export async function POST(request: NextRequest) {
     const platform = strategy.platform;
 
     let runId = order.run_id ?? null;
+    let currentRun: typeof strategyRuns.$inferSelect | null = null;
     if (runId) {
       const run = await db.query.strategyRuns.findFirst({
         where: and(
@@ -133,6 +135,7 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+      currentRun = run;
     } else {
       const latestRun = await db.query.strategyRuns.findFirst({
         where: and(
@@ -142,7 +145,16 @@ export async function POST(request: NextRequest) {
         orderBy: [desc(strategyRuns.startedAt)],
       });
       runId = latestRun?.id ?? null;
+      currentRun = latestRun ?? null;
     }
+
+    const currentReport = await db.query.agentReports.findFirst({
+      where: and(
+        eq(agentReports.strategyId, strategy.id),
+        eq(agentReports.userId, session.user.id),
+      ),
+      orderBy: [desc(agentReports.createdAt)],
+    });
 
     // ── Resolve market data & price per platform ──────────────
     let marketId: string;
@@ -253,10 +265,13 @@ export async function POST(request: NextRequest) {
       .set({
         strategyId: strategy.id,
         runId,
+        reportId: currentReport?.id ?? null,
         platform,
         metadata: {
           strategy_name: order.strategy_name,
           source: 'agent_paper_trades',
+          report_id: currentReport?.id ?? null,
+          run_id: runId,
         },
       })
       .where(eq(paperTrades.id, trade.id));
@@ -267,6 +282,7 @@ export async function POST(request: NextRequest) {
         strategyId: strategy.id,
         userId: session.user.id,
         runId,
+        reportId: currentReport?.id ?? null,
         paperTradeId: trade.id,
         platform,
         marketId,
@@ -300,9 +316,26 @@ export async function POST(request: NextRequest) {
       orders: [paperOrder],
     });
 
+    if (currentRun) {
+      const previousCount = Number(currentRun.tradesExecuted ?? 0);
+      await db
+        .update(strategyRuns)
+        .set({
+          tradesExecuted: previousCount + 1,
+          summary: `Latest paper trade: ${order.side} ${shares.toFixed(6)} ${order.outcome} @ ${price.toFixed(4)} on ${platform}:${order.slug}`,
+        })
+        .where(eq(strategyRuns.id, currentRun.id));
+    }
+
     return NextResponse.json({
       data: trade,
       paper_order: paperOrder,
+      report: currentReport
+        ? {
+            id: currentReport.id,
+            filename: currentReport.filename,
+          }
+        : null,
       portfolio: {
         cash: portfolio.balance,
         total_value: portfolio.totalValue,

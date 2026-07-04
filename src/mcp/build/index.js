@@ -650,6 +650,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ["strategy_name"]
                 }
+            },
+            {
+                name: "submit_real_trade",
+                description: "Submit a real trade for a registered real strategy. Server-side binding resolves the platform and trading mode from strategy_name.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        strategy_name: { type: "string", description: "Registered real strategy name" },
+                        slug: { type: "string", description: "Kalshi ticker or Polymarket US market slug" },
+                        outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
+                        side: { type: "string", enum: ["BUY", "SELL"], description: "Trade side" },
+                        amount: { type: "number", description: "USD notional. Requires price if shares is omitted." },
+                        shares: { type: "number", description: "Number of contracts/shares" },
+                        price: { type: "number", description: "Explicit limit price from 0 to 1" },
+                        client_order_id: { type: "string", description: "Optional venue client order id" },
+                        time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
+                        account: { type: "string", description: "Strategy account name" },
+                        agent_user_id: { type: "string", description: "Optional agent user ID override" }
+                    },
+                    required: ["strategy_name", "slug", "outcome", "side", "price"]
+                }
+            },
+            {
+                name: "cancel_real_order",
+                description: "Cancel a previously submitted real order audit by local real_trade_orders UUID. The server routes to the bound official platform.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        order_id: { type: "string", description: "Local real_trade_orders UUID" },
+                        account: { type: "string", description: "Strategy account name" },
+                        agent_user_id: { type: "string", description: "Optional agent user ID override" }
+                    },
+                    required: ["order_id"]
+                }
             }
         ]
     };
@@ -1548,6 +1582,58 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     throw new Error(`API returned ${res.status}: ${errBody}`);
                 }
                 const data = await res.json();
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
+                        }]
+                };
+            }
+            case "submit_real_trade": {
+                const strategy_name = args?.strategy_name;
+                const slug = args?.slug;
+                const outcome = args?.outcome;
+                const side = args?.side;
+                const price = args?.price;
+                if (!strategy_name || !slug || !outcome || !side || price === undefined) {
+                    throw new Error("Missing required fields: strategy_name, slug, outcome, side, price");
+                }
+                const res = await fetch(`${POLYTRADER_API_URL}/agent/real-trades`, {
+                    method: "POST",
+                    headers: getAgentHeaders(args),
+                    body: JSON.stringify({
+                        strategy_name,
+                        slug,
+                        outcome,
+                        side,
+                        amount: args?.amount,
+                        shares: args?.shares,
+                        price,
+                        client_order_id: args?.client_order_id,
+                        time_in_force: args?.time_in_force,
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok)
+                    throw new Error(`API returned ${res.status}: ${JSON.stringify(data)}`);
+                return {
+                    content: [{
+                            type: "text",
+                            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
+                        }]
+                };
+            }
+            case "cancel_real_order": {
+                const orderId = args?.order_id;
+                if (!orderId)
+                    throw new Error("Missing required field: order_id");
+                const res = await fetch(`${POLYTRADER_API_URL}/agent/real-orders/${encodeURIComponent(orderId)}/cancel`, {
+                    method: "POST",
+                    headers: getAgentHeaders(args),
+                });
+                const data = await res.json();
+                if (!res.ok)
+                    throw new Error(`API returned ${res.status}: ${JSON.stringify(data)}`);
                 return {
                     content: [{
                             type: "text",

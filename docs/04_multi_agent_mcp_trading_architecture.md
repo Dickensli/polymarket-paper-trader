@@ -453,8 +453,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `GET/POST /api/agent/reports`.
 - [x] Add `GET /api/agent/reports/[id]`.
 - [x] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
-- [x] Add `POST /api/agent/real-trades` (safe audit-first placeholder; official client pending).
-- [x] Add `POST /api/agent/real-orders/[id]/cancel` (safe audit-first placeholder; official client pending).
+- [x] Add `POST /api/agent/real-trades` (audit-first official real trade endpoint).
+- [x] Add `POST /api/agent/real-orders/[id]/cancel` (audit-first official cancel endpoint).
 - [x] Add `POST /api/agent/reconcile` (local snapshot/log placeholder; official snapshot fetch pending).
 - [x] Keep compatibility wrappers for old `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell`.
 
@@ -466,19 +466,19 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Polymarket US paper fill simulator (via `/api/polymarket-us/trade/buy`, `/api/polymarket-us/trade/sell`).
 - [x] Normalize all three into unified `/api/agent/paper-trades`.
 - [x] Ensure unified agent paper trades write portfolio snapshot.
-- [ ] Link paper trades to the current strategy report/run summary.
+- [x] Link paper trades to the current strategy report/run summary.
 - [x] Idempotency enforcement per strategy/platform.
 
 ### Phase 4 - Real Trading
 
-- [ ] Move or reuse Kalshi official trading client server-side.
-- [ ] Move or reuse Polymarket US official trading client server-side.
+- [x] Move or reuse Kalshi official trading client server-side.
+- [x] Move or reuse Polymarket US official trading client server-side.
 - [x] Add real-trading enable flag per strategy (`metadata.real_trading_enabled`).
-- [ ] Add `submit_real_trade` MCP flow for Kalshi.
-- [ ] Add `submit_real_trade` MCP flow for Polymarket US.
-- [ ] Add cancel-order flow for both real platforms.
+- [x] Add `submit_real_trade` MCP flow for Kalshi.
+- [x] Add `submit_real_trade` MCP flow for Polymarket US.
+- [x] Add cancel-order flow for both real platforms.
 - [x] Persist every attempted official request/response/error in `real_trade_orders`.
-- [ ] Add official portfolio snapshot after each real write.
+- [x] Add official portfolio snapshot after each real write.
 
 ### Phase 5 - Reconciliation
 
@@ -527,11 +527,12 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Unit test report write/read/list.
 - [x] Unit test paper trade idempotency.
 - [x] Unit test unified paper trade writes normalized order and portfolio snapshot.
-- [x] Unit test real-trade/cancel safety placeholders persist audit state.
+- [x] Unit test unified paper trade links current strategy report/run summary.
+- [x] Unit test real-trade/cancel flows persist audit state with mocked official clients.
 - [x] Unit test reconciliation local snapshot/log placeholder.
 - [ ] Integration test Polymarket paper flow.
 - [ ] Integration test Kalshi paper flow.
 - [ ] Integration test Polymarket US paper flow.
-- [ ] Mock official real trade clients for Kalshi and Polymarket US.
+- [x] Mock official real trade clients for route-level real trade and cancel tests.
 - [ ] Test reconciliation thresholds.
 - [ ] MCP smoke test listing and calling new tools.

@@ -272,6 +272,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["strategy_name"],
       },
     },
+    {
+      name: "submit_real_trade",
+      description: "Submit a real Polymarket US trade for a registered real strategy. The server validates real-trading enablement and persists the official audit trail.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          strategy_name: { type: "string", description: "Registered real strategy name" },
+          slug: { type: "string", description: "Polymarket US market slug" },
+          outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
+          side: { type: "string", enum: ["BUY", "SELL"], description: "Trade side" },
+          amount: { type: "number", description: "USD notional. Requires price if shares is omitted." },
+          shares: { type: "number", description: "Number of contracts/shares" },
+          price: { type: "number", description: "Explicit limit price from 0 to 1" },
+          client_order_id: { type: "string", description: "Optional client order id" },
+          time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
+          ...accountProps,
+        },
+        required: ["strategy_name", "slug", "outcome", "side", "price"],
+      },
+    },
+    {
+      name: "cancel_real_order",
+      description: "Cancel a real Polymarket US order by local real_trade_orders UUID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          order_id: { type: "string", description: "Local real_trade_orders UUID" },
+          ...accountProps,
+        },
+        required: ["order_id"],
+      },
+    },
   ],
 }));
 
@@ -471,6 +503,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`,
         { headers: getAgentHeaders(args) },
       );
+      return json({ ok: true, data: data.data ?? data });
+    }
+    case "submit_real_trade": {
+      const strategy_name = String((args as any).strategy_name);
+      const slug = String((args as any).slug);
+      const outcome = String((args as any).outcome);
+      const side = String((args as any).side);
+      const price = Number((args as any).price);
+      if (!strategy_name || !slug || !outcome || !side || !Number.isFinite(price)) {
+        throw new Error("Missing required fields: strategy_name, slug, outcome, side, price");
+      }
+      const data = await callPolyTrader("/agent/real-trades", {
+        method: "POST",
+        headers: getAgentHeaders(args),
+        body: JSON.stringify({
+          strategy_name,
+          slug,
+          outcome,
+          side,
+          amount: (args as any).amount,
+          shares: (args as any).shares,
+          price,
+          client_order_id: (args as any).client_order_id,
+          time_in_force: (args as any).time_in_force,
+        }),
+      });
+      return json({ ok: true, data: data.data ?? data });
+    }
+    case "cancel_real_order": {
+      const orderId = String((args as any).order_id);
+      if (!orderId) throw new Error("Missing required field: order_id");
+      const data = await callPolyTrader(`/agent/real-orders/${encodeURIComponent(orderId)}/cancel`, {
+        method: "POST",
+        headers: getAgentHeaders(args),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     default:

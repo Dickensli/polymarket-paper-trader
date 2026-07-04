@@ -41,6 +41,12 @@ vi.mock('@/lib/polymarket-us', () => ({
   polymarketUsTokenId: vi.fn((slug: string, outcome: string) => `${slug}:${outcome}`),
 }));
 
+vi.mock('@/lib/official-trading', () => ({
+  submitOfficialRealTrade: vi.fn(),
+  cancelOfficialRealOrder: vi.fn(),
+  getOfficialPortfolioSnapshot: vi.fn(),
+}));
+
 type JsonBody = Record<string, unknown>;
 
 function makeRequest({
@@ -269,6 +275,11 @@ describe('agent route handlers', () => {
       id: 'run-1',
       strategyId: 'strategy-1',
       status: 'running',
+      tradesExecuted: 2,
+    });
+    db.query.agentReports.findFirst.mockResolvedValue({
+      id: 'report-1',
+      filename: 'run.md',
     });
     vi.mocked(getKalshiOutcomePrice).mockResolvedValue(0.25);
     vi.mocked(executeTrade).mockResolvedValue({
@@ -296,6 +307,7 @@ describe('agent route handlers', () => {
       strategyId: 'strategy-1',
       paperTradeId: 'trade-1',
       platform: 'kalshi',
+      reportId: 'report-1',
     });
 
     const response = await POST(makeRequest({
@@ -320,7 +332,8 @@ describe('agent route handlers', () => {
     expect(db.insert).toHaveBeenCalledTimes(2);
     await expect(response.json()).resolves.toMatchObject({
       data: { id: 'trade-1' },
-      paper_order: { id: 'paper-order-1' },
+      paper_order: { id: 'paper-order-1', reportId: 'report-1' },
+      report: { id: 'report-1', filename: 'run.md' },
       portfolio: { cash: 9990, total_value: 10000 },
     });
   });
@@ -349,6 +362,7 @@ describe('agent route handlers', () => {
         outcome: 'YES',
         side: 'BUY',
         amount: 10,
+        price: 0.25,
       },
     }) as never);
 
@@ -364,29 +378,116 @@ describe('agent route handlers', () => {
     });
   });
 
-  it('updates real order audit on cancel placeholder', async () => {
+  it('submits enabled real trades through the official client and writes official snapshot', async () => {
+    const {
+      getOfficialPortfolioSnapshot,
+      submitOfficialRealTrade,
+    } = await import('@/lib/official-trading');
+    const { POST } = await import('@/app/api/agent/real-trades/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1',
+      strategyName: 'real-arb',
+      agentMode: 'real',
+      platform: 'kalshi',
+      status: 'active',
+      metadata: { real_trading_enabled: true },
+    });
+    db.insertResults.push(
+      { id: 'audit-1', status: 'SUBMITTING' },
+      { id: 'snapshot-1', source: 'official' },
+    );
+    db.updateResults.push({ id: 'audit-1', status: 'SUBMITTED' });
+    vi.mocked(submitOfficialRealTrade).mockResolvedValue({
+      officialOrderId: 'official-1',
+      clientOrderId: 'client-1',
+      status: 'SUBMITTED',
+      request: { ticker: 'KXTEST' },
+      response: { order_id: 'official-1' },
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1000,
+      positionsValue: 25,
+      totalValue: 1025,
+      pnl: 25,
+      positions: [],
+      orders: [],
+      raw: {},
+    });
+
+    const response = await POST(makeRequest({
+      body: {
+        strategy_name: 'real-arb',
+        slug: 'KXTEST',
+        outcome: 'YES',
+        side: 'BUY',
+        shares: 10,
+        price: 0.25,
+      },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(submitOfficialRealTrade).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'kalshi',
+      slug: 'KXTEST',
+      shares: 10,
+      price: 0.25,
+    }));
+    expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi');
+    await expect(response.json()).resolves.toMatchObject({
+      data: { id: 'audit-1', status: 'SUBMITTED' },
+      official_snapshot: { id: 'snapshot-1' },
+    });
+  });
+
+  it('cancels real orders through the official client and writes official snapshot', async () => {
+    const {
+      cancelOfficialRealOrder,
+      getOfficialPortfolioSnapshot,
+    } = await import('@/lib/official-trading');
     const { POST } = await import('@/app/api/agent/real-orders/[id]/cancel/route');
 
     db.query.realTradeOrders.findFirst.mockResolvedValue({
       id: 'real-order-1',
       userId: 'user-1',
+      strategyId: 'strategy-1',
+      runId: null,
+      platform: 'kalshi',
+      officialOrderId: 'official-1',
+      marketSlugOrTicker: 'KXTEST',
     });
-    db.updateResults.push({
-      id: 'real-order-1',
-      status: 'CANCEL_REJECTED',
+    db.updateResults.push(
+      { id: 'real-order-1', status: 'CANCEL_SUBMITTING' },
+      { id: 'real-order-1', status: 'CANCELLED' },
+    );
+    db.insertResults.push({ id: 'snapshot-1', source: 'official' });
+    vi.mocked(cancelOfficialRealOrder).mockResolvedValue({
+      officialOrderId: 'official-1',
+      status: 'CANCELLED',
+      response: { ok: true },
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1000,
+      positionsValue: 0,
+      totalValue: 1000,
+      pnl: 0,
+      positions: [],
+      orders: [],
+      raw: {},
     });
 
     const response = await POST(makeRequest() as never, {
       params: Promise.resolve({ id: 'real-order-1' }),
     });
 
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(200);
+    expect(cancelOfficialRealOrder).toHaveBeenCalledWith('kalshi', 'official-1', 'KXTEST');
     expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'CANCEL_REJECTED',
+      status: 'CANCEL_SUBMITTING',
     }));
     await expect(response.json()).resolves.toMatchObject({
-      error: 'Official cancel client is not implemented yet.',
-      audit: { id: 'real-order-1', status: 'CANCEL_REJECTED' },
+      data: { id: 'real-order-1', status: 'CANCELLED' },
+      official_snapshot: { id: 'snapshot-1' },
     });
   });
 
