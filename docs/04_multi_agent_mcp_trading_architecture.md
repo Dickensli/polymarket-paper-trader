@@ -555,8 +555,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Create per-platform Jetski skills with verified tool inventories (`polymarket-trading`, `kalshi-trading`, `polymarket-us-trading`).
 - [x] Document per-platform tool comparison matrix in architecture doc.
 - [ ] Add `record_paper_trade` tool (unified).
-- [ ] Add `submit_real_trade` tool.
-- [ ] Add `cancel_real_order` tool.
+- [x] Add `submit_real_trade` tool.
+- [x] Add `cancel_real_order` tool.
 - [ ] Add `reconcile_portfolio` tool.
 - [x] Execution tools (buy/sell) use only `strategy_name` — server resolves platform via server-side binding.
 - [ ] Expose MCP Resource `strategy_state://{strategy_name}` for initialization state sync.
