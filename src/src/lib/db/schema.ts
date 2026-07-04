@@ -42,7 +42,7 @@ export const strategyStatusEnum = pgEnum('strategy_status', ['active', 'paused',
 // ─── Strategies ─────────────────────────────────────────────
 
 /**
- * Strategy registration table — one row per unique (strategy_name, agent_mode, platform).
+ * Strategy registration table — one row per unique user strategy binding.
  *
  * The strategy's mode and platform are server-side-bound here so that
  * execution tools (buy/sell) never need the AI to specify them dynamically,
@@ -76,7 +76,7 @@ export const strategies = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('strategies_unique_idx').on(table.userId),
+    uniqueIndex('strategies_unique_idx').on(table.userId, table.strategyId, table.agentMode, table.platform),
     index('strategies_user_idx').on(table.userId),
     index('strategies_id_idx').on(table.strategyId),
     index('strategies_status_idx').on(table.status),
