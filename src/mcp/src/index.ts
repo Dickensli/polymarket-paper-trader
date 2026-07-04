@@ -16,33 +16,16 @@ const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-2042
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 
 function getAgentHeaders(args?: any) {
-  const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id : "default";
-  const accountId = typeof args?.account_id === "string" ? args.account_id : AGENT_USER_ID;
+  const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id : 
+                     (typeof args?.account === "string" ? args.account : "default");
+  const accountId = typeof args?.account_id === "string" ? args.account_id : 
+                    (typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID);
 
   return {
     "Content-Type": "application/json",
     "x-agent-secret": AGENT_SECRET,
     "x-agent-account-id": accountId,
     "x-agent-strategy-id": strategyId
-  };
-} is not allowed for dickens_smith. You must use the format: dickens_smith("strategy_id")`);
-  }
-
-  if (accountName === "dickens_smith" || accountName.startsWith("dickens_smith")) {
-    if (accountName === "dickens_smith") {
-      throw new Error(`Account name 'dickens_smith' must include a strategy suffix, e.g., dickens_smith("conservative_arb")`);
-    }
-    const pattern = /^dickens_smith\((["'])([a-zA-Z0-9_\u4e00-\u9fa5-]+)\1\)$/;
-    if (!pattern.test(accountName)) {
-      throw new Error(`Account name ${JSON.stringify(accountName)} must match format: dickens_smith("strategy_id")`);
-    }
-  }
-
-  return {
-    "Content-Type": "application/json",
-    "x-agent-secret": AGENT_SECRET,
-    "x-agent-user-id": userId,
-    "x-agent-account": accountName
   };
 }
 

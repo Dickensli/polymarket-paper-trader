@@ -158,6 +158,7 @@ describe('Limit Orders Integration', () => {
       // Buy 50 shares
       await executeTrade(userId, {
         marketId: 'market-1',
+        marketQuestion: 'Will it happen?',
         tokenId: 'token-yes',
         outcome: 'YES',
         side: 'BUY',

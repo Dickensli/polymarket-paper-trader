@@ -32,7 +32,7 @@ export async function GET(
         strategy_id: report.strategyId,
         run_id: report.runId,
         filename: report.filename,
-        account: report.account,
+        account: report.strategyName,
         title: report.title,
         content: report.content,
         lessons_learned: report.lessonsLearned,

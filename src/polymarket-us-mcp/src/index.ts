@@ -19,8 +19,10 @@ function generateIdempotencyKey(): string {
 }
 
 function getAgentHeaders(args?: any, idempotencyKey?: string) {
-  const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id : "default";
-  const accountId = typeof args?.account_id === "string" ? args.account_id : AGENT_USER_ID;
+  const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id : 
+                     (typeof args?.account === "string" ? args.account : "default");
+  const accountId = typeof args?.account_id === "string" ? args.account_id : 
+                    (typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID);
 
   return {
     "Content-Type": "application/json",
@@ -29,8 +31,6 @@ function getAgentHeaders(args?: any, idempotencyKey?: string) {
     "x-agent-strategy-id": strategyId,
     "x-agent-platform": "polymarket_us",
     ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
-  };
-} : {}),
   };
 }
 

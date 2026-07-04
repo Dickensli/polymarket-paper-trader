@@ -861,6 +861,7 @@ describe('Portfolio price refresh database cache fallback', () => {
         tokenIds: [testTokenId, 'other-token'],
         outcomePrices: [0.85, 0.15],
         closed: false,
+        active: true,
         endDate: new Date().toISOString(),
         slug: 'mock-slug',
         outcomes: ['Yes', 'No'],
@@ -941,6 +942,7 @@ describe('On-the-fly position resolution and auto-settlement', () => {
         tokenIds: [testTokenId, 'other-token'],
         outcomePrices: [1.0, 0.0], // YES token won!
         closed: true, // Market is resolved
+        active: false,
         endDate: new Date().toISOString(),
         slug: 'mock-slug',
         outcomes: ['Yes', 'No'],
@@ -1023,6 +1025,7 @@ describe('On-the-fly position resolution and auto-settlement', () => {
         tokenIds: [testTokenId, 'other-token'],
         outcomePrices: [0.0, 1.0], // YES token lost!
         closed: true, // Market is resolved
+        active: false,
         endDate: new Date().toISOString(),
         slug: 'mock-slug',
         outcomes: ['Yes', 'No'],

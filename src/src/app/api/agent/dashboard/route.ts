@@ -31,7 +31,7 @@ function numeric(value: unknown): number {
 function strategyPayload(strategy: typeof strategies.$inferSelect) {
   return {
     id: strategy.id,
-    strategy_name: strategy.strategyName,
+    strategy_name: strategy.strategyId,
     agent_mode: strategy.agentMode,
     platform: strategy.platform,
     status: strategy.status,
@@ -168,8 +168,8 @@ export async function GET(request: NextRequest) {
       reports: filteredReports.map((report) => ({
         id: report.id,
         strategy_id: report.strategyId,
-        strategy_name: report.strategyId ? strategyById.get(report.strategyId)?.strategyName ?? report.account : report.account,
-        account: report.account,
+        strategy_name: report.strategyId ? strategyById.get(report.strategyId)?.strategyId ?? report.strategyName : report.strategyName,
+        account: report.strategyName,
         filename: report.filename,
         title: report.title,
         lessons_learned: report.lessonsLearned,
@@ -179,7 +179,7 @@ export async function GET(request: NextRequest) {
       snapshots: filteredSnapshots.map((snapshot) => ({
         id: snapshot.id,
         strategy_id: snapshot.strategyId,
-        strategy_name: snapshot.strategyId ? strategyById.get(snapshot.strategyId)?.strategyName ?? null : null,
+        strategy_name: snapshot.strategyId ? strategyById.get(snapshot.strategyId)?.strategyId ?? null : null,
         run_id: snapshot.runId,
         platform: snapshot.platform,
         agent_mode: snapshot.agentMode,
@@ -195,7 +195,7 @@ export async function GET(request: NextRequest) {
       real_orders: filteredRealOrders.map((order) => ({
         id: order.id,
         strategy_id: order.strategyId,
-        strategy_name: strategyById.get(order.strategyId)?.strategyName ?? null,
+        strategy_name: strategyById.get(order.strategyId)?.strategyId ?? null,
         run_id: order.runId,
         platform: order.platform,
         official_order_id: order.officialOrderId,
@@ -215,7 +215,7 @@ export async function GET(request: NextRequest) {
       reconciliation_logs: filteredWarnings.map((log) => ({
         id: log.id,
         strategy_id: log.strategyId,
-        strategy_name: strategyById.get(log.strategyId)?.strategyName ?? null,
+        strategy_name: strategyById.get(log.strategyId)?.strategyId ?? null,
         run_id: log.runId,
         platform: log.platform,
         severity: log.severity,

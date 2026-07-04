@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import { getDb } from '@/lib/db';
-import { orders, portfolios } from '@/lib/db/schema';
+import { limitOrders, portfolios } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 
 test('check portfolios and orders for high_freq user', async () => {
@@ -11,7 +11,7 @@ test('check portfolios and orders for high_freq user', async () => {
   console.log("=== PORTFOLIOS ===");
   console.log(ports);
 
-  const ords = await db.select().from(orders).where(eq(orders.userId, userId));
+  const ords = await db.select().from(limitOrders).where(eq(limitOrders.userId, userId));
   console.log("=== ORDERS ===");
   console.log(ords);
 

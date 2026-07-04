@@ -90,12 +90,27 @@ export async function GET(request: NextRequest) {
     }));
 
     // ── 4. Recent trades ───────────────────────────────────────
-    const recentTrades = await db
-      .select()
-      .from(paperTrades)
-      .where(eq(paperTrades.userId, session.user.id))
-      .orderBy(desc(paperTrades.executedAt))
-      .limit(10);
+    let recentTrades: any[] = [];
+    try {
+      recentTrades = await db
+        .select({
+          id: paperTrades.id,
+          marketId: paperTrades.marketId,
+          marketQuestion: paperTrades.marketQuestion,
+          outcome: paperTrades.outcome,
+          action: paperTrades.action,
+          shares: paperTrades.shares,
+          pricePerShare: paperTrades.pricePerShare,
+          totalCost: paperTrades.totalCost,
+          executedAt: paperTrades.executedAt,
+        })
+        .from(paperTrades)
+        .where(eq(paperTrades.userId, session.user.id))
+        .orderBy(desc(paperTrades.executedAt))
+        .limit(10);
+    } catch (err) {
+      console.warn('Failed to fetch recent trades, likely schema mismatch:', err);
+    }
 
     const tradeHistory = recentTrades.map((t) => ({
       id: t.id,
@@ -109,22 +124,24 @@ export async function GET(request: NextRequest) {
       executed_at: t.executedAt,
     }));
 
-    const recentReports = strategy
-      ? await db
+    // ── 5. Recent reports ──────────────────────────────────────
+    let recentReports: any[] = [];
+    try {
+      if (strategy) {
+        recentReports = await db
           .select({
             filename: agentReports.filename,
             createdAt: agentReports.createdAt,
           })
           .from(agentReports)
-          .where(
-            and(
-              eq(agentReports.userId, session.user.id),
-              eq(agentReports.strategyId, strategy.id),
-            ),
-          )
+          .where(eq(agentReports.userId, session.user.id))
           .orderBy(desc(agentReports.createdAt))
-          .limit(5)
-      : [];
+          .limit(5);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch recent reports, likely schema mismatch:', err);
+    }
+
 
     // ── 6. Compute summary values ──────────────────────────────
     const positionsValue = positionsSummary.reduce(
