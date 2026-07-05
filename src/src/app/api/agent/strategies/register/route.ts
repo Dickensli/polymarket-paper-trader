@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { auth, resolveTargetUserId } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { strategies } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { strategies, users } from '@/lib/db/schema';
+import { eq, isNotNull } from 'drizzle-orm';
 import crypto from 'crypto';
 
 // ---------------------------------------------------------------------------
@@ -20,6 +20,41 @@ const registerSchema = z.object({
   schedule: z.string().max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Color palette for leaderboard chart lines
+// ---------------------------------------------------------------------------
+
+const STRATEGY_COLOR_PALETTE = [
+  '#5AC8FA', '#30D158', '#BF5AF2', '#FF9F0A',
+  '#FF453A', '#64D2FF', '#FF6482', '#FFD60A',
+  '#AC8E68', '#00C7BE', '#5E5CE6', '#FF2D55',
+  '#34C759', '#AF52DE', '#FF6B35', '#32ADE6',
+];
+
+/** Assign a persistent leaderboard color if the user doesn't have one yet. */
+async function ensureUserColor(db: ReturnType<typeof getDb>, userId: string) {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { color: true },
+  });
+  if (user?.color) return;
+
+  const usedRows = await db
+    .select({ color: users.color })
+    .from(users)
+    .where(isNotNull(users.color));
+  const usedColors = new Set(usedRows.map((r) => r.color));
+
+  let color = STRATEGY_COLOR_PALETTE.find((c) => !usedColors.has(c));
+  if (!color) {
+    // Deterministic fallback from userId hash
+    const hash = crypto.createHash('md5').update(userId).digest('hex');
+    color = `#${hash.slice(0, 6)}`;
+  }
+
+  await db.update(users).set({ color }).where(eq(users.id, userId));
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/agent/strategies/register
@@ -60,6 +95,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (existing) {
+        try { await ensureUserColor(db, session.user.id); } catch { /* non-fatal */ }
         return NextResponse.json({
           registered: true,
           is_new: false,
@@ -79,6 +115,8 @@ export async function POST(request: NextRequest) {
         schedule: schedule ?? null,
         metadata: metadata ?? { registeredAt: new Date().toISOString() },
       }).returning();
+
+      try { await ensureUserColor(db, session.user.id); } catch { /* non-fatal */ }
 
       return NextResponse.json({
         registered: true,

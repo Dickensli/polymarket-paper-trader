@@ -4,7 +4,12 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import fetch from "node-fetch";
+
+
+function log(msg: string) {
+  const timestamp = new Date().toISOString();
+  console.error(`[${timestamp}] ${msg}`);
+}
 
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
 const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || "https://external-api.kalshi.com/trade-api/v2";
@@ -597,11 +602,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main() {
+  log("Starting Kalshi MCP server...");
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  log("Server connected and running.");
+  // Keep alive
+  await new Promise(() => {});
 }
 
 main().catch((err) => {
-  console.error(err);
+  log(`Server Fatal Error: ${err.message}`);
   process.exit(1);
 });

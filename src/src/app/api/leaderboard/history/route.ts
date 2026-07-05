@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { leaderboardSnapshots, users, portfolios, paperTrades, positions } from '@/lib/db/schema';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, inArray } from 'drizzle-orm';
 
 import { auth } from '@/lib/auth';
 import { getUserPlatform, normalizePlatform, type TradingPlatform } from '@/lib/platform';
@@ -283,9 +283,20 @@ export async function GET(request: NextRequest) {
       const activeStrategies = Array.from(new Set(snaps.map(s => s.userName || 'unknown')));
       const paged = pageHistoryStrategies(activeStrategies, historyData, page, pageSize);
 
+      // Fetch user colors for stable chart coloring
+      const userRows = await db
+        .select({ name: users.name, color: users.color })
+        .from(users)
+        .where(inArray(users.name, activeStrategies));
+      const strategyColors: Record<string, string> = {};
+      for (const row of userRows) {
+        if (row.name && row.color) strategyColors[row.name] = row.color;
+      }
+
       return NextResponse.json({
         success: true,
         strategies: paged.strategies,
+        strategyColors,
         history: paged.history,
         granularity,
         meta: {
@@ -304,9 +315,22 @@ export async function GET(request: NextRequest) {
     const { strategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds);
     const paged = pageHistoryStrategies(strategies, history, page, pageSize);
 
+    // Fetch user colors for stable chart coloring
+    const fallbackUserRows = strategies.length > 0
+      ? await db
+          .select({ name: users.name, color: users.color })
+          .from(users)
+          .where(inArray(users.name, strategies))
+      : [];
+    const strategyColors: Record<string, string> = {};
+    for (const row of fallbackUserRows) {
+      if (row.name && row.color) strategyColors[row.name] = row.color;
+    }
+
     return NextResponse.json({
       success: true,
       strategies: paged.strategies,
+      strategyColors,
       history: paged.history,
       granularity,
       meta: {

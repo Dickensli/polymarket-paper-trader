@@ -171,6 +171,8 @@ export const users = pgTable('users', {
     theme: "system",
     notifications: true,
   }),
+  /** Persistent chart color for leaderboard (hex, e.g. '#5AC8FA') */
+  color: varchar('color', { length: 7 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

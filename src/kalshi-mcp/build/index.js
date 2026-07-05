@@ -1,7 +1,10 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
-import fetch from "node-fetch";
+function log(msg) {
+    const timestamp = new Date().toISOString();
+    console.error(`[${timestamp}] ${msg}`);
+}
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
 const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || "https://external-api.kalshi.com/trade-api/v2";
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
@@ -14,15 +17,15 @@ function generateIdempotencyKey() {
     });
 }
 function getAgentHeaders(args, idempotencyKey) {
-    const account = typeof args?.strategy_name === "string"
-        ? args.strategy_name
-        : (typeof args?.account === "string" ? args.account : "default");
-    const userId = typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID;
+    const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id :
+        (typeof args?.account === "string" ? args.account : "default");
+    const accountId = typeof args?.account_id === "string" ? args.account_id :
+        (typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID);
     return {
         "Content-Type": "application/json",
         "x-agent-secret": AGENT_SECRET,
-        "x-agent-user-id": userId,
-        "x-agent-account": account,
+        "x-agent-account-id": accountId,
+        "x-agent-strategy-id": strategyId,
         "x-agent-platform": "kalshi",
         ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
     };
@@ -46,8 +49,8 @@ function json(data) {
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 const accountProps = {
-    strategy_name: { type: "string", description: "The trading strategy name (e.g. 'conservative') to isolate portfolios." },
-    agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent (e.g. 'dickens_codex_poly_usa')." },
+    account: { type: "string", description: "Strategy/profile name to isolate Kalshi paper portfolios." },
+    account_id: { type: "string", description: "Optional agent user ID override." },
 };
 const server = new Server({ name: "kalshi-paper-trader-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -58,13 +61,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: { balance: { type: "number", description: "Starting USD balance, default 10000." }, ...accountProps },
-                required: ["strategy_name"],
+                required: ["account"],
             },
         },
         {
             name: "get_balance",
             description: "Get Kalshi paper cash, positions value, total value, and P&L.",
-            inputSchema: { type: "object", properties: accountProps, required: ["strategy_name"] },
+            inputSchema: { type: "object", properties: accountProps, required: ["account"] },
         },
         {
             name: "search_markets",
@@ -97,7 +100,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     price: { type: "number", description: "Optional override execution price, 0-1." },
                     ...accountProps,
                 },
-                required: ["ticker", "strategy_name"],
+                required: ["ticker", "account"],
             },
         },
         {
@@ -113,23 +116,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     price: { type: "number", description: "Optional override execution price, 0-1." },
                     ...accountProps,
                 },
-                required: ["strategy_name"],
+                required: ["account"],
             },
         },
         {
             name: "portfolio",
             description: "Get the complete Kalshi paper portfolio including positions and trade history.",
-            inputSchema: { type: "object", properties: accountProps, required: ["strategy_name"] },
+            inputSchema: { type: "object", properties: accountProps, required: ["account"] },
         },
         {
             name: "history",
             description: "Get recent Kalshi paper trade history.",
-            inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["strategy_name"] },
+            inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["account"] },
         },
         {
             name: "stats",
             description: "Summarize Kalshi paper trading performance.",
-            inputSchema: { type: "object", properties: accountProps, required: ["strategy_name"] },
+            inputSchema: { type: "object", properties: accountProps, required: ["account"] },
         },
         {
             name: "get_candlesticks",
@@ -204,7 +207,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" },
                     ...accountProps,
                 },
-                required: ["strategy_name", "content", "filename"],
+                required: ["account", "content", "filename"],
             },
         },
         {
@@ -216,7 +219,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     limit: { type: "number", description: "Max reports to return (default 3)" },
                     ...accountProps,
                 },
-                required: ["strategy_name"],
+                required: ["account"],
             },
         },
         {
@@ -228,7 +231,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     filename: { type: "string", description: "Report filename to read" },
                     ...accountProps,
                 },
-                required: ["strategy_name", "filename"],
+                required: ["account", "filename"],
             },
         },
         // ── Backtesting ────────────────────────────────────────────────
@@ -254,7 +257,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                             required: ["market", "outcome", "amount", "entry_price", "exit_price"],
                         },
                     },
-                    starting_balance: { type: "number", description: "Starting balance (default 10000)" },
+                    balance: { type: "number", description: "Starting balance (default 10000)" },
                     ...accountProps,
                 },
                 required: ["trades"],
@@ -267,13 +270,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: {
-                    strategy_name: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
-                    agent_mode: { type: "string", description: "Trading mode: 'paper' or 'real'", default: "paper" },
+                    strategy_id: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+                    is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode (default true)", default: true },
                     platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'", default: "kalshi" },
-                    starting_balance: { type: "number", description: "Starting paper balance in USD", default: 10000 },
-                    agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent (e.g. 'dickens_codex_poly_usa')." },
+                    balance: { type: "number", description: "Starting paper balance in USD", default: 10000 },
+                    ...accountProps,
                 },
-                required: ["strategy_name", "agent_user_id"],
+                required: ["strategy_id"],
             },
         },
         {
@@ -282,10 +285,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: {
-                    strategy_name: { type: "string", description: "Strategy name to get context for" },
-                    agent_user_id: { type: "string", description: "Stable account name / identity representing the human or AI agent (e.g. 'dickens_codex_poly_usa')." },
+                    strategy_id: { type: "string", description: "Strategy name to get context for" },
+                    ...accountProps,
                 },
-                required: ["strategy_name", "agent_user_id"],
+                required: ["strategy_id"],
             },
         },
         {
@@ -294,7 +297,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: {
-                    strategy_name: { type: "string", description: "Registered real strategy name" },
+                    strategy_id: { type: "string", description: "Registered real strategy name" },
                     slug: { type: "string", description: "Kalshi ticker" },
                     outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
                     side: { type: "string", enum: ["BUY", "SELL"], description: "Trade side" },
@@ -305,7 +308,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
                     ...accountProps,
                 },
-                required: ["strategy_name", "slug", "outcome", "side", "price"],
+                required: ["strategy_id", "slug", "outcome", "side", "price"],
             },
         },
         {
@@ -472,89 +475,91 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // ── Agent Reports (Retro) ──────────────────────────────────────
         case "save_report": {
-            const account = String(args.strategy_name || args.account);
+            const strategy_id = String(args.strategy_id);
             const content = String(args.content);
             const filename = String(args.filename);
-            if (!account || !content || !filename) {
-                throw new Error("Missing required fields: strategy_name, content, filename");
+            if (!strategy_id || !content || !filename) {
+                throw new Error("Missing required fields: strategy_id, content, filename");
             }
             const data = await callPolyTrader("/reports", {
                 method: "POST",
                 headers: getAgentHeaders(args),
-                body: JSON.stringify({ account, content, filename }),
+                body: JSON.stringify({ strategy_id, content, filename }),
             });
             return json({ ok: true, data: data.data ?? data });
         }
         case "list_reports": {
-            const account = String(args.strategy_name || args.account);
-            if (!account)
-                throw new Error("Missing required field: strategy_name");
+            const strategy_id = String(args.strategy_id);
+            if (!strategy_id)
+                throw new Error("Missing required field: account");
             const limit = Number(args.limit || 3);
-            const data = await callPolyTrader(`/reports?account=${encodeURIComponent(account)}&limit=${limit}`, { headers: getAgentHeaders(args) });
+            const data = await callPolyTrader(`/reports?strategy_id=${encodeURIComponent(strategy_id)}&limit=${limit}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         case "read_report": {
-            const account = String(args.strategy_name || args.account);
+            const strategy_id = String(args.strategy_id);
             const filename = String(args.filename);
-            if (!account || !filename)
-                throw new Error("Missing required fields: strategy_name, filename");
-            const data = await callPolyTrader(`/reports/${encodeURIComponent(filename)}?account=${encodeURIComponent(account)}`, { headers: getAgentHeaders(args) });
+            if (!strategy_id || !filename)
+                throw new Error("Missing required fields: account, filename");
+            const data = await callPolyTrader(`/reports/${encodeURIComponent(filename)}?strategy_id=${encodeURIComponent(strategy_id)}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         // ── Backtesting ────────────────────────────────────────────────
         case "backtest": {
             const trades = args.trades;
-            const startingBalance = Number(args.starting_balance || 10000);
+            const startingBalance = Number(args.balance || 10000);
             if (!Array.isArray(trades) || trades.length === 0) {
                 throw new Error("trades must be a non-empty array");
             }
             const data = await callPolyTrader("/backtest", {
                 method: "POST",
                 headers: getAgentHeaders(args),
-                body: JSON.stringify({ platform: "kalshi", trades, starting_balance: startingBalance }),
+                body: JSON.stringify({ platform: "kalshi", trades, balance: startingBalance }),
             });
             return json({ ok: true, data: data.data ?? data });
         }
         // ── Agent Strategy ─────────────────────────────────────────────
         case "register_strategy": {
-            const strategy_name = String(args.strategy_name);
-            if (!strategy_name)
-                throw new Error("Missing required field: strategy_name");
-            const instance_name = args.instance_name ? String(args.instance_name) : undefined;
+            const strategy_id = String(args.strategy_id);
+            if (!strategy_id)
+                throw new Error("Missing required field: strategy_id");
+            const account_id = String(args.account_id);
+            if (!account_id)
+                throw new Error("Missing required field: account_id");
             const data = await callPolyTrader("/agent/strategies/register", {
                 method: "POST",
                 headers: getAgentHeaders(args),
                 body: JSON.stringify({
-                    strategy_name,
-                    instance_name,
-                    agent_mode: args.agent_mode || "paper",
+                    strategy_id,
+                    account_id,
+                    is_paper_trading: args.is_paper_trading !== false,
                     platform: args.platform || "kalshi",
-                    starting_balance: Number(args.starting_balance || 10000),
+                    balance: Number(args.balance || 10000),
                 }),
             });
             return json({ ok: true, data: data.data ?? data });
         }
         case "get_strategy_context": {
-            const strategy_name = String(args.strategy_name);
-            if (!strategy_name)
-                throw new Error("Missing required field: strategy_name");
-            const data = await callPolyTrader(`/agent/context?strategy_name=${encodeURIComponent(strategy_name)}`, { headers: getAgentHeaders(args) });
+            const strategy_id = String(args.strategy_id);
+            if (!strategy_id)
+                throw new Error("Missing required field: strategy_id");
+            const data = await callPolyTrader(`/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         case "submit_real_trade": {
-            const strategy_name = String(args.strategy_name);
+            const strategy_id = String(args.strategy_id);
             const slug = String(args.slug);
             const outcome = String(args.outcome);
             const side = String(args.side);
             const price = Number(args.price);
-            if (!strategy_name || !slug || !outcome || !side || !Number.isFinite(price)) {
-                throw new Error("Missing required fields: strategy_name, slug, outcome, side, price");
+            if (!strategy_id || !slug || !outcome || !side || !Number.isFinite(price)) {
+                throw new Error("Missing required fields: strategy_id, slug, outcome, side, price");
             }
             const data = await callPolyTrader("/agent/real-trades", {
                 method: "POST",
                 headers: getAgentHeaders(args),
                 body: JSON.stringify({
-                    strategy_name,
+                    strategy_id,
                     slug,
                     outcome,
                     side,
@@ -582,10 +587,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 });
 async function main() {
+    log("Starting Kalshi MCP server...");
     const transport = new StdioServerTransport();
     await server.connect(transport);
+    log("Server connected and running.");
+    // Keep alive
+    await new Promise(() => { });
 }
 main().catch((err) => {
-    console.error(err);
+    log(`Server Fatal Error: ${err.message}`);
     process.exit(1);
 });

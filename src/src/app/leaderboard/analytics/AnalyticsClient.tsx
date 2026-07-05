@@ -24,9 +24,36 @@ const STRATEGY_COLORS = [
   { main: '#FF453A', glow: 'rgba(255,69,58,0.15)', gradient: ['rgba(255,69,58,0.28)', 'rgba(255,69,58,0)'] },
   { main: '#64D2FF', glow: 'rgba(100,210,255,0.15)', gradient: ['rgba(100,210,255,0.28)', 'rgba(100,210,255,0)'] },
   { main: '#FF6482', glow: 'rgba(255,100,130,0.15)', gradient: ['rgba(255,100,130,0.28)', 'rgba(255,100,130,0)'] },
+  { main: '#FFD60A', glow: 'rgba(255,214,10,0.15)', gradient: ['rgba(255,214,10,0.28)', 'rgba(255,214,10,0)'] },
+  { main: '#AC8E68', glow: 'rgba(172,142,104,0.15)', gradient: ['rgba(172,142,104,0.28)', 'rgba(172,142,104,0)'] },
+  { main: '#00C7BE', glow: 'rgba(0,199,190,0.15)', gradient: ['rgba(0,199,190,0.28)', 'rgba(0,199,190,0)'] },
+  { main: '#5E5CE6', glow: 'rgba(94,92,230,0.15)', gradient: ['rgba(94,92,230,0.28)', 'rgba(94,92,230,0)'] },
+  { main: '#FF2D55', glow: 'rgba(255,45,85,0.15)', gradient: ['rgba(255,45,85,0.28)', 'rgba(255,45,85,0)'] },
+  { main: '#34C759', glow: 'rgba(52,199,89,0.15)', gradient: ['rgba(52,199,89,0.28)', 'rgba(52,199,89,0)'] },
+  { main: '#AF52DE', glow: 'rgba(175,82,222,0.15)', gradient: ['rgba(175,82,222,0.28)', 'rgba(175,82,222,0)'] },
+  { main: '#FF6B35', glow: 'rgba(255,107,53,0.15)', gradient: ['rgba(255,107,53,0.28)', 'rgba(255,107,53,0)'] },
+  { main: '#32ADE6', glow: 'rgba(50,173,230,0.15)', gradient: ['rgba(50,173,230,0.28)', 'rgba(50,173,230,0)'] },
 ];
 
-function getStrategyPalette(name: string, index: number) {
+function buildPaletteFromHex(hex: string) {
+  // Check if this hex matches a known palette entry
+  const known = STRATEGY_COLORS.find(c => c.main === hex);
+  if (known) return known;
+  // Generate glow/gradient from the hex
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return {
+    main: hex,
+    glow: `rgba(${r},${g},${b},0.15)`,
+    gradient: [`rgba(${r},${g},${b},0.28)`, `rgba(${r},${g},${b},0)`],
+  };
+}
+
+function getStrategyPalette(name: string, index: number, colorMap?: Record<string, string>) {
+  // Use persistent color from DB if available
+  if (colorMap?.[name]) return buildPaletteFromHex(colorMap[name]);
+  // Legacy fallback
   if (name === 'Dickens Li') return STRATEGY_COLORS[0];
   return STRATEGY_COLORS[index % STRATEGY_COLORS.length];
 }
@@ -238,6 +265,7 @@ export default function AnalyticsClient() {
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
   const [selectedStrategies, setSelectedStrategies] = useState<Set<string>>(new Set());
   const [hoveredPoint, setHoveredPoint] = useState<{ time: number; values: Record<string, number> } | null>(null);
+  const [strategyColors, setStrategyColors] = useState<Record<string, string>>({});
 
   // Chart refs
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -263,6 +291,12 @@ export default function AnalyticsClient() {
         if (daily.success) setDailyData({ strategies: daily.strategies, history: daily.history });
         if (hourly.success) setHourlyData({ strategies: hourly.strategies, history: hourly.history });
         setTotalPages(daily.meta?.totalPages ?? hourly.meta?.totalPages ?? 1);
+        // Merge strategy colors from both responses
+        setStrategyColors(prev => ({
+          ...prev,
+          ...(daily.strategyColors || {}),
+          ...(hourly.strategyColors || {}),
+        }));
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
@@ -553,7 +587,7 @@ export default function AnalyticsClient() {
 
       for (let i = 0; i < strats.length; i++) {
         const strat = strats[i];
-        const palette = getStrategyPalette(strat, i);
+        const palette = getStrategyPalette(strat, i, strategyColors);
         const hasSelection = selectedStrategies.size > 0;
         const isSelected = selectedStrategies.has(strat);
         const isFiltered = hasSelection && !isSelected;
@@ -888,7 +922,7 @@ export default function AnalyticsClient() {
               </div>
               <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                 {strategies.map((strat, idx) => {
-                  const palette = getStrategyPalette(strat, idx);
+                  const palette = getStrategyPalette(strat, idx, strategyColors);
                   const hasSelection = selectedStrategies.size > 0;
                   const isSelected = selectedStrategies.has(strat);
                   const isVisible = !hasSelection || isSelected;
@@ -913,7 +947,7 @@ export default function AnalyticsClient() {
         {/* Strategy Legend Toggles */}
         <div className="analytics-legend">
           {strategies.map((strat, idx) => {
-            const palette = getStrategyPalette(strat, idx);
+            const palette = getStrategyPalette(strat, idx, strategyColors);
             const isSelected = selectedStrategies.has(strat);
             const hasSelection = selectedStrategies.size > 0;
             const isFiltered = hasSelection && !isSelected;
@@ -1098,7 +1132,7 @@ export default function AnalyticsClient() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {strategies.map((strat, idx) => {
-            const palette = getStrategyPalette(strat, idx);
+            const palette = getStrategyPalette(strat, idx, strategyColors);
             const metrics = allMetrics[strat];
             if (!metrics) return null;
             const isProfit = metrics.totalPnl >= 0;
@@ -1192,7 +1226,7 @@ export default function AnalyticsClient() {
             .filter(s => s.metrics)
             .sort((a, b) => b.metrics!.totalPnl - a.metrics!.totalPnl)
             .map(({ strat, idx, metrics }) => {
-              const palette = getStrategyPalette(strat, idx);
+              const palette = getStrategyPalette(strat, idx, strategyColors);
               const maxAbsPnl = Math.max(...Object.values(allMetrics).map(m => Math.abs(m.totalPnl)));
               const ratio = maxAbsPnl > 0 ? (Math.abs(metrics!.totalPnl) / maxAbsPnl) * 100 : 0;
               const isProfit = metrics!.totalPnl >= 0;
