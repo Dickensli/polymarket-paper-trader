@@ -62,12 +62,12 @@ function formatTime(unix: number, granularity: Granularity): string {
   if (granularity === 'hourly') {
     return d.toLocaleString('en-US', {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-      timeZone: 'UTC',
+      timeZone: 'America/New_York',
     });
   }
   return d.toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: 'America/New_York',
   });
 }
 
@@ -244,6 +244,12 @@ export default function AnalyticsClient() {
   const chartRef = useRef<any>(null);
   const seriesRefs = useRef<Map<string, any>>(new Map());
 
+  // Zoom & Drag Selection State
+  const [zoomHistory, setZoomHistory] = useState<{ from: number; to: number }[]>([]);
+  const [selectionActive, setSelectionActive] = useState(false);
+  const [selectionBox, setSelectionBox] = useState({ left: 0, width: 0 });
+  const selectionRef = useRef<{ startX: number; currentX: number; active: boolean }>({ startX: 0, currentX: 0, active: false });
+
   // Fetch both granularities
   useEffect(() => {
     setLoading(true);
@@ -327,6 +333,91 @@ export default function AnalyticsClient() {
 
   const primaryMetrics = allMetrics[primaryStrat];
 
+  // Click-Move-Click Zoom Selection Handlers
+  // 1st Shift+Click → sets start anchor, enters selection mode
+  // Mouse move (no button needed) → dashed region follows cursor
+  // 2nd Click → confirms selection and zooms chart
+  // Escape → cancels selection
+  const handleChartClick = useCallback((e: React.MouseEvent) => {
+    if (!chartRef.current || !chartContainerRef.current) return;
+
+    const rect = chartContainerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+
+    if (selectionRef.current.active) {
+      // --- 2nd click: confirm selection ---
+      const { startX } = selectionRef.current;
+      const leftX = Math.min(startX, x);
+      const rightX = Math.max(startX, x);
+
+      selectionRef.current.active = false;
+      setSelectionActive(false);
+
+      if (rightX - leftX < 10) return; // too narrow
+
+      const timeScale = chartRef.current.timeScale();
+      const startTime = timeScale.coordinateToTime(leftX);
+      const endTime = timeScale.coordinateToTime(rightX);
+
+      if (startTime !== null && endTime !== null) {
+        const currentRange = timeScale.getVisibleRange();
+        if (currentRange) {
+          setZoomHistory(prev => [...prev, currentRange as { from: number; to: number }]);
+        }
+        timeScale.setVisibleRange({ from: startTime, to: endTime });
+      }
+      return;  // consume click so it doesn't start a new selection
+    }
+
+    // --- 1st Shift+Click: start selection ---
+    if (!e.shiftKey) return;
+
+    selectionRef.current = { startX: x, currentX: x, active: true };
+    setSelectionActive(true);
+    setSelectionBox({ left: x, width: 0 });
+
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!selectionRef.current.active || !chartContainerRef.current) return;
+
+    const rect = chartContainerRef.current.getBoundingClientRect();
+    const currentX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+
+    selectionRef.current.currentX = currentX;
+
+    const left = Math.min(selectionRef.current.startX, currentX);
+    const width = Math.abs(selectionRef.current.startX - currentX);
+
+    setSelectionBox({ left, width });
+  }, []);
+
+  // Cancel selection on Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectionRef.current.active) {
+        selectionRef.current.active = false;
+        setSelectionActive(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleGoBack = useCallback(() => {
+    if (!chartRef.current || zoomHistory.length === 0) return;
+
+    const nextHistory = [...zoomHistory];
+    const prevRange = nextHistory.pop();
+    setZoomHistory(nextHistory);
+
+    if (prevRange) {
+      chartRef.current.timeScale().setVisibleRange(prevRange);
+    }
+  }, [zoomHistory]);
+
   /* ─── lightweight-charts ──────────────────────────── */
   useEffect(() => {
     if (!chartContainerRef.current || !data || filteredHistory.length === 0) return;
@@ -338,7 +429,7 @@ export default function AnalyticsClient() {
       const container = chartContainerRef.current;
       if (!container || !mounted) return;
 
-      const { createChart, ColorType, LineStyle, LineSeries, AreaSeries } = await import('lightweight-charts');
+      const { createChart, ColorType, LineStyle, LineSeries, AreaSeries, TickMarkType } = await import('lightweight-charts');
       if (!mounted || !container) return;
 
       if (chartRef.current) {
@@ -346,6 +437,8 @@ export default function AnalyticsClient() {
         chartRef.current = null;
         seriesRefs.current.clear();
       }
+
+      setZoomHistory([]);
 
       const chart = createChart(container, {
         width: container.clientWidth,
@@ -378,6 +471,11 @@ export default function AnalyticsClient() {
           borderVisible: false,
           textColor: 'rgba(148,163,184,0.4)',
         },
+        localization: {
+          timeFormatter: (unix: number) => {
+            return formatTime(unix, granularity);
+          },
+        },
         timeScale: {
           borderVisible: false,
           timeVisible: granularity === 'hourly',
@@ -386,6 +484,23 @@ export default function AnalyticsClient() {
           barSpacing: granularity === 'hourly' ? 8 : 14,
           fixLeftEdge: false,
           fixRightEdge: false,
+          tickMarkFormatter: (time: number, tickMarkType: any, locale: string) => {
+            const date = new Date(time * 1000);
+            const options: Intl.DateTimeFormatOptions = {
+              timeZone: 'America/New_York',
+            };
+            if (tickMarkType === TickMarkType.Year) {
+              options.year = 'numeric';
+            } else if (tickMarkType === TickMarkType.Month) {
+              options.month = 'short';
+            } else if (tickMarkType === TickMarkType.DayOfMonth) {
+              options.day = 'numeric';
+            } else {
+              options.hour = 'numeric';
+              options.minute = '2-digit';
+            }
+            return date.toLocaleDateString(locale, options);
+          },
         },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
@@ -607,7 +722,7 @@ export default function AnalyticsClient() {
               {isPositive ? '↑' : '↓'} {formatPercent(Math.abs(heroChangePct))}
             </span>
             <span className="text-[10px] text-foreground-muted/40 font-medium">
-              {granularity === 'hourly' ? 'hourly data' : 'daily data'}
+              {granularity === 'hourly' ? 'intraday mark-to-market' : 'daily settlement'}
             </span>
           </div>
         </div>
@@ -684,18 +799,85 @@ export default function AnalyticsClient() {
             </div>
           </div>
 
-          <div className="text-[10px] text-foreground-muted/40 font-mono">
-            {filteredHistory.length} data points
+          <div className="text-[10px] text-foreground-muted/40 font-mono flex items-center gap-3">
+            <span>Shift+Click twice to select zoom range · Esc to cancel</span>
+            <span className="opacity-30">•</span>
+            <span>{filteredHistory.length} data points</span>
+            {granularity === 'hourly' && (
+              <>
+                <span className="opacity-30">•</span>
+                <span className="text-amber-500/70">⚡ Hourly data reflects real-time price fluctuations</span>
+              </>
+            )}
           </div>
         </div>
 
         {/* TradingView Chart Container with Overlay Tooltip */}
-        <div className="relative w-full">
+        <div
+          className="relative w-full"
+          onClick={handleChartClick}
+          onMouseMove={handleMouseMove}
+          style={{ cursor: selectionActive ? 'crosshair' : undefined }}
+        >
           <div
             ref={chartContainerRef}
             className="w-full"
             style={{ height: 420 }}
           />
+
+          {selectionActive && (
+            <>
+              {/* Dashed selection region */}
+              <div
+                className="absolute pointer-events-none z-20"
+                style={{
+                  top: 0,
+                  height: 380,
+                  left: selectionBox.left,
+                  width: Math.max(selectionBox.width, 1),
+                  backgroundColor: 'rgba(90, 200, 250, 0.12)',
+                  borderLeft: '1px dashed #5AC8FA',
+                  borderRight: '1px dashed #5AC8FA',
+                  borderTop: '1px dashed rgba(90,200,250,0.4)',
+                  borderBottom: '1px dashed rgba(90,200,250,0.4)',
+                }}
+              />
+              {/* Anchor line at start point */}
+              <div
+                className="absolute pointer-events-none z-20"
+                style={{
+                  top: 0,
+                  height: 380,
+                  left: selectionRef.current.startX,
+                  width: 1,
+                  backgroundColor: '#5AC8FA',
+                  opacity: 0.6,
+                }}
+              />
+              {/* Click-to-confirm hint */}
+              {selectionBox.width > 40 && (
+                <div
+                  className="absolute pointer-events-none z-20 text-[9px] font-mono text-cyan-400/70"
+                  style={{
+                    top: 8,
+                    left: selectionBox.left + selectionBox.width / 2,
+                    transform: 'translateX(-50%)',
+                  }}
+                >
+                  click to zoom
+                </div>
+              )}
+            </>
+          )}
+
+          {zoomHistory.length > 0 && (
+            <button
+              onClick={handleGoBack}
+              className="absolute top-4 right-4 bg-background-secondary/95 hover:bg-background border border-border/80 rounded-xl px-3 py-1.5 text-xs font-semibold shadow-2xl backdrop-blur-md z-30 transition-colors"
+            >
+              ← Go Back
+            </button>
+          )}
 
           {/* Custom absolute hover tooltip — anchored top-left to avoid overlapping the right price scale */}
           {hoveredPoint && (

@@ -40,6 +40,7 @@ const adapter = process.env.DATABASE_URL
   : undefined;
 
 const nextAuthResult = NextAuth({
+  debug: true,
   adapter,
   providers: [
     Google({
@@ -59,6 +60,17 @@ const nextAuthResult = NextAuth({
   pages: {
     signIn: '/auth/signin',
   },
+  logger: {
+    error(code: any, ...message: any[]) {
+      console.error('[NextAuth][ERROR]', code, JSON.stringify(message, null, 2));
+    },
+    warn(code: any, ...message: any[]) {
+      console.warn('[NextAuth][WARN]', code, JSON.stringify(message, null, 2));
+    },
+    debug(code: any, ...message: any[]) {
+      console.log('[NextAuth][DEBUG]', code, JSON.stringify(message, null, 2));
+    },
+  },
   callbacks: {
     async session({ session, user }) {
       if (user && session.user) {
@@ -73,8 +85,9 @@ const originalHandlers = nextAuthResult.handlers;
 
 export const handlers = {
   GET: async (req: any, ctx: any) => {
+    const url = new URL(req.url);
+    console.log('[Auth Handler] GET', url.pathname, url.searchParams.toString());
     if (process.env.MOCK_AUTH === 'true') {
-      const url = new URL(req.url);
       if (url.pathname.endsWith('/api/auth/session')) {
         return NextResponse.json({
           user: {
@@ -86,10 +99,39 @@ export const handlers = {
         });
       }
     }
-    return originalHandlers.GET(req);
+    try {
+      const resp = await originalHandlers.GET(req);
+      console.log('[Auth Handler] GET response status:', resp?.status);
+      if (url.pathname.endsWith('/api/auth/csrf') && resp?.status === 200) {
+        try {
+          const data = await resp.clone().json();
+          return NextResponse.json({
+            ...data,
+            debug_source: 'cloudtop-vm-active-server'
+          }, {
+            headers: resp.headers
+          });
+        } catch (e) {
+          console.error('[Auth Handler] Failed to clone and parse CSRF json:', e);
+        }
+      }
+      return resp;
+    } catch (err: any) {
+      console.error('[Auth Handler] GET ERROR:', err.message, err.stack);
+      throw err;
+    }
   },
   POST: async (req: any, ctx: any) => {
-    return originalHandlers.POST(req);
+    const url = new URL(req.url);
+    console.log('[Auth Handler] POST', url.pathname);
+    try {
+      const resp = await originalHandlers.POST(req);
+      console.log('[Auth Handler] POST response status:', resp?.status);
+      return resp;
+    } catch (err: any) {
+      console.error('[Auth Handler] POST ERROR:', err.message, err.stack);
+      throw err;
+    }
   }
 };
 

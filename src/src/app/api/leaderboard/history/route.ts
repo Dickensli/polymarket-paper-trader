@@ -101,18 +101,15 @@ async function buildHistoryFromTrades(
       return sum + Number(p.shares) * Number(p.currentPrice);
     }, 0);
 
-    // Build period-by-period cash balance from trades
+    // Build period-by-period cash balance and position cost basis from trades
     // Group trades by period key
-    const tradesByPeriod = new Map<string, { totalCost: number; action: string }[]>();
+    const tradesByPeriod = new Map<string, typeof trades>();
     for (const trade of trades) {
       const periodKey = getPeriodKey(trade.executedAt, granularity);
       if (!tradesByPeriod.has(periodKey)) {
         tradesByPeriod.set(periodKey, []);
       }
-      tradesByPeriod.get(periodKey)!.push({
-        totalCost: Number(trade.totalCost),
-        action: trade.action
-      });
+      tradesByPeriod.get(periodKey)!.push(trade);
     }
 
     // Generate period data points from portfolio creation to now
@@ -129,6 +126,8 @@ async function buildHistoryFromTrades(
     }
 
     let cashBalance = initialBalance;
+    // Map: tokenId -> { shares: number, avgPrice: number }
+    const positionsMap = new Map<string, { shares: number; avgPrice: number }>();
     const stepMs = granularity === 'daily' ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
     const nowKey = getPeriodKey(now, granularity);
 
@@ -139,20 +138,45 @@ async function buildHistoryFromTrades(
       const periodTrades = tradesByPeriod.get(periodKey);
       if (periodTrades) {
         for (const t of periodTrades) {
+          const shares = Number(t.shares);
+          const price = Number(t.pricePerShare);
+          const totalCost = Number(t.totalCost);
+
           if (t.action === 'BUY') {
-            cashBalance -= t.totalCost;
+            cashBalance -= totalCost;
+            const current = positionsMap.get(t.tokenId) || { shares: 0, avgPrice: 0 };
+            const newShares = current.shares + shares;
+            const newAvgPrice = newShares > 0 ? (current.shares * current.avgPrice + totalCost) / newShares : 0;
+            positionsMap.set(t.tokenId, { shares: newShares, avgPrice: newAvgPrice });
           } else {
-            cashBalance += t.totalCost;
+            cashBalance += totalCost;
+            const current = positionsMap.get(t.tokenId);
+            if (current) {
+              const newShares = Math.max(0, current.shares - shares);
+              if (newShares === 0) {
+                positionsMap.delete(t.tokenId);
+              } else {
+                positionsMap.set(t.tokenId, { shares: newShares, avgPrice: current.avgPrice });
+              }
+            }
           }
         }
       }
 
-      // For the current/latest period, add open position values
+      // Calculate position value for this period
+      let positionsValue = 0;
       const isCurrent = periodKey === nowKey;
-      const portfolioValue = isCurrent
-        ? cashBalance + currentPositionsValue
-        : cashBalance;
 
+      if (isCurrent) {
+        positionsValue = currentPositionsValue;
+      } else {
+        // Value historical positions at cost basis (avgPrice * shares)
+        for (const [_, pos] of positionsMap.entries()) {
+          positionsValue += pos.shares * pos.avgPrice;
+        }
+      }
+
+      const portfolioValue = cashBalance + positionsValue;
       const totalPnl = portfolioValue - initialBalance;
 
       if (!periodMap.has(periodKey)) {
