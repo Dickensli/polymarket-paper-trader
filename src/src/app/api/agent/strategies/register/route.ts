@@ -82,11 +82,17 @@ export async function POST(request: NextRequest) {
     const expectedUserId = resolveTargetUserId(account_id, strategy_id, platform);
     if (session.user.id !== expectedUserId) {
       return NextResponse.json({ 
-        error: 'Forbidden: Identity mismatch', 
-        expected: expectedUserId, 
-        actual: session.user.id 
+        error: 'Forbidden: Identity mismatch'
       }, { status: 403 });
     }
+
+    const sanitizeStrategy = (s: any) => ({
+      strategyId: s.strategyId,
+      platform: s.platform,
+      status: s.status,
+      startingBalance: s.startingBalance,
+      agentMode: s.agentMode,
+    });
 
     try {
       const db = getDb();
@@ -99,7 +105,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           registered: true,
           is_new: false,
-          strategy: existing,
+          strategy: sanitizeStrategy(existing),
           message: 'Strategy already registered.'
         });
       }
@@ -121,7 +127,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         registered: true,
         is_new: true,
-        strategy: created,
+        strategy: sanitizeStrategy(created),
         message: 'Strategy registered successfully.'
       }, { status: 201 });
 
@@ -132,10 +138,11 @@ export async function POST(request: NextRequest) {
         is_new: true,
         degraded: true,
         strategy: {
-          userId: session.user.id,
           strategyId: strategy_id,
+          platform: platform,
           status: 'active',
           startingBalance: String(balance),
+          agentMode: is_paper_trading ? 'paper' : 'real',
         },
         message: 'Strategy registered in degraded mode (Database offline).'
       });

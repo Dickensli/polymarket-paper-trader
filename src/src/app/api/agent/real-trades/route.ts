@@ -40,6 +40,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const sanitizeRealOrder = (o: any) => ({
+      platform: o.platform,
+      officialOrderId: o.officialOrderId,
+      clientOrderId: o.clientOrderId,
+      marketId: o.marketId,
+      marketSlugOrTicker: o.marketSlugOrTicker,
+      side: o.side,
+      quantity: o.quantity ? Number(o.quantity) : null,
+      price: o.price ? Number(o.price) : null,
+      status: o.status,
+      request: o.request,
+      officialResponse: o.officialResponse,
+      error: o.error,
+      createdAt: o.createdAt,
+      updatedAt: o.updatedAt,
+    });
+
+    const sanitizePortfolioSnapshot = (s: any) => ({
+      platform: s.platform,
+      agentMode: s.agentMode,
+      source: s.source,
+      cash: Number(s.cash),
+      positionsValue: Number(s.positionsValue),
+      totalValue: Number(s.totalValue),
+      pnl: Number(s.pnl),
+      positions: s.positions,
+      orders: s.orders,
+      capturedAt: s.capturedAt,
+    });
+
     const parsed = realTradeSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(
@@ -99,7 +129,7 @@ export async function POST(request: NextRequest) {
         .returning();
 
       return NextResponse.json(
-        { error: 'Polymarket International real trading is not supported.', audit },
+        { error: 'Polymarket International real trading is not supported.', audit: sanitizeRealOrder(audit) },
         { status: 400 },
       );
     }
@@ -134,7 +164,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: 'Real trading is disabled for this strategy.',
-          audit,
+          audit: sanitizeRealOrder(audit),
         },
         { status: 403 },
       );
@@ -206,9 +236,9 @@ export async function POST(request: NextRequest) {
         .returning();
 
       return NextResponse.json({
-        data: updatedAudit,
+        data: sanitizeRealOrder(updatedAudit),
         official_order: official,
-        official_snapshot: snapshot,
+        official_snapshot: sanitizePortfolioSnapshot(snapshot),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -226,7 +256,7 @@ export async function POST(request: NextRequest) {
         {
           error: 'Official real trade failed.',
           details: message,
-          audit: updatedAudit,
+          audit: sanitizeRealOrder(updatedAudit),
         },
         { status: 502 },
       );

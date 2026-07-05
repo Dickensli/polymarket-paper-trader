@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { getDb } from '@/lib/db';
 import { portfolios, positions, users, leaderboardSnapshots } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { getUserPlatform } from '@/lib/platform';
 
 /**
  * Calculates portfolio values and creates snapshots for the leaderboard.
@@ -40,24 +41,38 @@ export async function runLeaderboardCalculation() {
     const portfolioValue = balance + positionsValue;
     const totalPnl = portfolioValue - initialBalance;
     const returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
+    const platform = getUserPlatform(user.settings);
 
     snapshots.push({
       userId: user.id,
       userName: user.name || user.email,
+      platform,
       totalPnl,
       returnPct,
       portfolioValue,
-      rank: 0, // Will calculate below
+      rank: 0, // Will calculate below per-platform
       period: 'ALL_TIME',
       snapshotDate: new Date(),
     });
   }
 
-  // Sort by totalPnl descending to determine rank
-  snapshots.sort((a, b) => b.totalPnl - a.totalPnl);
-  snapshots.forEach((snap, index) => {
-    snap.rank = index + 1;
-  });
+  // Group by platform and calculate ranks
+  const platformGroups: Record<string, typeof snapshots> = {};
+  for (const snap of snapshots) {
+    if (!platformGroups[snap.platform]) {
+      platformGroups[snap.platform] = [];
+    }
+    platformGroups[snap.platform].push(snap);
+  }
+
+  for (const platform of Object.keys(platformGroups)) {
+    const group = platformGroups[platform]!;
+    group.sort((a, b) => b.totalPnl - a.totalPnl);
+    group.forEach((snap, index) => {
+      snap.rank = index + 1;
+    });
+  }
+
 
   if (snapshots.length > 0) {
     // Truncate timestamps for clean HOURLY and DAILY intervals

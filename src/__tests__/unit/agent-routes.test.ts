@@ -200,7 +200,7 @@ describe('agent route handlers', () => {
     }) as never);
     expect(written.status).toBe(201);
     await expect(written.json()).resolves.toMatchObject({
-      data: { id: 'report-1', strategyId: 'strategy-1', filename: 'run.md' },
+      data: { filename: 'run.md' },
       updated: false,
     });
 
@@ -214,7 +214,7 @@ describe('agent route handlers', () => {
       url: 'https://example.test/api/agent/reports?strategy_id=arb&limit=5',
     }) as never);
     await expect(listed.json()).resolves.toMatchObject({
-      data: [{ id: 'report-1', filename: 'run.md', title: 'Run' }],
+      data: [{ filename: 'run.md', title: 'Run' }],
       meta: { count: 1, limit: 5 },
     });
 
@@ -237,7 +237,7 @@ describe('agent route handlers', () => {
       params: Promise.resolve({ id: 'report-1' }),
     });
     await expect(read.json()).resolves.toMatchObject({
-      data: { id: 'report-1', filename: 'run.md', content: '# Report' },
+      data: { filename: 'run.md', content: '# Report' },
     });
   });
 
@@ -256,7 +256,7 @@ describe('agent route handlers', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      data: { id: 'paper-order-1' },
+      data: { idempotencyKey: 'idem-1' },
       message: 'Returned existing paper order (idempotent)',
     });
   });
@@ -334,9 +334,9 @@ describe('agent route handlers', () => {
     expect(db.update).toHaveBeenCalled();
     expect(db.insert).toHaveBeenCalledTimes(2);
     await expect(response.json()).resolves.toMatchObject({
-      data: { id: 'trade-1' },
-      paper_order: { id: 'paper-order-1', reportId: 'report-1' },
-      report: { id: 'report-1', filename: 'run.md' },
+      data: { marketId: 'KXTEST', tokenId: 'KXTEST:YES' },
+      paper_order: { platform: 'kalshi' },
+      report: { filename: 'run.md' },
       portfolio: { cash: 9990, total_value: 10000 },
     });
   });
@@ -377,7 +377,7 @@ describe('agent route handlers', () => {
     }));
     await expect(response.json()).resolves.toMatchObject({
       error: 'Real trading is disabled for this strategy.',
-      audit: { id: 'real-order-1' },
+      audit: { status: 'REJECTED' },
     });
   });
 
@@ -440,8 +440,8 @@ describe('agent route handlers', () => {
     }));
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi');
     await expect(response.json()).resolves.toMatchObject({
-      data: { id: 'audit-1', status: 'SUBMITTED' },
-      official_snapshot: { id: 'snapshot-1' },
+      data: { status: 'SUBMITTED' },
+      official_snapshot: { source: 'official' },
     });
   });
 
@@ -493,8 +493,8 @@ describe('agent route handlers', () => {
       status: 'CANCEL_SUBMITTING',
     }));
     await expect(response.json()).resolves.toMatchObject({
-      data: { id: 'real-order-1', status: 'CANCELLED' },
-      official_snapshot: { id: 'snapshot-1' },
+      data: { status: 'CANCELLED' },
+      official_snapshot: { source: 'official' },
     });
   });
 
@@ -567,13 +567,13 @@ describe('agent route handlers', () => {
     expect(db.insert).toHaveBeenCalledTimes(6);
     await expect(response.json()).resolves.toMatchObject({
       reconciled: false,
-      local_snapshot: { id: 'snapshot-1' },
-      official_snapshot: { id: 'snapshot-2' },
+      local_snapshot: { source: 'local' },
+      official_snapshot: { source: 'official' },
       reconciliation_logs: [
-        { id: 'log-1', severity: 'warning' },
-        { id: 'log-2', severity: 'warning' },
-        { id: 'log-3', severity: 'warning' },
-        { id: 'log-4', severity: 'warning' },
+        { severity: 'warning' },
+        { severity: 'warning' },
+        { severity: 'warning' },
+        { severity: 'warning' },
       ],
       warnings: [
         'Official and local balances differ beyond configured thresholds.',
@@ -617,9 +617,9 @@ describe('agent route handlers', () => {
     expect(db.query.realTradeOrders.findMany).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       reconciled: true,
-      local_snapshot: { id: 'snapshot-1' },
+      local_snapshot: { source: 'local' },
       official_snapshot: null,
-      reconciliation_logs: [{ id: 'log-1', severity: 'info' }],
+      reconciliation_logs: [{ severity: 'info' }],
       warnings: [],
     });
   });

@@ -60,12 +60,40 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
+    const sanitizePaperOrder = (o: any) => ({
+      platform: o.platform,
+      marketId: o.marketId,
+      marketSlug: o.marketSlug,
+      outcome: o.outcome,
+      side: o.side,
+      quantity: o.quantity,
+      price: o.price,
+      notional: o.notional,
+      fillModel: o.fillModel,
+      status: o.status,
+      idempotencyKey: o.idempotencyKey,
+      createdAt: o.createdAt,
+    });
+
+    const sanitizeTrade = (t: any) => ({
+      marketId: t.marketId,
+      marketQuestion: t.marketQuestion,
+      tokenId: t.tokenId,
+      outcome: t.outcome,
+      side: t.side,
+      shares: t.shares,
+      price: t.price,
+      total: t.total,
+      timestamp: t.timestamp,
+      slippageApplied: t.slippageApplied,
+    });
+
     const existingOrder = await db.query.paperTradeOrders.findFirst({
       where: eq(paperTradeOrders.idempotencyKey, idempotencyKey),
     });
     if (existingOrder) {
       return NextResponse.json(
-        { data: existingOrder, message: 'Returned existing paper order (idempotent)' },
+        { data: sanitizePaperOrder(existingOrder), message: 'Returned existing paper order (idempotent)' },
         { status: 200 },
       );
     }
@@ -331,11 +359,10 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      data: trade,
-      paper_order: paperOrder,
+      data: sanitizeTrade(trade),
+      paper_order: sanitizePaperOrder(paperOrder),
       report: currentReport
         ? {
-            id: currentReport.id,
             filename: currentReport.filename,
           }
         : null,

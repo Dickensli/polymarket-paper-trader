@@ -78,7 +78,6 @@ export async function GET(request: NextRequest) {
       .limit(50);
 
     const positionsSummary = openPositions.map((p) => ({
-      id: p.id,
       market_id: p.marketId,
       market_question: p.marketQuestion,
       outcome: p.outcome,
@@ -113,7 +112,6 @@ export async function GET(request: NextRequest) {
     }
 
     const tradeHistory = recentTrades.map((t) => ({
-      id: t.id,
       market_id: t.marketId,
       market_question: t.marketQuestion,
       outcome: t.outcome,
@@ -169,7 +167,6 @@ export async function GET(request: NextRequest) {
       is_setup,
       strategy: strategy
         ? {
-            id: strategy.id,
             strategy_id: strategy.strategyId,
             agent_mode: strategy.agentMode,
             platform: strategy.platform,

@@ -47,6 +47,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: `Strategy "${strategyId}" not registered.` }, { status: 404 });
     }
 
+    const sanitizeAgentReport = (r: any) => ({
+      filename: r.filename,
+      account: r.strategyName,
+      title: r.title,
+      content: r.content,
+      lessons_learned: r.lessonsLearned,
+      next_steps: r.nextSteps,
+      portfolio_summary: r.portfolioSummary,
+      trade_summary: r.tradeSummary,
+      created_at: r.createdAt,
+    });
+
     const filename = request.nextUrl.searchParams.get('filename');
     if (filename) {
       const report = await db.query.agentReports.findFirst({
@@ -61,12 +73,11 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Report not found' }, { status: 404 });
       }
 
-      return NextResponse.json({ data: report });
+      return NextResponse.json({ data: sanitizeAgentReport(report) });
     }
 
     const reports = await db
       .select({
-        id: agentReports.id,
         filename: agentReports.filename,
         title: agentReports.title,
         createdAt: agentReports.createdAt,
@@ -145,17 +156,29 @@ export async function POST(request: NextRequest) {
       createdAt: new Date(),
     };
 
+    const sanitizeAgentReport = (r: any) => ({
+      filename: r.filename,
+      account: r.strategyName,
+      title: r.title,
+      content: r.content,
+      lessons_learned: r.lessonsLearned,
+      next_steps: r.nextSteps,
+      portfolio_summary: r.portfolioSummary,
+      trade_summary: r.tradeSummary,
+      created_at: r.createdAt,
+    });
+
     if (existing) {
       const [updated] = await db
         .update(agentReports)
         .set(values)
         .where(eq(agentReports.id, existing.id))
         .returning();
-      return NextResponse.json({ data: updated, updated: true });
+      return NextResponse.json({ data: sanitizeAgentReport(updated), updated: true });
     }
 
     const [created] = await db.insert(agentReports).values(values).returning();
-    return NextResponse.json({ data: created, updated: false }, { status: 201 });
+    return NextResponse.json({ data: sanitizeAgentReport(created), updated: false }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json(

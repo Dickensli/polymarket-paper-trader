@@ -21,6 +21,36 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const sanitizeRealOrder = (o: any) => ({
+      platform: o.platform,
+      officialOrderId: o.officialOrderId,
+      clientOrderId: o.clientOrderId,
+      marketId: o.marketId,
+      marketSlugOrTicker: o.marketSlugOrTicker,
+      side: o.side,
+      quantity: o.quantity ? Number(o.quantity) : null,
+      price: o.price ? Number(o.price) : null,
+      status: o.status,
+      request: o.request,
+      officialResponse: o.officialResponse,
+      error: o.error,
+      createdAt: o.createdAt,
+      updatedAt: o.updatedAt,
+    });
+
+    const sanitizePortfolioSnapshot = (s: any) => ({
+      platform: s.platform,
+      agentMode: s.agentMode,
+      source: s.source,
+      cash: Number(s.cash),
+      positionsValue: Number(s.positionsValue),
+      totalValue: Number(s.totalValue),
+      pnl: Number(s.pnl),
+      positions: s.positions,
+      orders: s.orders,
+      capturedAt: s.capturedAt,
+    });
+
     const { id } = await params;
     const db = getDb();
     const order = await db.query.realTradeOrders.findFirst({
@@ -88,10 +118,10 @@ export async function POST(
         .returning();
 
       return NextResponse.json({
-        data: updated,
-        submitted_audit: submitting,
+        data: sanitizeRealOrder(updated),
+        submitted_audit: sanitizeRealOrder(submitting),
         official_cancel: cancelled,
-        official_snapshot: snapshot,
+        official_snapshot: sanitizePortfolioSnapshot(snapshot),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -109,7 +139,7 @@ export async function POST(
         {
           error: 'Official cancel failed.',
           details: message,
-          audit: updated,
+          audit: sanitizeRealOrder(updated),
         },
         { status: 502 },
       );

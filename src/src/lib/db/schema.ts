@@ -537,6 +537,7 @@ export const leaderboardSnapshots = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     userName: varchar('user_name', { length: 255 }),
+    platform: platformEnum('platform').notNull().default('polymarket'),
     totalPnl: decimal('total_pnl', { precision: 18, scale: 6 }).notNull(),
     returnPct: decimal('return_pct', { precision: 10, scale: 4 }).notNull(),
     portfolioValue: decimal('portfolio_value', { precision: 18, scale: 6 }).notNull(),
@@ -549,6 +550,7 @@ export const leaderboardSnapshots = pgTable(
     index('leaderboard_period_idx').on(table.period),
     index('leaderboard_user_idx').on(table.userId),
     index('leaderboard_rank_idx').on(table.rank),
+    index('leaderboard_platform_idx').on(table.platform),
   ]
 );
 

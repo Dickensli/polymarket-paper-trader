@@ -330,6 +330,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const sanitizePortfolioSnapshot = (s: any) => ({
+      platform: s.platform,
+      agentMode: s.agentMode,
+      source: s.source,
+      cash: Number(s.cash),
+      positionsValue: Number(s.positionsValue),
+      totalValue: Number(s.totalValue),
+      pnl: Number(s.pnl),
+      positions: s.positions,
+      orders: s.orders,
+      capturedAt: s.capturedAt,
+    });
+
+    const sanitizeReconciliationLog = (l: any) => ({
+      platform: l.platform,
+      severity: l.severity,
+      differenceType: l.differenceType,
+      diff: l.diff,
+      threshold: l.threshold,
+      message: l.message,
+      createdAt: l.createdAt,
+    });
+
     const parsed = reconcileSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(
@@ -415,9 +438,9 @@ export async function POST(request: NextRequest) {
         strategy_id,
         platform: strategy.platform,
         agent_mode: strategy.agentMode,
-        local_snapshot: snapshot,
+        local_snapshot: sanitizePortfolioSnapshot(snapshot),
         official_snapshot: null,
-        reconciliation_logs: [log],
+        reconciliation_logs: [sanitizeReconciliationLog(log)],
         differences: [],
         warnings: [],
       });
@@ -446,9 +469,9 @@ export async function POST(request: NextRequest) {
         strategy_id,
         platform: strategy.platform,
         agent_mode: strategy.agentMode,
-        local_snapshot: snapshot,
+        local_snapshot: sanitizePortfolioSnapshot(snapshot),
         official_snapshot: null,
-        reconciliation_logs: [log],
+        reconciliation_logs: [sanitizeReconciliationLog(log)],
         differences: [],
         warnings: ['Polymarket International real trading is unsupported; official reconciliation is unavailable.'],
       });
@@ -481,9 +504,9 @@ export async function POST(request: NextRequest) {
         strategy_id,
         platform: strategy.platform,
         agent_mode: strategy.agentMode,
-        local_snapshot: snapshot,
+        local_snapshot: sanitizePortfolioSnapshot(snapshot),
         official_snapshot: null,
-        reconciliation_logs: [log],
+        reconciliation_logs: [sanitizeReconciliationLog(log)],
         differences: [{ type: 'unknown', severity: 'warning', message, diff: { error: message } }],
         warnings: [`Official venue snapshot fetch failed: ${message}`],
       }, { status: 502 });
@@ -543,8 +566,8 @@ export async function POST(request: NextRequest) {
       strategy_id,
       platform: strategy.platform,
       agent_mode: strategy.agentMode,
-      local_snapshot: snapshot,
-      official_snapshot: officialSnapshotRow,
+      local_snapshot: sanitizePortfolioSnapshot(snapshot),
+      official_snapshot: sanitizePortfolioSnapshot(officialSnapshotRow),
       official: {
         cash: officialSnapshot.cash,
         positions_value: officialSnapshot.positionsValue,
@@ -555,7 +578,7 @@ export async function POST(request: NextRequest) {
         fills: officialSnapshot.fills,
         activity: officialSnapshot.activity,
       },
-      reconciliation_logs: logs,
+      reconciliation_logs: logs.map(sanitizeReconciliationLog),
       differences,
       warnings: differences
         .filter((difference) => difference.severity !== 'info')

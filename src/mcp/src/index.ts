@@ -22,14 +22,25 @@ const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 
 function getAgentHeaders(args?: any) {
   const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id : 
-                     (typeof args?.account === "string" ? args.account : "default");
-  // account_id is ALWAYS from env var — agents cannot override it.
-  // This ensures (AGENT_USER_ID, strategy_id) is the only valid identifier pair.
+                     (typeof args?.account === "string" ? args.account : null);
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (strategyId) {
+    headers["x-agent-secret"] = AGENT_SECRET;
+    headers["x-agent-account-id"] = AGENT_USER_ID;
+    headers["x-agent-strategy-id"] = strategyId;
+  }
+
+  return headers;
+}
+
+function getPublicHeaders() {
   return {
     "Content-Type": "application/json",
     "x-agent-secret": AGENT_SECRET,
-    "x-agent-account-id": AGENT_USER_ID,
-    "x-agent-strategy-id": strategyId,
   };
 }
 

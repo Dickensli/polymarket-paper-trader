@@ -34,6 +34,14 @@ function getAgentHeaders(args?: any, idempotencyKey?: string) {
   };
 }
 
+function getPublicHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "x-agent-secret": AGENT_SECRET,
+    "x-agent-platform": "polymarket_us",
+  };
+}
+
 async function callPolyTrader(path: string, init: any = {}) {
   const res = await fetch(`${POLYTRADER_API_URL}${path}`, init);
   const text = await res.text();
@@ -348,7 +356,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const value = (args as any)[key];
           if (value !== undefined) params.set(key, String(value));
         }
-        const data = await callPolyTrader(`/polymarket-us/search?${params.toString()}`);
+        const data = await callPolyTrader(`/polymarket-us/search?${params.toString()}`, {
+          headers: getPublicHeaders(),
+        });
         return json({ ok: true, data });
       } else {
         const params = new URLSearchParams();
@@ -356,16 +366,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const value = (args as any)[key];
           if (value !== undefined) params.set(key, String(value));
         }
-        const data = await callPolyTrader(`/polymarket-us/markets?${params.toString()}`);
+        const data = await callPolyTrader(`/polymarket-us/markets?${params.toString()}`, {
+          headers: getPublicHeaders(),
+        });
         return json({ ok: true, data });
       }
     }
     case "get_market": {
-      const data = await callPolyTrader(`/polymarket-us/markets/${encodeURIComponent(String((args as any).slug))}`);
+      const data = await callPolyTrader(`/polymarket-us/markets/${encodeURIComponent(String((args as any).slug))}`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_market_book": {
-      const data = await callPolyTrader(`/polymarket-us/markets/${encodeURIComponent(String((args as any).slug))}/book`);
+      const data = await callPolyTrader(`/polymarket-us/markets/${encodeURIComponent(String((args as any).slug))}/book`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_events": {
@@ -374,12 +390,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const value = (args as any)[key];
         if (value !== undefined) params.set(key, String(value));
       }
-      const data = await callPolyTrader(`/polymarket-us/events?${params.toString()}`);
+      const data = await callPolyTrader(`/polymarket-us/events?${params.toString()}`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_event": {
       const eventId = encodeURIComponent(String((args as any).event_id));
-      const data = await callPolyTrader(`/polymarket-us/events/${eventId}`);
+      const data = await callPolyTrader(`/polymarket-us/events/${eventId}`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "buy": {

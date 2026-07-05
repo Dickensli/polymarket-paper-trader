@@ -40,6 +40,14 @@ function getAgentHeaders(args?: any, idempotencyKey?: string) {
   };
 }
 
+function getPublicHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "x-agent-secret": AGENT_SECRET,
+    "x-agent-platform": "kalshi",
+  };
+}
+
 async function callPolyTrader(path: string, init: any = {}) {
   const res = await fetch(`${POLYTRADER_API_URL}${path}`, init);
   const text = await res.text();
@@ -377,11 +385,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const value = (args as any)[key];
         if (value !== undefined) params.set(key, String(value));
       }
-      const data = await callPolyTrader(`/kalshi/markets?${params.toString()}`);
+      const data = await callPolyTrader(`/kalshi/markets?${params.toString()}`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data });
     }
     case "get_market": {
-      const data = await callPolyTrader(`/kalshi/markets/${encodeURIComponent(String((args as any).ticker))}`);
+      const data = await callPolyTrader(`/kalshi/markets/${encodeURIComponent(String((args as any).ticker))}`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "buy": {
@@ -443,7 +455,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       params.set("period_interval", String((args as any).period_interval || 60));
       if ((args as any).start_ts !== undefined) params.set("start_ts", String((args as any).start_ts));
       if ((args as any).end_ts !== undefined) params.set("end_ts", String((args as any).end_ts));
-      const data = await callPolyTrader(`/kalshi/markets/${ticker}/candlesticks?${params.toString()}`);
+      const data = await callPolyTrader(`/kalshi/markets/${ticker}/candlesticks?${params.toString()}`, {
+        headers: getPublicHeaders(),
+      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_orderbook": {

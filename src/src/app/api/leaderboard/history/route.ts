@@ -232,25 +232,31 @@ export async function GET(request: NextRequest) {
     // 1. Check for pre-computed snapshots (HOURLY or DAILY)
     const targetPeriod = granularity === 'hourly' ? 'HOURLY' : 'DAILY';
 
-    let snaps = platform === 'polymarket'
-      ? await db.query.leaderboardSnapshots.findMany({
-          where: isAdmin
-            ? eq(leaderboardSnapshots.period, targetPeriod)
-            : and(
-                eq(leaderboardSnapshots.period, targetPeriod),
-                eq(leaderboardSnapshots.userId, userId)
-              ),
-          orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
-        })
-      : [];
+    let snaps = await db.query.leaderboardSnapshots.findMany({
+      where: isAdmin
+        ? and(
+            eq(leaderboardSnapshots.period, targetPeriod),
+            eq(leaderboardSnapshots.platform, platform)
+          )
+        : and(
+            eq(leaderboardSnapshots.period, targetPeriod),
+            eq(leaderboardSnapshots.platform, platform),
+            eq(leaderboardSnapshots.userId, userId)
+          ),
+      orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]
+    });
 
     // Backward compatibility fallback for daily: use legacy HISTORY snapshots if DAILY is empty
-    if (platform === 'polymarket' && snaps.length === 0 && granularity === 'daily') {
+    if (snaps.length === 0 && granularity === 'daily') {
       snaps = await db.query.leaderboardSnapshots.findMany({
         where: isAdmin
-          ? eq(leaderboardSnapshots.period, 'HISTORY')
+          ? and(
+              eq(leaderboardSnapshots.period, 'HISTORY'),
+              eq(leaderboardSnapshots.platform, platform)
+            )
           : and(
               eq(leaderboardSnapshots.period, 'HISTORY'),
+              eq(leaderboardSnapshots.platform, platform),
               eq(leaderboardSnapshots.userId, userId)
             ),
         orderBy: (snap, { asc }) => [asc(snap.snapshotDate)]

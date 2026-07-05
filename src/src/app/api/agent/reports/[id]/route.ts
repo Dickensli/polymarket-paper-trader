@@ -28,9 +28,6 @@ export async function GET(
 
     return NextResponse.json({
       data: {
-        id: report.id,
-        strategy_id: report.strategyId,
-        run_id: report.runId,
         filename: report.filename,
         account: report.strategyName,
         title: report.title,
