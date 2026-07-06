@@ -50,7 +50,8 @@ export async function GET(req: Request) {
         summary.usersRanked = await runLeaderboardCalculation();
       }
 
-      // 5. Active Markets & Events Metadata Sync (Every 10m)
+      // 5. Active Markets & Events Metadata Sync (Every 10m) - DISABLED to prevent excessive Supabase egress traffic
+      /*
       if (currentMinute % 10 === 0) {
         try {
           const url = new URL(req.url);
@@ -61,6 +62,7 @@ export async function GET(req: Request) {
           summary.syncStatus = `Error: ${e.message}`;
         }
       }
+      */
       
       return NextResponse.json({
         success: true,
