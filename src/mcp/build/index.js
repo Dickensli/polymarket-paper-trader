@@ -16,14 +16,23 @@ const AGENT_USER_ID = process.env.AGENT_USER_ID;
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 function getAgentHeaders(args) {
     const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id :
-        (typeof args?.account === "string" ? args.account : "default");
-    // account_id is ALWAYS from env var — agents cannot override it.
-    // This ensures (AGENT_USER_ID, strategy_id) is the only valid identifier pair.
+        (typeof args?.account === "string" ? args.account : null);
+    const headers = {
+        "Content-Type": "application/json",
+        "x-agent-platform": "polymarket",
+    };
+    if (strategyId) {
+        headers["x-agent-secret"] = AGENT_SECRET;
+        headers["x-agent-account-id"] = AGENT_USER_ID;
+        headers["x-agent-strategy-id"] = strategyId;
+    }
+    return headers;
+}
+function getPublicHeaders() {
     return {
         "Content-Type": "application/json",
         "x-agent-secret": AGENT_SECRET,
-        "x-agent-account-id": AGENT_USER_ID,
-        "x-agent-strategy-id": strategyId,
+        "x-agent-platform": "polymarket",
     };
 }
 function generateIdempotencyKey() {
@@ -1636,6 +1645,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Server Startup
 // ==========================================================================
 async function run() {
+    process.stdin.on("close", () => {
+        console.error("[MCP] Stdin closed, exiting...");
+        process.exit(0);
+    });
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error("PolyTrader MCP server running on stdio (v0.5.0 — 33 tools)");

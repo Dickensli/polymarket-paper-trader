@@ -138,7 +138,22 @@ export const handlers = {
 export const signIn = nextAuthResult.signIn;
 export const signOut = nextAuthResult.signOut;
 
+export interface AuthOptions {
+  allowInit?: boolean;
+}
+
 export const auth = async (...args: any[]) => {
+  let allowInit = false;
+  let nextAuthArgs = args;
+
+  if (args.length > 0) {
+    const lastArg = args[args.length - 1];
+    if (lastArg && typeof lastArg === 'object' && 'allowInit' in lastArg) {
+      allowInit = !!(lastArg as AuthOptions).allowInit;
+      nextAuthArgs = args.slice(0, -1);
+    }
+  }
+
   if (process.env.MOCK_AUTH === 'true') {
     return {
       user: {
@@ -150,7 +165,7 @@ export const auth = async (...args: any[]) => {
     };
   }
 
-  const session = await (nextAuthResult.auth as any)(...args);
+  const session = await (nextAuthResult.auth as any)(...nextAuthArgs);
   if (session) return session;
 
   try {
@@ -203,11 +218,17 @@ export const auth = async (...args: any[]) => {
           dbUser = await db.query.users.findFirst({ where: eq(users.email, strategyEmail) });
           if (dbUser) {
             targetUserId = dbUser.id;
-          } else {
+          } else if (allowInit) {
             await db.insert(users).values({
               id: targetUserId, email: strategyEmail, name: strategyName,
               settings: { strategyId: agentAccount, platform, defaultTradeSize: 100, slippageEnabled: false, slippageBps: 50, theme: "system" }
             });
+          } else {
+            console.log(`[Auth] Strategy not registered and allowInit is false: ${strategyEmail}`);
+            return {
+              error: 'STRATEGY_NOT_REGISTERED',
+              expires: new Date(Date.now() + 3600 * 1000).toISOString(),
+            };
           }
         }
 
@@ -221,7 +242,15 @@ export const auth = async (...args: any[]) => {
 
         const dbPort = await db.query.portfolios.findFirst({ where: eq(portfolios.userId, targetUserId) });
         if (!dbPort) {
-          await db.insert(portfolios).values({ id: crypto.randomUUID(), userId: targetUserId, balance: '10000.00', initialBalance: '10000.00' });
+          if (allowInit) {
+            await db.insert(portfolios).values({ id: crypto.randomUUID(), userId: targetUserId, balance: '10000.00', initialBalance: '10000.00' });
+          } else {
+            console.log(`[Auth] Portfolio not found and allowInit is false for user: ${targetUserId}`);
+            return {
+              error: 'STRATEGY_NOT_REGISTERED',
+              expires: new Date(Date.now() + 3600 * 1000).toISOString(),
+            };
+          }
         }
       } catch (dbErr) {
         // Only log warning at runtime, suppressed in production logs to avoid noise

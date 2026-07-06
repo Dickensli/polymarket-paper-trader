@@ -36,6 +36,9 @@ function realTradingEnabled(metadata: unknown): boolean {
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
+    if (session?.error === 'STRATEGY_NOT_REGISTERED') {
+      return NextResponse.json({ error: 'Strategy not registered. Call register_strategy first.' }, { status: 404 });
+    }
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

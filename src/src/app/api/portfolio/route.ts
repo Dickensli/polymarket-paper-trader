@@ -20,6 +20,9 @@ import {
 export async function GET() {
   try {
     const session = await auth();
+    if (session?.error === 'STRATEGY_NOT_REGISTERED') {
+      return NextResponse.json({ error: 'Strategy not registered. Call register_strategy first.' }, { status: 404 });
+    }
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -50,6 +53,9 @@ export async function GET() {
 export async function DELETE(request: Request) {
   try {
     const session = await auth();
+    if (session?.error === 'STRATEGY_NOT_REGISTERED') {
+      return NextResponse.json({ error: 'Strategy not registered. Call register_strategy first.' }, { status: 404 });
+    }
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

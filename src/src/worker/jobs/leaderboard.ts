@@ -41,7 +41,7 @@ export async function runLeaderboardCalculation() {
     const portfolioValue = balance + positionsValue;
     const totalPnl = portfolioValue - initialBalance;
     const returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
-    const platform = getUserPlatform(user.settings);
+    const platform = getUserPlatform(user.settings, user.email);
 
     snapshots.push({
       userId: user.id,

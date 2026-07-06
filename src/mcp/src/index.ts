@@ -26,6 +26,7 @@ function getAgentHeaders(args?: any) {
   
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "x-agent-platform": "polymarket",
   };
 
   if (strategyId) {
@@ -41,6 +42,7 @@ function getPublicHeaders() {
   return {
     "Content-Type": "application/json",
     "x-agent-secret": AGENT_SECRET,
+    "x-agent-platform": "polymarket",
   };
 }
 
@@ -1736,6 +1738,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ==========================================================================
 
 async function run() {
+  process.stdin.on("close", () => {
+    console.error("[MCP] Stdin closed, exiting...");
+    process.exit(0);
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("PolyTrader MCP server running on stdio (v0.5.0 — 33 tools)");

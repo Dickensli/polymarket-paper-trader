@@ -28,6 +28,9 @@ import { eq, and, desc } from 'drizzle-orm';
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();
+    if (session?.error === 'STRATEGY_NOT_REGISTERED') {
+      return NextResponse.json({ error: 'Strategy not registered. Call register_strategy first.' }, { status: 404 });
+    }
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

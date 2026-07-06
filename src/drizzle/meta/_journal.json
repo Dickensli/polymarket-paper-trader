@@ -36,6 +36,13 @@
       "when": 1783280000000,
       "tag": "0004_add_leaderboard_platform",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783300000000,
+      "tag": "0005_fix_snapshot_platform",
+      "breakpoints": true
     }
   ]
 }

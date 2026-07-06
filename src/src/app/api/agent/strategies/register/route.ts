@@ -62,7 +62,7 @@ async function ensureUserColor(db: ReturnType<typeof getDb>, userId: string) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth();
+    const session = await auth({ allowInit: true });
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

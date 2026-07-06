@@ -30,6 +30,13 @@ function getAgentHeaders(args, idempotencyKey) {
         ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
     };
 }
+function getPublicHeaders() {
+    return {
+        "Content-Type": "application/json",
+        "x-agent-secret": AGENT_SECRET,
+        "x-agent-platform": "kalshi",
+    };
+}
 async function callPolyTrader(path, init = {}) {
     const res = await fetch(`${POLYTRADER_API_URL}${path}`, init);
     const text = await res.text();
@@ -361,11 +368,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (value !== undefined)
                     params.set(key, String(value));
             }
-            const data = await callPolyTrader(`/kalshi/markets?${params.toString()}`);
+            const data = await callPolyTrader(`/kalshi/markets?${params.toString()}`, {
+                headers: getPublicHeaders(),
+            });
             return json({ ok: true, data });
         }
         case "get_market": {
-            const data = await callPolyTrader(`/kalshi/markets/${encodeURIComponent(String(args.ticker))}`);
+            const data = await callPolyTrader(`/kalshi/markets/${encodeURIComponent(String(args.ticker))}`, {
+                headers: getPublicHeaders(),
+            });
             return json({ ok: true, data: data.data ?? data });
         }
         case "buy": {
@@ -429,7 +440,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 params.set("start_ts", String(args.start_ts));
             if (args.end_ts !== undefined)
                 params.set("end_ts", String(args.end_ts));
-            const data = await callPolyTrader(`/kalshi/markets/${ticker}/candlesticks?${params.toString()}`);
+            const data = await callPolyTrader(`/kalshi/markets/${ticker}/candlesticks?${params.toString()}`, {
+                headers: getPublicHeaders(),
+            });
             return json({ ok: true, data: data.data ?? data });
         }
         case "get_orderbook": {
@@ -475,11 +488,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // ── Agent Reports (Retro) ──────────────────────────────────────
         case "save_report": {
-            const strategy_id = String(args.strategy_id);
+            const strategy_id = String(args.strategy_id || args.account);
             const content = String(args.content);
             const filename = String(args.filename);
-            if (!strategy_id || !content || !filename) {
-                throw new Error("Missing required fields: strategy_id, content, filename");
+            if (!strategy_id || strategy_id === "undefined" || !content || !filename) {
+                throw new Error("Missing required fields: strategy_id/account, content, filename");
             }
             const data = await callPolyTrader("/reports", {
                 method: "POST",
@@ -489,17 +502,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return json({ ok: true, data: data.data ?? data });
         }
         case "list_reports": {
-            const strategy_id = String(args.strategy_id);
-            if (!strategy_id)
+            const strategy_id = String(args.strategy_id || args.account);
+            if (!strategy_id || strategy_id === "undefined")
                 throw new Error("Missing required field: account");
             const limit = Number(args.limit || 3);
             const data = await callPolyTrader(`/reports?strategy_id=${encodeURIComponent(strategy_id)}&limit=${limit}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         case "read_report": {
-            const strategy_id = String(args.strategy_id);
+            const strategy_id = String(args.strategy_id || args.account);
             const filename = String(args.filename);
-            if (!strategy_id || !filename)
+            if (!strategy_id || strategy_id === "undefined" || !filename)
                 throw new Error("Missing required fields: account, filename");
             const data = await callPolyTrader(`/reports/${encodeURIComponent(filename)}?strategy_id=${encodeURIComponent(strategy_id)}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
@@ -588,6 +601,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 async function main() {
     log("Starting Kalshi MCP server...");
+    process.stdin.on("close", () => {
+        log("Stdin closed, exiting...");
+        process.exit(0);
+    });
     const transport = new StdioServerTransport();
     await server.connect(transport);
     log("Server connected and running.");
