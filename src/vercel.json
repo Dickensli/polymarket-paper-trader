@@ -12,7 +12,7 @@
   ],
   "crons": [
     {
-      "path": "/api/cron",
+      "path": "/api/cron?task=daily",
       "schedule": "0 0 * * *"
     }
   ]

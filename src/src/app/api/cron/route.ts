@@ -29,6 +29,24 @@ export async function GET(req: Request) {
     } else if (task === 'order-check') {
       const result = await runOrderCheck();
       return NextResponse.json({ success: true, result });
+    } else if (task === 'daily') {
+      const summary: Record<string, any> = {};
+      summary.pricesUpdated = await runPriceRefresh();
+      summary.orderCheck = await runOrderCheck();
+      summary.positionsSettled = await runResolutionCheck();
+      summary.usersRanked = await runLeaderboardCalculation();
+
+      // Run daily active markets sync
+      try {
+        const url = new URL(req.url);
+        const syncUrl = `${url.origin}/api/sync`;
+        const syncRes = await fetch(syncUrl).catch(() => null);
+        summary.syncStatus = syncRes ? await syncRes.json().catch(() => 'JSON parse error') : 'Fetch failed';
+      } catch (e: any) {
+        summary.syncStatus = `Error: ${e.message}`;
+      }
+
+      return NextResponse.json({ success: true, message: 'Daily tasks complete', summary });
     } else if (task === 'all' || !task) {
       // Intelligent Cron Scheduler (designed for 1-minute execution frequency)
       const currentMinute = new Date().getMinutes();
