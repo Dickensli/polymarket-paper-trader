@@ -61,7 +61,7 @@ function json(data: unknown) {
 }
 
 const accountProps = {
-  account: { type: "string", description: "Strategy/profile name to isolate Polymarket US paper portfolios." },
+  strategy_id: { type: "string", description: "Strategy name to isolate Polymarket US paper portfolios." },
 };
 
 const server = new Server(
@@ -77,13 +77,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: { balance: { type: "number", description: "Starting USD balance, default 10000." }, ...accountProps },
-        required: ["account"],
+        required: ["strategy_id"],
       },
     },
     {
       name: "get_balance",
       description: "Get Polymarket US paper cash, positions value, total value, and P&L.",
-      inputSchema: { type: "object", properties: accountProps, required: ["account"] },
+      inputSchema: { type: "object", properties: accountProps, required: ["strategy_id"] },
     },
     {
       name: "search_markets",
@@ -151,7 +151,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           price: { type: "number", description: "Optional override execution price, 0-1." },
           ...accountProps,
         },
-        required: ["slug", "account"],
+        required: ["slug", "strategy_id"],
       },
     },
     {
@@ -167,23 +167,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           price: { type: "number", description: "Optional override execution price, 0-1." },
           ...accountProps,
         },
-        required: ["account"],
+        required: ["strategy_id"],
       },
     },
     {
       name: "portfolio",
       description: "Get the complete Polymarket US paper portfolio including positions and trade history.",
-      inputSchema: { type: "object", properties: accountProps, required: ["account"] },
+      inputSchema: { type: "object", properties: accountProps, required: ["strategy_id"] },
     },
     {
       name: "history",
       description: "Get recent Polymarket US paper trade history.",
-      inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["account"] },
+      inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["strategy_id"] },
     },
     {
       name: "stats",
       description: "Summarize Polymarket US paper trading performance.",
-      inputSchema: { type: "object", properties: accountProps, required: ["account"] },
+      inputSchema: { type: "object", properties: accountProps, required: ["strategy_id"] },
     },
     // ── Agent Reports (Retro) ──────────────────────────────────────
     {
@@ -196,7 +196,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           filename: { type: "string", description: "Report filename, e.g. 2026-07-02T14:00:00.md" },
           ...accountProps,
         },
-        required: ["account", "content", "filename"],
+        required: ["strategy_id", "content", "filename"],
       },
     },
     {
@@ -208,7 +208,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           limit: { type: "number", description: "Max reports to return (default 3)" },
           ...accountProps,
         },
-        required: ["account"],
+        required: ["strategy_id"],
       },
     },
     {
@@ -220,7 +220,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           filename: { type: "string", description: "Report filename to read" },
           ...accountProps,
         },
-        required: ["account", "filename"],
+        required: ["strategy_id", "filename"],
       },
     },
     // ── Backtesting ────────────────────────────────────────────────
@@ -263,7 +263,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode (default true)", default: true },
           platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
           balance: { type: "number", description: "Starting paper balance in USD" },
-          ...accountProps,
         },
         required: ["strategy_id"],
       },
@@ -275,7 +274,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           strategy_id: { type: "string", description: "Strategy name to get context for" },
-          ...accountProps,
         },
         required: ["strategy_id"],
       },
@@ -295,7 +293,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           price: { type: "number", description: "Explicit limit price from 0 to 1" },
           client_order_id: { type: "string", description: "Optional client order id" },
           time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
-          ...accountProps,
         },
         required: ["strategy_id", "slug", "outcome", "side", "price"],
       },
@@ -307,7 +304,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           order_id: { type: "string", description: "Local real_trade_orders UUID" },
-          ...accountProps,
+          strategy_id: { type: "string", description: "Registered strategy name" },
         },
         required: ["order_id"],
       },
