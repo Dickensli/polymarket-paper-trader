@@ -98,7 +98,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           search: { type: "string" },
-          status: { type: "string" },
+          status: { type: "string", description: "Filter by status: unopened, open, closed, settled" },
           limit: { type: "number" },
           cursor: { type: "string" },
         },
@@ -377,8 +377,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "search_markets": {
       const params = new URLSearchParams();
       for (const key of ["search", "status", "limit", "cursor"]) {
-        const value = (args as any)[key];
-        if (value !== undefined) params.set(key, String(value));
+        let value = (args as any)[key];
+        if (value !== undefined) {
+          if (key === "status" && String(value).toLowerCase() === "active") {
+            value = "open";
+          }
+          params.set(key, String(value));
+        }
       }
       const data = await callPolyTrader(`/kalshi/markets?${params.toString()}`, {
         headers: getPublicHeaders(),
@@ -546,8 +551,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "register_strategy": {
       const strategy_id = String((args as any).strategy_id);
       if (!strategy_id) throw new Error("Missing required field: strategy_id");
-      const account_id = String((args as any).account_id);
-      if (!account_id) throw new Error("Missing required field: account_id");
+      const account_id = String((args as any).account_id || AGENT_USER_ID);
       const data = await callPolyTrader("/agent/strategies/register", {
         method: "POST",
         headers: getAgentHeaders(args),

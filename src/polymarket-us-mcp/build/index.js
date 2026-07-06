@@ -245,6 +245,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 type: "object",
                 properties: {
                     strategy_id: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
+                    account_id: { type: "string", description: "Account ID, defaults to AGENT_USER_ID if not provided." },
                     is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode (default true)", default: true },
                     platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
                     balance: { type: "number", description: "Starting paper balance in USD" },
@@ -488,9 +489,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const strategy_id = String(args.strategy_id);
             if (!strategy_id)
                 throw new Error("Missing required field: strategy_id");
-            const account_id = String(args.account_id);
-            if (!account_id)
-                throw new Error("Missing required field: account_id");
+            const account_id = String(args.account_id || AGENT_USER_ID);
             const data = await callPolyTrader("/agent/strategies/register", {
                 method: "POST",
                 headers: getAgentHeaders(args),

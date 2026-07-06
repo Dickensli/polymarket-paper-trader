@@ -100,27 +100,40 @@ function polymarketUsAction(side: Side): string {
 }
 
 function loadKalshiPrivateKey(): string {
-  if (process.env.KALSHI_PRIVATE_KEY_PEM) {
-    return process.env.KALSHI_PRIVATE_KEY_PEM.replace(/\\n/g, '\n');
+  const useDemo = process.env.KALSHI_USE_DEMO === 'true';
+  const pem = useDemo ? process.env.KALSHI_DEMO_PRIVATE_KEY_PEM : process.env.KALSHI_PRIVATE_KEY_PEM;
+  if (pem) {
+    return pem.replace(/\\n/g, '\n');
   }
-  return readFileSync(requireEnv('KALSHI_PRIVATE_KEY_PATH'), 'utf8');
+  const pathVar = useDemo ? 'KALSHI_DEMO_PRIVATE_KEY_PATH' : 'KALSHI_PRIVATE_KEY_PATH';
+  return readFileSync(requireEnv(pathVar), 'utf8');
 }
 
 function kalshiBaseUrl(): string {
-  return (process.env.KALSHI_BASE_URL || 'https://external-api.kalshi.com/trade-api/v2').replace(/\/$/, '');
+  if (process.env.KALSHI_BASE_URL) {
+    return process.env.KALSHI_BASE_URL.replace(/\/$/, '');
+  }
+  const useDemo = process.env.KALSHI_USE_DEMO === 'true';
+  return useDemo ? 'https://demo-api.kalshi.co/trade-api/v2' : 'https://external-api.kalshi.com/trade-api/v2';
 }
 
 function kalshiSign(method: string, path: string): Record<string, string> {
   const timestamp = Date.now().toString();
-  const message = Buffer.from(`${timestamp}${method.toUpperCase()}${path.split('?')[0]}`, 'utf8');
+  const cleanPath = path.split('?')[0];
+  const signedPath = cleanPath.startsWith('/trade-api/v2') ? cleanPath : `/trade-api/v2${cleanPath}`;
+  
+  const message = Buffer.from(`${timestamp}${method.toUpperCase()}${signedPath}`, 'utf8');
   const signature = cryptoSign('sha256', message, {
     key: loadKalshiPrivateKey(),
     padding: constants.RSA_PKCS1_PSS_PADDING,
     saltLength: constants.RSA_PSS_SALTLEN_DIGEST,
   }).toString('base64');
 
+  const useDemo = process.env.KALSHI_USE_DEMO === 'true';
+  const apiKeyId = useDemo ? requireEnv('KALSHI_DEMO_API_KEY_ID') : requireEnv('KALSHI_API_KEY_ID');
+
   return {
-    'KALSHI-ACCESS-KEY': requireEnv('KALSHI_API_KEY_ID'),
+    'KALSHI-ACCESS-KEY': apiKeyId,
     'KALSHI-ACCESS-TIMESTAMP': timestamp,
     'KALSHI-ACCESS-SIGNATURE': signature,
   };
@@ -208,7 +221,8 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const fillsRecord = fills as Record<string, unknown>;
 
   const cash =
-    Number(balanceRecord.balance) / (Number(balanceRecord.balance) > 1_000_000 ? 100 : 1) ||
+    Number(balanceRecord.balance_dollars) ||
+    (balanceRecord.balance ? Number(balanceRecord.balance) / 100 : 0) ||
     Number(balanceRecord.available_balance) ||
     0;
   const positionRows = Array.isArray(positionsRecord.positions) ? positionsRecord.positions : [];
