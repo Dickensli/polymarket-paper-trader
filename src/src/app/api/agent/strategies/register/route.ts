@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { auth, resolveTargetUserId } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { strategies, users } from '@/lib/db/schema';
-import { eq, isNotNull } from 'drizzle-orm';
+import { strategies, users, portfolios } from '@/lib/db/schema';
+import { eq, isNotNull, and } from 'drizzle-orm';
 import crypto from 'crypto';
 
 // ---------------------------------------------------------------------------
@@ -62,8 +62,8 @@ async function ensureUserColor(db: ReturnType<typeof getDb>, userId: string) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth({ allowInit: true });
-    if (!session?.user?.id) {
+    const session = await auth();
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -79,8 +79,13 @@ export async function POST(request: NextRequest) {
     const { strategy_id, account_id, is_paper_trading, platform, balance, risk_config, schedule, metadata } = parsed.data;
 
     // Verify deterministic identity
+    const sessionUser = (session as any).user || (session as any).proposedUser;
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const expectedUserId = resolveTargetUserId(account_id, strategy_id, platform);
-    if (session.user.id !== expectedUserId) {
+    if (sessionUser.id !== expectedUserId) {
       return NextResponse.json({ 
         error: 'Forbidden: Identity mismatch'
       }, { status: 403 });
@@ -96,43 +101,93 @@ export async function POST(request: NextRequest) {
 
     try {
       const db = getDb();
-      const existing = await db.query.strategies.findFirst({
-        where: eq(strategies.userId, session.user.id),
-      });
-
-      if (existing) {
-        try { await ensureUserColor(db, session.user.id); } catch { /* non-fatal */ }
-        return NextResponse.json({
-          registered: true,
-          is_new: false,
-          strategy: sanitizeStrategy(existing),
-          message: 'Strategy already registered.'
+      
+      // If session had no error, the user already exists. Check if strategy is already registered.
+      if (!session.error) {
+        const existing = await db.query.strategies.findFirst({
+          where: and(
+            eq(strategies.userId, sessionUser.id),
+            eq(strategies.strategyId, strategy_id),
+          ),
         });
+
+        if (existing) {
+          try { await ensureUserColor(db, sessionUser.id); } catch { /* non-fatal */ }
+          return NextResponse.json({
+            registered: true,
+            is_new: false,
+            strategy: sanitizeStrategy(existing),
+            message: 'Strategy already registered.'
+          });
+        }
       }
 
-      const [created] = await db.insert(strategies).values({
-        id: crypto.randomUUID(),
-        userId: session.user.id,
-        strategyId: strategy_id,
-        agentMode: is_paper_trading ? 'paper' : 'real',
-        platform: platform,
-        startingBalance: String(balance),
-        riskConfig: risk_config ?? {},
-        schedule: schedule ?? null,
-        metadata: metadata ?? { registeredAt: new Date().toISOString() },
-      }).returning();
+      // Transactional creation of User, Portfolio, and Strategy
+      const result = await db.transaction(async (tx) => {
+        // Ensure user row exists
+        let dbUser = await tx.query.users.findFirst({ where: eq(users.id, expectedUserId) });
+        if (!dbUser) {
+          const cleanAccount = strategy_id.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+          let rawAgentName = isUuid(account_id) ? 'AI Agent' : account_id;
+          let strategyName = strategy_id.startsWith(rawAgentName) ? strategy_id : `${rawAgentName}("${strategy_id}")`;
+          let strategyEmail = `agent+${platform}+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
 
-      try { await ensureUserColor(db, session.user.id); } catch { /* non-fatal */ }
+          await tx.insert(users).values({
+            id: expectedUserId,
+            email: strategyEmail,
+            name: strategyName,
+            settings: { strategyId: strategy_id, platform, defaultTradeSize: 100, slippageEnabled: false, slippageBps: 50, theme: "system" }
+          });
+        }
+
+        // Ensure portfolio exists
+        let dbPort = await tx.query.portfolios.findFirst({ where: eq(portfolios.userId, expectedUserId) });
+        if (!dbPort) {
+          await tx.insert(portfolios).values({
+            id: crypto.randomUUID(),
+            userId: expectedUserId,
+            balance: String(balance),
+            initialBalance: String(balance)
+          });
+        }
+
+        // Ensure strategy exists
+        let strat = await tx.query.strategies.findFirst({
+          where: and(
+            eq(strategies.userId, expectedUserId),
+            eq(strategies.strategyId, strategy_id)
+          )
+        });
+
+        if (!strat) {
+          [strat] = await tx.insert(strategies).values({
+            id: crypto.randomUUID(),
+            userId: expectedUserId,
+            strategyId: strategy_id,
+            agentMode: is_paper_trading ? 'paper' : 'real',
+            platform: platform,
+            startingBalance: String(balance),
+            riskConfig: risk_config ?? {},
+            schedule: schedule ?? null,
+            metadata: metadata ?? { registeredAt: new Date().toISOString() },
+          }).returning();
+        }
+
+        return strat;
+      });
+
+      try { await ensureUserColor(db, expectedUserId); } catch { /* non-fatal */ }
 
       return NextResponse.json({
         registered: true,
         is_new: true,
-        strategy: sanitizeStrategy(created),
+        strategy: sanitizeStrategy(result),
         message: 'Strategy registered successfully.'
       }, { status: 201 });
 
     } catch (dbErr) {
-      console.warn('[Register Route] Database unavailable, returning degraded success for agent:', dbErr);
+      console.warn('[Register Route] Database transaction failed, returning degraded success for agent:', dbErr);
       return NextResponse.json({
         registered: true,
         is_new: true,
