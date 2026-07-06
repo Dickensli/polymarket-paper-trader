@@ -19,8 +19,7 @@ function generateIdempotencyKey() {
 function getAgentHeaders(args, idempotencyKey) {
     const strategyId = typeof args?.strategy_id === "string" ? args.strategy_id :
         (typeof args?.account === "string" ? args.account : "default");
-    const accountId = typeof args?.account_id === "string" ? args.account_id :
-        (typeof args?.agent_user_id === "string" ? args.agent_user_id : AGENT_USER_ID);
+    const accountId = AGENT_USER_ID;
     return {
         "Content-Type": "application/json",
         "x-agent-secret": AGENT_SECRET,
@@ -57,7 +56,6 @@ function json(data) {
 }
 const accountProps = {
     account: { type: "string", description: "Strategy/profile name to isolate Kalshi paper portfolios." },
-    account_id: { type: "string", description: "Optional agent user ID override." },
 };
 const server = new Server({ name: "kalshi-paper-trader-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({

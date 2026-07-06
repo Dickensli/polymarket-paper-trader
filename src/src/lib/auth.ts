@@ -199,13 +199,20 @@ export const auth = async (...args: any[]) => {
     });
 
     if (matchReal || matchMigration) {
+      const strategyHeader = reqHeaders.get('x-agent-strategy-id');
+      if (!strategyHeader || strategyHeader === 'default') {
+        console.log('[Auth] Rejecting agent request: x-agent-strategy-id header is missing or cannot be "default".');
+        return {
+          error: 'STRATEGY_NOT_REGISTERED',
+          expires: new Date(Date.now() + 3600 * 1000).toISOString(),
+        };
+      }
+
       const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
       let rawAgentName = isUuid(rawUserIdHeader) ? 'AI Agent' : rawUserIdHeader;
 
       let targetUserId = resolveTargetUserId(rawUserIdHeader, agentAccount, platform);
-      let strategyName = agentAccount !== 'default' 
-        ? (agentAccount.startsWith(rawAgentName) ? agentAccount : `${rawAgentName}("${agentAccount}")`)
-        : rawAgentName;
+      let strategyName = agentAccount.startsWith(rawAgentName) ? agentAccount : `${rawAgentName}("${agentAccount}")`;
 
       const cleanAccount = agentAccount.replace(/[^a-zA-Z0-9_-]/g, '_');
       let strategyEmail = `agent+${platform}+${rawAgentName.replace(/\s+/g, '_')}+${cleanAccount}@polymarkettraders.com`;
