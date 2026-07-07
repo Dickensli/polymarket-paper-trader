@@ -29,13 +29,6 @@ export async function GET(req: Request) {
     } else if (task === 'order-check') {
       const result = await runOrderCheck();
       return NextResponse.json({ success: true, result });
-    } else if (task === 'force-all') {
-      const summary: Record<string, any> = {};
-      summary.pricesUpdated = await runPriceRefresh();
-      summary.orderCheck = await runOrderCheck();
-      summary.positionsSettled = await runResolutionCheck();
-      summary.usersRanked = await runLeaderboardCalculation();
-      return NextResponse.json({ success: true, message: 'All tasks completed successfully', summary });
     } else if (task === 'daily') {
       const summary: Record<string, any> = {};
       summary.pricesUpdated = await runPriceRefresh();
@@ -55,43 +48,29 @@ export async function GET(req: Request) {
 
       return NextResponse.json({ success: true, message: 'Daily tasks complete', summary });
     } else if (task === 'all' || !task) {
-      // Intelligent Cron Scheduler (designed for 1-minute execution frequency)
+      // Robust Bucket-based Scheduler (designed for 5-minute execution frequency from GitHub Actions)
       const currentMinute = new Date().getMinutes();
+      const bucket5m = Math.floor(currentMinute / 5); // 12 buckets per hour (0-11)
       const summary: Record<string, any> = {};
       
-      // 1. Price Refresh (Every 1m)
+      // 1. Price Refresh (Every 5m trigger)
       summary.pricesUpdated = await runPriceRefresh();
       
-      // 2. Limit Order Checker (Every 1m)
+      // 2. Limit Order Checker (Every 5m trigger)
       summary.orderCheck = await runOrderCheck();
       
-      // 3. Resolution Check (Every 5m)
-      if (currentMinute % 5 === 0) {
-        summary.positionsSettled = await runResolutionCheck();
-      }
+      // 3. Resolution Check (Every 5m trigger)
+      summary.positionsSettled = await runResolutionCheck();
       
-      // 4. Leaderboard Calculation (Every 15m)
-      if (currentMinute % 15 === 0) {
+      // 4. Leaderboard Calculation (Every 3rd bucket = 15m)
+      if (bucket5m % 3 === 0) {
         summary.usersRanked = await runLeaderboardCalculation();
       }
-
-      // 5. Active Markets & Events Metadata Sync (Every 10m) - DISABLED to prevent excessive Supabase egress traffic
-      /*
-      if (currentMinute % 10 === 0) {
-        try {
-          const url = new URL(req.url);
-          const syncUrl = `${url.origin}/api/sync`;
-          const syncRes = await fetch(syncUrl).catch(() => null);
-          summary.syncStatus = syncRes ? await syncRes.json().catch(() => 'JSON parse error') : 'Fetch failed';
-        } catch (e: any) {
-          summary.syncStatus = `Error: ${e.message}`;
-        }
-      }
-      */
       
       return NextResponse.json({
         success: true,
         currentMinute,
+        bucket5m,
         summary
       });
     }
