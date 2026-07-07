@@ -1,0 +1,35 @@
+name: Cron – Leaderboard & Price Refresh
+on:
+  schedule:
+    # Run every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Cron task to run (all, leaderboard, price-refresh, resolution-check, order-check)'
+        required: false
+        default: 'all'
+
+jobs:
+  cron-ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Cron Endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+        run: |
+          TASK="${{ github.event.inputs.task || 'all' }}"
+          URL="${DEPLOY_URL}/api/cron?task=${TASK}"
+          echo "Pinging: ${URL}"
+          HTTP_CODE=$(curl -s -o response.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "User-Agent: GitHub-Actions-Cron/1.0" \
+            "${URL}")
+          echo "HTTP Status: ${HTTP_CODE}"
+          cat response.json
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Cron endpoint returned HTTP ${HTTP_CODE}"
+            exit 1
+          fi
