@@ -29,6 +29,13 @@ export async function GET(req: Request) {
     } else if (task === 'order-check') {
       const result = await runOrderCheck();
       return NextResponse.json({ success: true, result });
+    } else if (task === 'force-all') {
+      const summary: Record<string, any> = {};
+      summary.pricesUpdated = await runPriceRefresh();
+      summary.orderCheck = await runOrderCheck();
+      summary.positionsSettled = await runResolutionCheck();
+      summary.usersRanked = await runLeaderboardCalculation();
+      return NextResponse.json({ success: true, message: 'All tasks completed successfully', summary });
     } else if (task === 'daily') {
       const summary: Record<string, any> = {};
       summary.pricesUpdated = await runPriceRefresh();

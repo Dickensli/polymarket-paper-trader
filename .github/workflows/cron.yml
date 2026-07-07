@@ -1,14 +1,14 @@
 name: Cron – Leaderboard & Price Refresh
 on:
   schedule:
-    # Run every 15 minutes
-    - cron: '*/15 * * * *'
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       task:
-        description: 'Cron task to run (all, leaderboard, price-refresh, resolution-check, order-check)'
+        description: 'Cron task to run (force-all, all, leaderboard, price-refresh, resolution-check, order-check)'
         required: false
-        default: 'all'
+        default: 'force-all'
 
 jobs:
   cron-ping:
@@ -20,7 +20,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
         run: |
-          TASK="${{ github.event.inputs.task || 'all' }}"
+          TASK="${{ github.event.inputs.task || 'force-all' }}"
           URL="${DEPLOY_URL}/api/cron?task=${TASK}"
           echo "Pinging: ${URL}"
           HTTP_CODE=$(curl -s -o response.json -w '%{http_code}' \
