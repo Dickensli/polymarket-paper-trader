@@ -1,8 +1,9 @@
 name: Cron – Leaderboard & Price Refresh
 on:
-  schedule:
-    # Run every 5 minutes
-    - cron: '*/5 * * * *'
+  # schedule disabled – Upstash QStash is now the primary cron trigger (every 5 min)
+  # Uncomment below to re-enable GitHub Actions as a backup:
+  # schedule:
+  #   - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       task:
