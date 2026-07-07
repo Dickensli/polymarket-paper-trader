@@ -62,10 +62,8 @@ export async function GET(req: Request) {
       // 3. Resolution Check (Every 5m trigger)
       summary.positionsSettled = await runResolutionCheck();
       
-      // 4. Leaderboard Calculation (Every 3rd bucket = 15m)
-      if (bucket5m % 3 === 0) {
-        summary.usersRanked = await runLeaderboardCalculation();
-      }
+      // 4. Leaderboard Calculation (Every trigger, since GitHub Actions cron is irregular)
+      summary.usersRanked = await runLeaderboardCalculation();
       
       return NextResponse.json({
         success: true,
