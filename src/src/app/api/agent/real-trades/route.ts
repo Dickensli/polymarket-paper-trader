@@ -218,8 +218,25 @@ export async function POST(request: NextRequest) {
       // Mirror the trade locally (like paper trading) so that
       // portfolios.balance and positions stay in sync without
       // calling the expensive official portfolio API.
-      const shares = order.shares ?? (order.amount && order.price ? order.amount / order.price : 0);
-      if (shares > 0 && order.price) {
+      let filledShares = 0;
+      if (strategy.platform === 'kalshi') {
+        const rawResponse = official.response;
+        const fillCountVal = rawResponse.fill_count ?? (rawResponse.order as any)?.fill_count;
+        if (fillCountVal != null) {
+          filledShares = Number(fillCountVal);
+        }
+      } else if (strategy.platform === 'polymarket_us') {
+        const rawResponse = official.response;
+        const fillCountVal = rawResponse.filledQuantity ?? rawResponse.fill_count;
+        if (fillCountVal != null) {
+          filledShares = Number(fillCountVal);
+        }
+      } else {
+        // Fallback / default
+        filledShares = order.shares ?? (order.amount && order.price ? order.amount / order.price : 0);
+      }
+
+      if (filledShares > 0 && order.price) {
         try {
           await executeTrade(session.user.id, {
             marketId: order.slug,
@@ -227,7 +244,7 @@ export async function POST(request: NextRequest) {
             tokenId: order.slug,
             outcome: order.outcome,
             side: order.side,
-            shares,
+            shares: filledShares,
             price: order.price,
             platform: strategy.platform as 'polymarket' | 'kalshi' | 'polymarket_us',
             idempotencyKey: official.clientOrderId,
