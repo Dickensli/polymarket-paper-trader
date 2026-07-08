@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { getDb } from '@/lib/db';
-import { portfolios, positions, users, leaderboardSnapshots } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { portfolios, positions, users, leaderboardSnapshots, portfolioSnapshots, strategies } from '@/lib/db/schema';
+import { eq, and, desc } from 'drizzle-orm';
 import { getUserPlatform } from '@/lib/platform';
 
 /**
@@ -23,24 +23,56 @@ export async function runLeaderboardCalculation() {
       where: eq(positions.portfolioId, port.id)
     });
 
-    // Calculate total value including realized PnL from closed positions
-    const balance = Number(port.balance);
+    // Check if the user is running a real trading strategy
+    const userStrategies = await db.query.strategies.findMany({
+      where: eq(strategies.userId, user.id)
+    });
+    const isReal = userStrategies.some(s => s.agentMode === 'real');
+
+    let portfolioValue = 0;
+    let totalPnl = 0;
+    let returnPct = 0;
     const initialBalance = Number(port.initialBalance);
 
-    let positionsValue = 0;
-    let closedRealizedPnl = 0;
-    for (const pos of userPositions) {
-      if (pos.isOpen) {
-        positionsValue += Number(pos.shares) * Number(pos.currentPrice);
-      } else {
-        // Include realized PnL from closed/resolved positions
-        closedRealizedPnl += Number(pos.realizedPnl) || 0;
-      }
-    }
+    if (isReal) {
+      // For real trading, use the latest official snapshot
+      const latestSnapshot = await db.query.portfolioSnapshots.findFirst({
+        where: and(
+          eq(portfolioSnapshots.userId, user.id),
+          eq(portfolioSnapshots.source, 'official')
+        ),
+        orderBy: [desc(portfolioSnapshots.capturedAt)]
+      });
 
-    const portfolioValue = balance + positionsValue;
-    const totalPnl = portfolioValue - initialBalance;
-    const returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
+      if (latestSnapshot) {
+        portfolioValue = Number(latestSnapshot.totalValue);
+        totalPnl = portfolioValue - initialBalance;
+        returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
+      } else {
+        // Fallback if no official snapshot yet: stay flat at initial balance
+        portfolioValue = initialBalance;
+        totalPnl = 0;
+        returnPct = 0;
+      }
+    } else {
+      // Calculate total value including realized PnL from closed positions
+      const balance = Number(port.balance);
+
+      let positionsValue = 0;
+      let closedRealizedPnl = 0;
+      for (const pos of userPositions) {
+        if (pos.isOpen) {
+          positionsValue += Number(pos.shares) * Number(pos.currentPrice);
+        } else {
+          // Include realized PnL from closed/resolved positions
+          closedRealizedPnl += Number(pos.realizedPnl) || 0;
+        }
+      }
+
+      portfolioValue = balance + positionsValue;
+      totalPnl = portfolioValue - initialBalance;
+      returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
+    }
     const platform = getUserPlatform(user.settings, user.email);
 
     snapshots.push({

@@ -32,11 +32,20 @@ let _client: PolymarketUS | null = null;
 
 function getClient(): PolymarketUS {
   if (!_client) {
-    const keyId = process.env.POLYMARKET_US_KEY_ID;
-    const secretKey = process.env.POLYMARKET_US_SECRET_KEY;
+    const useDemo = process.env.POLYMARKET_US_USE_DEMO === 'true';
+    const keyId = useDemo
+      ? process.env.POLYMARKET_US_DEMO_KEY_ID
+      : process.env.POLYMARKET_US_KEY_ID;
+    const secretKey = useDemo
+      ? process.env.POLYMARKET_US_DEMO_SECRET_KEY
+      : process.env.POLYMARKET_US_SECRET_KEY;
 
     _client = new PolymarketUS({
       ...(keyId && secretKey ? { keyId, secretKey } : {}),
+      ...(useDemo ? {
+        apiBaseUrl: 'https://api.preprod.polymarketexchange.com',
+        gatewayBaseUrl: 'https://api.preprod.polymarketexchange.com',
+      } : {}),
     });
   }
   return _client;

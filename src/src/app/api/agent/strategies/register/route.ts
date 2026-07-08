@@ -110,7 +110,12 @@ export async function POST(request: NextRequest) {
           const officialSnapshot = await getOfficialPortfolioSnapshot(venue);
           finalBalance = officialSnapshot.cash;
         } catch (err) {
-          console.warn('[Register Strategy] Failed to fetch real initial balance, falling back to provided balance:', err);
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn('[Register Strategy] Failed to fetch real initial balance:', message);
+          return NextResponse.json(
+            { error: 'Failed to fetch official account balance for real trading strategy', details: message },
+            { status: 502 }
+          );
         }
       }
       // If session had no error, the user already exists. Check if strategy is already registered.
