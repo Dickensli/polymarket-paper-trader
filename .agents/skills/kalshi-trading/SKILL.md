@@ -47,10 +47,17 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 
 ### Trading
 
+⚠️ **CRITICAL TOOL SELECTION RULE:**
+You must select the correct trading tool based on your current `agent_mode` (from `get_strategy_context`):
+- If **Paper Trading** (`agent_mode: "paper"`): Use `buy` and `sell` tools.
+- If **Real Trading** (`agent_mode: "real"`): Use `submit_real_trade` (pass `side="BUY"` or `side="SELL"`) and `cancel_real_order`. DO NOT use `buy` or `sell`.
+
 | Tool | Purpose |
 | --- | --- |
-| `buy` | Buy contracts. Requires `ticker`, `outcome`, `amount_usd`, `account`. |
-| `sell` | Sell contracts. Requires `ticker`, `outcome`, `shares`, `account`. |
+| `buy` | (PAPER ONLY) Buy contracts. Requires `ticker`, `outcome`, `amount_usd`, `account`. |
+| `sell` | (PAPER ONLY) Sell contracts. Requires `ticker`, `outcome`, `shares`, `account`. |
+| `submit_real_trade` | (REAL ONLY) Real order. Requires `side` (BUY/SELL), `slug` (ticker), `outcome`, `price`, `amount` (or `shares`), `strategy_id`. |
+| `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
 ### Portfolio & History
 

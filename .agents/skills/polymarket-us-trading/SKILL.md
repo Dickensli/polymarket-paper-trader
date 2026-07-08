@@ -46,12 +46,19 @@ Only the 18 tools listed below exist on this server. Do NOT call tools from othe
 
 ### Trading
 
+⚠️ **CRITICAL TOOL SELECTION RULE:**
+You must select the correct trading tool based on your current `agent_mode` (from `get_strategy_context`):
+- If **Paper Trading** (`agent_mode: "paper"`): Use `buy` and `sell` tools.
+- If **Real Trading** (`agent_mode: "real"`): Use `submit_real_trade` (pass `side="BUY"` or `side="SELL"`) and `cancel_real_order`. DO NOT use `buy` or `sell`.
+
 | Tool | Purpose |
 | --- | --- |
-| `buy` | Buy shares. Requires market ID, outcome, amount, strategy_id. |
-| `sell` | Sell shares. Requires market ID, outcome, shares, strategy_id. |
+| `buy` | (PAPER ONLY) Buy shares. Requires market ID, outcome, amount, strategy_id. |
+| `sell` | (PAPER ONLY) Sell shares. Requires market ID, outcome, shares, strategy_id. |
+| `submit_real_trade` | (REAL ONLY) Real order. Requires `side` (BUY/SELL), `slug`, `outcome`, `price`, `amount` (or `shares`), `strategy_id`. |
+| `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
-> There are **no limit-order tools** on this server (no `place_limit_order`, `list_orders`, `cancel_order`, `cancel_all_orders`, `check_orders`).
+> There are **no limit-order tools** on this server for paper trading (no `place_limit_order`, `list_orders`, `cancel_order`, `cancel_all_orders`, `check_orders`). Real trading uses `submit_real_trade` which is limit-based.
 
 ### Portfolio & History
 

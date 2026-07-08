@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     }
 
     const executionPrice = order.price ?? await getKalshiOutcomePrice(order.ticker, order.outcome, 'BUY');
-    if (!executionPrice || executionPrice <= 0 || executionPrice >= 1) {
+    if (!executionPrice || executionPrice <= 0 || executionPrice > 1) {
       return NextResponse.json({ error: 'Invalid or unavailable Kalshi price' }, { status: 400 });
     }
 

@@ -6,7 +6,7 @@ type KalshiMarketResponse = {
 
 function normalizePrice(value: unknown): number | null {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
   return numeric > 1 ? numeric / 100 : numeric;
 }
 
@@ -24,20 +24,35 @@ export async function getKalshiOutcomePrice(ticker: string, outcome: 'YES' | 'NO
   const market = await getKalshiMarket(ticker);
   if (!market) return null;
 
+  // Handle settled/finalized markets
+  if (market.status === 'finalized' || market.status === 'settled') {
+    const result = String(market.result).toLowerCase();
+    if (result === 'yes') return outcome === 'YES' ? 1 : 0;
+    if (result === 'no') return outcome === 'NO' ? 1 : 0;
+  }
+
   const prefix = outcome === 'YES' ? 'yes' : 'no';
   const preferred = side === 'BUY' ? `${prefix}_ask` : `${prefix}_bid`;
   const alternates = [
     preferred,
+    `${preferred}_dollars`,
     `${prefix}_price`,
+    `${prefix}_price_dollars`,
     `${prefix}_mid`,
+    `${prefix}_mid_dollars`,
     `${prefix}_bid`,
+    `${prefix}_bid_dollars`,
     `${prefix}_ask`,
+    `${prefix}_ask_dollars`,
     outcome === 'YES' ? 'last_price' : undefined,
+    outcome === 'YES' ? 'last_price_dollars' : undefined,
+    'settlement_value_dollars',
+    'settlement_value',
   ].filter(Boolean) as string[];
 
   for (const key of alternates) {
     const price = normalizePrice(market[key]);
-    if (price !== null && price < 1) return price;
+    if (price !== null && price <= 1) return price;
   }
   return null;
 }

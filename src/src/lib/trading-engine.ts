@@ -81,11 +81,15 @@ function calculateFee(price: number, shares: number, feeRateBps = 0): number {
  */
 export async function getPortfolio(userId: string): Promise<Portfolio> {
   // 0. Settle resolved positions on-the-fly to ensure cash balance & positions list are current
+  // [Performance Fix] Do not run resolution checks synchronously on every portfolio fetch.
+  // This causes extreme Vercel fluid CPU consumption. Resolution should be handled exclusively by the background cron.
+  /*
   try {
     await runResolutionCheckForUser(userId);
   } catch (err) {
     console.error(`[getPortfolio] On-the-fly resolution check failed for user ${userId}:`, err);
   }
+  */
 
   const db = getDb();
 
@@ -118,118 +122,14 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
   });
 
   if (rawPositions.length > 0) {
-    // 2.1 Refresh prices on the fly
+    // [Performance Fix] Disable on-the-fly live price fetching to prevent Vercel Fluid CPU burn.
+    // Instead of querying Polymarket CLOB API on every portfolio load (which causes timeouts without Redis),
+    // we now rely on the `currentPrice` already stored in the `positions` table. 
+    // This price is updated whenever a trade occurs or when the background cron job runs.
+    /*
     const tokenIds = Array.from(new Set(rawPositions.map((p) => p.tokenId)));
-    
-    const redis = process.env.UPSTASH_REDIS_REST_URL ? Redis.fromEnv() : null;
-
-    const updatedPrices = await withTimeout(
-      Promise.all(
-        tokenIds.map(async (tokenId) => {
-          let cachedPrice: number | null = null;
-          if (redis) {
-            const val = await redis.get(`price:${tokenId}`).catch(() => null);
-            if (val !== null) {
-              cachedPrice = Number(val);
-            }
-          }
-
-          if (cachedPrice !== null) {
-            return { tokenId, price: cachedPrice };
-          }
-
-          const kalshiToken = parseKalshiTokenId(tokenId);
-          const livePrice = kalshiToken
-            ? await getKalshiOutcomePrice(kalshiToken.ticker, kalshiToken.outcome).catch(() => null)
-            : await getMidpoint(tokenId).catch(() => null);
-          if (livePrice !== null && redis) {
-            await redis.set(`price:${tokenId}`, livePrice, { ex: 15 }).catch(() => {});
-          }
-          return { tokenId, price: livePrice };
-        })
-      ),
-      1000
-    );
-
-    // Build a map of resolved live prices
-    const resolvedPrices: Record<string, number> = {};
-    if (updatedPrices) {
-      for (const { tokenId, price } of updatedPrices) {
-        if (price !== null) {
-          resolvedPrices[tokenId] = price;
-        }
-      }
-    }
-
-    // Apply resolved prices or DB cache fallback
-    for (const pos of rawPositions) {
-      let price = resolvedPrices[pos.tokenId] ?? null;
-
-      if (price === null) {
-        // Fallback to database marketCache outcomePrices
-        let market = await db.query.marketCache.findFirst({
-          where: eq(marketCache.id, pos.marketId),
-        });
-        
-        // If not found in database cache, pull directly from Polymarket Gamma API on the fly
-        if (!market) {
-          try {
-            const rawMarket = await getMarket(pos.marketId);
-            if (rawMarket) {
-              await db.insert(marketCache).values({
-                id: rawMarket.id,
-                eventId: null, // Nullable, avoids foreign key constraint violation if event not cached
-                question: rawMarket.question,
-                conditionId: rawMarket.conditionId,
-                tokenIds: rawMarket.tokenIds,
-                outcomePrices: rawMarket.outcomePrices,
-                closed: rawMarket.closed,
-                active: rawMarket.active,
-                endDate: rawMarket.endDate ? new Date(rawMarket.endDate) : null,
-                lastSyncedAt: new Date(),
-              }).onConflictDoUpdate({
-                target: marketCache.id,
-                set: {
-                  question: rawMarket.question,
-                  tokenIds: rawMarket.tokenIds,
-                  outcomePrices: rawMarket.outcomePrices,
-                  closed: rawMarket.closed,
-                  active: rawMarket.active,
-                  endDate: rawMarket.endDate ? new Date(rawMarket.endDate) : null,
-                  lastSyncedAt: new Date(),
-                }
-              });
-
-              market = {
-                id: rawMarket.id,
-                tokenIds: rawMarket.tokenIds,
-                outcomePrices: rawMarket.outcomePrices,
-              } as any;
-            }
-          } catch (err) {
-            console.error(`[getPortfolio] Failed to fetch market ${pos.marketId} on-demand from Gamma API:`, err);
-          }
-        }
-        
-        if (market) {
-          const tIds = (market.tokenIds as string[]) || [];
-          const oPrices = (market.outcomePrices as (string | number)[]) || [];
-          const idx = tIds.indexOf(pos.tokenId);
-          if (idx !== -1 && oPrices[idx] !== undefined) {
-            price = Number(oPrices[idx]);
-          }
-        }
-      }
-
-      if (price !== null && !isNaN(price)) {
-        await db
-          .update(positions)
-          .set({ currentPrice: price.toFixed(6), updatedAt: new Date() })
-          .where(eq(positions.id, pos.id));
-          
-        pos.currentPrice = price.toFixed(6);
-      }
-    }
+    ...
+    */
   }
 
   const activePositions: Position[] = rawPositions.map((pos) => {

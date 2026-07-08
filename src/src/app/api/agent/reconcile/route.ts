@@ -26,7 +26,7 @@ const reconcileSchema = z.object({
   }).optional(),
 });
 
-const DEFAULT_THRESHOLDS = {
+export const DEFAULT_THRESHOLDS = {
   cash: 1,
   total_value: 1,
   position_quantity: 0.000001,
@@ -44,7 +44,7 @@ const TERMINAL_ORDER_STATUSES = new Set([
   'COMPLETED',
 ]);
 
-type LocalSnapshot = {
+export type LocalSnapshot = {
   cash: number;
   positions_value: number;
   total_value: number;
@@ -54,7 +54,7 @@ type LocalSnapshot = {
   open_orders: unknown[];
 };
 
-type ReconciliationDifference = {
+export type ReconciliationDifference = {
   type: 'balance' | 'position' | 'order' | 'fill' | 'unknown';
   severity: 'info' | 'warning' | 'critical';
   message: string;
@@ -220,7 +220,7 @@ function missingFrom(left: Set<string>, right: Set<string>): string[] {
   return [...left].filter((value) => !right.has(value));
 }
 
-function compareSnapshots(
+export function compareSnapshots(
   localSnapshot: LocalSnapshot,
   officialSnapshot: OfficialPortfolioSnapshot,
   thresholds: typeof DEFAULT_THRESHOLDS,
@@ -390,7 +390,7 @@ export async function POST(request: NextRequest) {
         })
       : [];
     const portfolio = await getPortfolio(session.user.id);
-    const localSnapshot = {
+    const localSnapshot: LocalSnapshot = {
       cash: portfolio.balance,
       positions_value: portfolio.totalValue - portfolio.balance,
       total_value: portfolio.totalValue,

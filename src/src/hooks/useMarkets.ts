@@ -62,8 +62,10 @@ export function useMarkets(): UseMarketsReturn {
   const { data: markets = [], isLoading, error, refetch } = useQuery({
     queryKey: ['markets', category, searchQuery],
     queryFn: () => fetchMarkets(category, searchQuery),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 60_000,
+    // [Performance Note] Increased refetch interval from 30s to 120s to drastically reduce
+    // browser-to-server requests, preventing excessive Vercel compute usage and Polymarket API throttling.
+    refetchInterval: 120_000,
   });
 
   const filteredMarkets = useMemo(() => {

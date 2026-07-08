@@ -60,6 +60,9 @@ export function usePortfolio(): UsePortfolioReturn {
     queryKey: ['portfolio'],
     queryFn: fetchPortfolio,
     staleTime: 5_000,
+    // [Performance Note] Changed back to 15s for real-time Master Account observation.
+    // This is now completely safe for Vercel Fluid Compute because the backend (/api/portfolio)
+    // no longer fetches live prices/resolutions from Polymarket, and only queries Supabase (very fast).
     refetchInterval: 15_000,
   });
 

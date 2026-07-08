@@ -45,15 +45,22 @@ All trading tools come from the **`polytraders-web`** MCP server. Call them via 
 
 ### Trading
 
+⚠️ **CRITICAL TOOL SELECTION RULE:**
+You must select the correct trading tool based on your current `agent_mode` (from `get_strategy_context`):
+- If **Paper Trading** (`agent_mode: "paper"`): Use `buy`, `sell`, `place_limit_order`, etc.
+- If **Real Trading** (`agent_mode: "real"`): Use `submit_real_trade` (pass `side="BUY"` or `side="SELL"`) and `cancel_real_order`. DO NOT use any of the paper tools.
+
 | Tool | Purpose |
 |---|---|
-| `buy` | Buy shares. Requires `slug_or_id`, `outcome`, `amount_usd`, `account`. |
-| `sell` | Sell shares. Requires `slug_or_id`, `outcome`, `shares`, `account`. |
-| `place_limit_order` | GTC/GTD limit order. |
-| `list_orders` | List pending limit orders. |
-| `cancel_order` | Cancel a specific order by ID. |
-| `cancel_all_orders` | Cancel all pending orders. |
-| `check_orders` | Trigger limit order fill checks against live prices. |
+| `buy` | (PAPER ONLY) Buy shares. Requires `slug_or_id`, `outcome`, `amount_usd`, `account`. |
+| `sell` | (PAPER ONLY) Sell shares. Requires `slug_or_id`, `outcome`, `shares`, `account`. |
+| `place_limit_order` | (PAPER ONLY) GTC/GTD limit order. |
+| `list_orders` | (PAPER ONLY) List pending limit orders. |
+| `cancel_order` | (PAPER ONLY) Cancel a specific order by ID. |
+| `cancel_all_orders` | (PAPER ONLY) Cancel all pending orders. |
+| `check_orders` | (PAPER ONLY) Trigger limit order fill checks against live prices. |
+| `submit_real_trade` | (REAL ONLY) Real order. Requires `side` (BUY/SELL), `slug`, `outcome`, `price`, `amount` (or `shares`), `strategy_id`. |
+| `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
 ### Portfolio & History
 

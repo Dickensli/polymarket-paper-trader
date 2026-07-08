@@ -5,6 +5,17 @@ function log(msg) {
     const timestamp = new Date().toISOString();
     console.error(`[${timestamp}] ${msg}`);
 }
+const STRATEGY_WHITELIST_RAW = process.env.STRATEGY_WHITELIST;
+if (!STRATEGY_WHITELIST_RAW) {
+    log("FATAL ERROR: STRATEGY_WHITELIST environment variable is required.");
+    process.exit(1);
+}
+const whitelist = STRATEGY_WHITELIST_RAW.split(",").map(s => s.trim()).filter(Boolean);
+if (whitelist.length === 0) {
+    log("FATAL ERROR: STRATEGY_WHITELIST environment variable cannot be empty.");
+    process.exit(1);
+}
+log(`[Harness] Whitelist initialized with strategies: ${JSON.stringify(whitelist)}`);
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
 const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || "https://external-api.kalshi.com/trade-api/v2";
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
@@ -535,6 +546,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const strategy_id = String(args.strategy_id);
             if (!strategy_id)
                 throw new Error("Missing required field: strategy_id");
+            if (!whitelist.includes(strategy_id)) {
+                throw new Error(`[Harness] Strategy ID '${strategy_id}' is not in the allowed STRATEGY_WHITELIST: ${whitelist.join(', ')}.`);
+            }
             const account_id = String(args.account_id || AGENT_USER_ID);
             const data = await callPolyTrader("/agent/strategies/register", {
                 method: "POST",

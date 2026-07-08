@@ -102,6 +102,17 @@ export async function POST(request: NextRequest) {
     try {
       const db = getDb();
       
+      let finalBalance = balance;
+      if (!is_paper_trading) {
+        try {
+          const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+          const venue = platform === 'polymarket_us' ? 'polymarket_us' : 'kalshi';
+          const officialSnapshot = await getOfficialPortfolioSnapshot(venue);
+          finalBalance = officialSnapshot.cash;
+        } catch (err) {
+          console.warn('[Register Strategy] Failed to fetch real initial balance, falling back to provided balance:', err);
+        }
+      }
       // If session had no error, the user already exists. Check if strategy is already registered.
       if (!session.error) {
         const existing = await db.query.strategies.findFirst({
@@ -147,8 +158,8 @@ export async function POST(request: NextRequest) {
           await tx.insert(portfolios).values({
             id: crypto.randomUUID(),
             userId: expectedUserId,
-            balance: String(balance),
-            initialBalance: String(balance)
+            balance: String(finalBalance),
+            initialBalance: String(finalBalance)
           });
         }
 
@@ -167,7 +178,7 @@ export async function POST(request: NextRequest) {
             strategyId: strategy_id,
             agentMode: is_paper_trading ? 'paper' : 'real',
             platform: platform,
-            startingBalance: String(balance),
+            startingBalance: String(finalBalance),
             riskConfig: risk_config ?? {},
             schedule: schedule ?? null,
             metadata: metadata ?? { registeredAt: new Date().toISOString() },

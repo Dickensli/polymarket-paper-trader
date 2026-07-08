@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
       where: eq(portfolios.userId, session.user.id),
     });
 
-    const portfolioState = portfolio
+    let portfolioState = portfolio
       ? {
           balance: Number(portfolio.balance),
           initial_balance: Number(portfolio.initialBalance),
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       )
       .limit(50);
 
-    const positionsSummary = openPositions.map((p) => ({
+    let positionsSummary: any[] = openPositions.map((p) => ({
       market_id: p.marketId,
       market_question: p.marketQuestion,
       outcome: p.outcome,
@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
       console.warn('Failed to fetch recent trades, likely schema mismatch:', err);
     }
 
-    const tradeHistory = recentTrades.map((t) => ({
+    let tradeHistory: any[] = recentTrades.map((t) => ({
       market_id: t.marketId,
       market_question: t.marketQuestion,
       outcome: t.outcome,
@@ -145,12 +145,31 @@ export async function GET(request: NextRequest) {
 
 
     // ── 6. Compute summary values ──────────────────────────────
-    const positionsValue = positionsSummary.reduce(
+    let positionsValue = positionsSummary.reduce(
       (sum, p) => sum + p.shares * p.current_price,
       0,
     );
-    const totalValue = (portfolioState?.balance ?? 0) + positionsValue;
-    const totalPnL = totalValue - (portfolioState?.initial_balance ?? 10000);
+    let totalValue = (portfolioState?.balance ?? 0) + positionsValue;
+    let totalPnL = totalValue - (portfolioState?.initial_balance ?? 10000);
+
+    // ── 6.5. Real Trading Override ─────────────────────────────
+    if (strategy?.agentMode === 'real') {
+      const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+      const platform = strategy.platform === 'kalshi' ? 'kalshi' : 'polymarket_us';
+      const realPortfolio = await getOfficialPortfolioSnapshot(platform);
+      
+      portfolioState = {
+        balance: realPortfolio.cash,
+        initial_balance: strategy.startingBalance ? Number(strategy.startingBalance) : 10000,
+      };
+      
+      positionsSummary = realPortfolio.positions;
+      tradeHistory = realPortfolio.fills;
+      
+      positionsValue = realPortfolio.positionsValue;
+      totalValue = realPortfolio.totalValue;
+      totalPnL = realPortfolio.pnl;
+    }
 
     // ── 7. Warnings ────────────────────────────────────────────
     const warnings: string[] = [];

@@ -27,8 +27,10 @@ export function useMarket(id: string): UseMarketReturn {
     queryKey: ['market', id],
     queryFn: () => fetchMarket(id),
     enabled: !!id,
-    staleTime: 5_000,
-    refetchInterval: 10_000,
+    staleTime: 30_000,
+    // [Performance Note] Increased refetch interval from 10s to 60s to limit 
+    // excessive network calls from the client, saving Vercel fluid CPU.
+    refetchInterval: 60_000,
   });
 
   return {

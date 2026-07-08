@@ -58,7 +58,8 @@ export async function POST(request: NextRequest) {
     const ticker = order.ticker ?? position.marketId;
     const outcome = position.outcome as 'YES' | 'NO';
     const executionPrice = order.price ?? await getKalshiOutcomePrice(ticker, outcome, 'SELL');
-    if (!executionPrice || executionPrice <= 0 || executionPrice >= 1) {
+    console.log(`[Kalshi Sell] Ticker: ${ticker}, Outcome: ${outcome}, Price: ${executionPrice}`);
+    if (executionPrice === null || executionPrice < 0 || executionPrice > 1) {
       return NextResponse.json({ error: 'Invalid or unavailable Kalshi price' }, { status: 400 });
     }
 

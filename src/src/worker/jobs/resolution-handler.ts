@@ -3,6 +3,7 @@ import { getDb } from '@/lib/db';
 import { positions, portfolios, paperTrades } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getMarket } from '@/lib/polymarket';
+import { getKalshiMarket } from '@/lib/kalshi';
 import { cancelAllOrders } from '@/lib/limit-orders';
 
 /**
@@ -138,13 +139,33 @@ export async function runResolutionCheckForUser(userId: string): Promise<number>
 
   for (const marketId of uniqueMarketIds) {
     try {
-      const market = await getMarket(marketId).catch(() => null);
-      if (!market || !market.closed) continue;
-
-      const resolution = determineResolution(market);
-      if (resolution.type === 'pending') continue;
-
+      // Determine platform from open positions
       const marketPositions = openPositions.filter(p => p.marketId === marketId);
+      const isKalshi = marketPositions.some(p => p.tokenId.startsWith('kalshi:'));
+
+      let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
+
+      if (isKalshi) {
+        const market = await getKalshiMarket(marketId).catch(() => null);
+        if (!market) continue;
+        const status = String(market.status).toLowerCase();
+        if (status === 'finalized' || status === 'settled') {
+          const result = String(market.result).toLowerCase();
+          if (result === 'yes') {
+            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:YES` };
+          } else if (result === 'no') {
+            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:NO` };
+          } else {
+            resolution = { type: 'voided' };
+          }
+        }
+      } else {
+        const market = await getMarket(marketId).catch(() => null);
+        if (!market || !market.closed) continue;
+        resolution = determineResolution(market);
+      }
+
+      if (resolution.type === 'pending') continue;
 
       for (const pos of marketPositions) {
         try {
@@ -198,13 +219,32 @@ export async function runResolutionCheck() {
 
   for (const marketId of uniqueMarketIds) {
     try {
-      const market = await getMarket(marketId).catch(() => null);
-      if (!market || !market.closed) continue;
-
-      const resolution = determineResolution(market);
-      if (resolution.type === 'pending') continue;
-
       const marketPositions = openPositions.filter(p => p.marketId === marketId);
+      const isKalshi = marketPositions.some(p => p.tokenId.startsWith('kalshi:'));
+
+      let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
+
+      if (isKalshi) {
+        const market = await getKalshiMarket(marketId).catch(() => null);
+        if (!market) continue;
+        const status = String(market.status).toLowerCase();
+        if (status === 'finalized' || status === 'settled') {
+          const result = String(market.result).toLowerCase();
+          if (result === 'yes') {
+            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:YES` };
+          } else if (result === 'no') {
+            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:NO` };
+          } else {
+            resolution = { type: 'voided' };
+          }
+        }
+      } else {
+        const market = await getMarket(marketId).catch(() => null);
+        if (!market || !market.closed) continue;
+        resolution = determineResolution(market);
+      }
+
+      if (resolution.type === 'pending') continue;
 
       for (const pos of marketPositions) {
         try {
