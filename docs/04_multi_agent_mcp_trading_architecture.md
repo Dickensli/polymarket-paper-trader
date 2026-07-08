@@ -231,6 +231,22 @@ For real agents on `kalshi` or `polymarket_us`:
 
 For real agents, official venue data is always source of truth.
 
+## Kalshi Execution Environments & Modes
+
+The platform supports three distinct execution states for Kalshi strategies, controlled by the strategy's `agent_mode` (configured during registration) and the server's `KALSHI_USE_DEMO` environment variable:
+
+1. **Pure Paper Trading (`agent_mode = paper`)**
+   - **Behavior**: Fully simulated on the server. Does not call the Kalshi API at all.
+   - **Persistence**: Simulated orders, fills, balances, and portfolios are calculated server-side and saved directly to the database.
+
+2. **Official Demo Kalshi (`agent_mode = real` and `KALSHI_USE_DEMO = true`)**
+   - **Behavior**: Routes actual trading commands through the official Kalshi API client, but connects to the Kalshi Demo environment (`https://demo-api.kalshi.co/trade-api/v2`).
+   - **Persistence**: Validates real-trading request format, generates cryptographic signatures using demo credentials, and writes real orders to Vercel/Supabase logs after receiving responses from the Kalshi Demo API.
+
+3. **Official Real Kalshi (`agent_mode = real` and `KALSHI_USE_DEMO = false`)**
+   - **Behavior**: Routes live trades directly to the real Kalshi production API (`https://external-api.kalshi.com/trade-api/v2`). **Costs real money.**
+   - **Persistence**: Signs and executes orders with production credentials, persisting transaction details and official audit trails.
+
 ## Supabase Data Model Additions
 
 Existing tables are useful but not enough. Add these durable tables, either in the current public schema with careful access control or a private/internal schema if exposed API access is not needed.
