@@ -49,16 +49,57 @@ export async function GET(request: Request) {
       userPositionsMap.set(pos.userId, (userPositionsMap.get(pos.userId) || 0) + value);
     }
 
+    // 3.5. Fetch latest official snapshots for real trading users
+    const { portfolioSnapshots, strategies } = await import('@/lib/db/schema');
+    const { desc, and } = await import('drizzle-orm');
+    
+    // Find users with real strategies
+    const realStrats = await db.query.strategies.findMany({
+      where: eq(strategies.agentMode, 'real')
+    });
+    const realUserIds = new Set(realStrats.map(s => s.userId));
+
+    // Get latest official snapshots
+    const latestSnapshots = new Map<string, any>();
+    if (realUserIds.size > 0) {
+      const allOfficialSnaps = await db.query.portfolioSnapshots.findMany({
+        where: eq(portfolioSnapshots.source, 'official'),
+        orderBy: [desc(portfolioSnapshots.capturedAt)]
+      });
+      for (const snap of allOfficialSnaps) {
+        if (!latestSnapshots.has(snap.userId)) {
+          latestSnapshots.set(snap.userId, snap);
+        }
+      }
+    }
+
     // 4. Calculate PnL for each user
     const leaderboard = usersData
       .filter((u) => getUserPlatform(u.settings) === platform)
       .map((u) => {
-        const balance = Number(u.balance || '0');
+        let totalValue = 0;
+        let totalPnL = 0;
+        let returnPct = 0;
         const initialBalance = Number(u.initialBalance || '10000');
-        const positionsValue = userPositionsMap.get(u.userId) || 0;
-        const totalValue = balance + positionsValue;
-        const totalPnL = totalValue - initialBalance;
-        const returnPct = initialBalance > 0 ? (totalPnL / initialBalance) * 100 : 0;
+        
+        if (realUserIds.has(u.userId)) {
+          const snap = latestSnapshots.get(u.userId);
+          if (snap) {
+            totalValue = Number(snap.totalValue);
+            totalPnL = totalValue - initialBalance;
+            returnPct = initialBalance > 0 ? (totalPnL / initialBalance) * 100 : 0;
+          } else {
+            totalValue = initialBalance;
+            totalPnL = 0;
+            returnPct = 0;
+          }
+        } else {
+          const balance = Number(u.balance || '0');
+          const positionsValue = userPositionsMap.get(u.userId) || 0;
+          totalValue = balance + positionsValue;
+          totalPnL = totalValue - initialBalance;
+          returnPct = initialBalance > 0 ? (totalPnL / initialBalance) * 100 : 0;
+        }
 
         return {
           userId: u.userId,
