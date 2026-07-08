@@ -3,6 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { agentReports, getDb } from '@/lib/db';
 
+const GLOBAL_AGENT_VIEWER_EMAILS = new Set(['dickenslihaocheng@gmail.com']);
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -15,11 +17,15 @@ export async function GET(
 
     const { id } = await params;
     const db = getDb();
+    const canViewAll = GLOBAL_AGENT_VIEWER_EMAILS.has(session.user.email ?? '');
+
     const report = await db.query.agentReports.findFirst({
-      where: and(
-        eq(agentReports.id, id),
-        eq(agentReports.userId, session.user.id),
-      ),
+      where: canViewAll
+        ? eq(agentReports.id, id)
+        : and(
+            eq(agentReports.id, id),
+            eq(agentReports.userId, session.user.id),
+          ),
     });
 
     if (!report) {

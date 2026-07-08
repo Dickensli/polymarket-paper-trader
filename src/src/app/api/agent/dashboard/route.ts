@@ -247,6 +247,8 @@ export async function GET(request: NextRequest) {
         platform: log.platform,
         severity: log.severity,
         difference_type: log.differenceType,
+        official_snapshot: log.officialSnapshot,
+        local_snapshot: log.localSnapshot,
         diff: log.diff,
         threshold: log.threshold,
         message: log.message,

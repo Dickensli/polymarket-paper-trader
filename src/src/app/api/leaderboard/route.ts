@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { users, portfolios, positions } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { users, portfolios, positions, strategies, portfolioSnapshots } from '@/lib/db/schema';
+import { eq, and, desc } from 'drizzle-orm';
 import { getUserPlatform, normalizePlatform } from '@/lib/platform';
 
 function roundTo(n: number, decimals: number): number {
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '25', 10) || 25));
 
-    // 1. Fetch all users and their portfolios
+    // 1. Fetch all users and their portfolios with active strategies
     const usersData = await db
       .select({
         userId: users.id,
@@ -30,7 +30,9 @@ export async function GET(request: Request) {
         initialBalance: portfolios.initialBalance,
       })
       .from(users)
-      .innerJoin(portfolios, eq(users.id, portfolios.userId));
+      .innerJoin(portfolios, eq(users.id, portfolios.userId))
+      .innerJoin(strategies, eq(users.id, strategies.userId))
+      .where(eq(strategies.status, 'active'));
 
     // 2. Fetch all open positions
     const openPositions = await db
@@ -50,9 +52,6 @@ export async function GET(request: Request) {
     }
 
     // 3.5. Fetch latest official snapshots for real trading users
-    const { portfolioSnapshots, strategies } = await import('@/lib/db/schema');
-    const { desc, and } = await import('drizzle-orm');
-    
     // Find users with real strategies
     const realStrats = await db.query.strategies.findMany({
       where: eq(strategies.agentMode, 'real')

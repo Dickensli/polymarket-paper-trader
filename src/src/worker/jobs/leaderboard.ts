@@ -23,10 +23,19 @@ export async function runLeaderboardCalculation() {
       where: eq(positions.portfolioId, port.id)
     });
 
-    // Check if the user is running a real trading strategy
+    // Check if the user is running an active trading strategy
     const userStrategies = await db.query.strategies.findMany({
-      where: eq(strategies.userId, user.id)
+      where: and(
+        eq(strategies.userId, user.id),
+        eq(strategies.status, 'active')
+      )
     });
+    
+    // If no active strategy exists for this user/portfolio, skip snapshots.
+    // This removes them from ALL_TIME leaderboard (which is re-created from scratch)
+    // and stops inserting new HOURLY/DAILY snapshot ticks while preserving past historical ticks.
+    if (userStrategies.length === 0) continue;
+
     const isReal = userStrategies.some(s => s.agentMode === 'real');
 
     let portfolioValue = 0;
