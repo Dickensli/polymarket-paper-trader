@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { leaderboardSnapshots, users, portfolios, paperTrades, positions } from '@/lib/db/schema';
+import { leaderboardSnapshots, users, portfolios, paperTrades, positions, strategies } from '@/lib/db/schema';
 import { eq, and, asc, inArray } from 'drizzle-orm';
 
 import { auth } from '@/lib/auth';
@@ -55,11 +55,12 @@ async function buildHistoryFromTrades(
   db: ReturnType<typeof getDb>,
   granularity: Granularity,
   platform: TradingPlatform,
-  targetUserIds?: string[]
+  targetUserIds?: string[],
+  isRealTab?: boolean
 ) {
   // Fetch all relevant users
   const allUsers = await db.query.users.findMany();
-  const filteredUsers = allUsers.filter(u => (
+  let filteredUsers = allUsers.filter(u => (
     getUserPlatform(u.settings) === platform &&
     (!targetUserIds || targetUserIds.includes(u.id))
   ));
@@ -69,7 +70,6 @@ async function buildHistoryFromTrades(
       where: and(eq(strategies.platform, platform), eq(strategies.agentMode, 'real'))
     });
     const realUserIds = new Set(realStrats.map((s: any) => s.userId));
-    const isRealTab = arguments[4] === true; // we pass isRealTab as 5th argument
     if (isRealTab) {
       filteredUsers = filteredUsers.filter(u => realUserIds.has(u.id));
     } else {
