@@ -22,7 +22,7 @@ test.describe('Application Routes & Interactions', () => {
     await expect(page.locator('body')).toBeVisible();
   });
 
-  test.skip('Leaderboard Analytics chart and filters work correctly', async ({ page }) => {
+  test('Leaderboard Analytics chart and filters work correctly', async ({ page }) => {
     // Mock the API so it doesn't fail if the local database is empty
     await page.route('**/api/leaderboard/history**', route => {
       route.fulfill({
