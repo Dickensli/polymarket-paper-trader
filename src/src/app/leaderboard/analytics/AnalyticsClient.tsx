@@ -13,7 +13,7 @@ type HistoryPoint = {
 type Granularity = 'daily' | 'hourly';
 type TimeRange = '1H' | '6H' | '1D' | '1W' | 'ALL';
 type ChartMetric = 'value' | 'pnl';
-type Platform = 'polymarket' | 'kalshi' | 'polymarket_us';
+type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us';
 
 /* ─── Constants ─────────────────────────────────────── */
 const STRATEGY_COLORS = [
@@ -166,21 +166,29 @@ function MetricCard({ label, value, subValue, delta, deltaColor, icon, sparkData
 
 /* ─── Hourly Metrics Calculator ─────────────────────── */
 function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granularity: Granularity) {
-  const values = history.map(h => Number(h[stratName] || 10000));
+  const latestPnl = Number(history[history.length - 1]?.[`${stratName}_pnl`] || 0);
+  const latestValue = Number(history[history.length - 1]?.[stratName] || 10000);
+  const derivedStartVal = latestValue - latestPnl;
+  
+  const values = history.map(h => {
+    const val = h[stratName];
+    return val !== undefined && val !== null ? Number(val) : derivedStartVal;
+  });
+
   if (values.length < 2) {
     return {
       hourlyPnlRate: 0, avgHourlyReturn: 0, hourlyWinRate: 0,
       hourlySharpe: 0, maxHourlyGain: 0, maxHourlyLoss: 0,
-      totalPnl: 0, returnPct: 0, currentValue: 10000,
+      totalPnl: latestPnl, returnPct: derivedStartVal > 0 ? (latestPnl / derivedStartVal) * 100 : 0, currentValue: latestValue,
       maxDrawdown: 0, volatility: 0, periodReturns: [] as number[],
       hourlyValues: values,
     };
   }
 
-  const startVal = 10000;
+  const startVal = derivedStartVal;
   const currentValue = values[values.length - 1];
   const totalPnl = currentValue - startVal;
-  const returnPct = (totalPnl / startVal) * 100;
+  const returnPct = startVal > 0 ? (totalPnl / startVal) * 100 : 0;
 
   // Period-over-period returns
   const periodReturns: number[] = [];
@@ -628,11 +636,12 @@ export default function AnalyticsClient() {
             });
 
         const seen = new Set<number>();
+        const startVal = allMetrics[strat] ? (allMetrics[strat].currentValue - allMetrics[strat].totalPnl) : 10000;
         const seriesData = filteredHistory
           .map(pt => ({
             time: periodKeyToUnix(pt.date),
             value: chartMetric === 'value'
-              ? Number(pt[strat] || 10000)
+              ? Number(pt[strat] || startVal)
               : Number(pt[`${strat}_pnl`] || 0),
           }))
           .filter(d => { if (seen.has(d.time)) return false; seen.add(d.time); return true; })
@@ -692,8 +701,9 @@ export default function AnalyticsClient() {
   const latestValues: Record<string, number> = {};
   const latestHistory = filteredHistory[filteredHistory.length - 1];
   for (const strat of strategies) {
+    const startVal = allMetrics[strat] ? (allMetrics[strat].currentValue - allMetrics[strat].totalPnl) : 10000;
     latestValues[strat] = chartMetric === 'value'
-      ? Number(latestHistory?.[strat] || 10000)
+      ? Number(latestHistory?.[strat] || startVal)
       : Number(latestHistory?.[`${strat}_pnl`] || 0);
   }
 
@@ -1269,13 +1279,13 @@ function PlatformTabs({
 }) {
   return (
     <div className="analytics-pill-group">
-      {(['polymarket', 'kalshi', 'polymarket_us'] as Platform[]).map((item) => (
+      {(['polymarket', 'kalshi', 'kalshi_real', 'polymarket_us'] as Platform[]).map((item) => (
         <button
           key={item}
           onClick={() => onSelect(item)}
           className={`analytics-pill ${platform === item ? 'analytics-pill-active' : ''}`}
         >
-          {item === 'kalshi' ? 'Kalshi' : item === 'polymarket_us' ? 'Polymarket US' : 'Polymarket'}
+          {item === 'kalshi' ? 'Kalshi' : item === 'kalshi_real' ? 'Kalshi Real' : item === 'polymarket_us' ? 'Polymarket US' : 'Polymarket'}
         </button>
       ))}
     </div>

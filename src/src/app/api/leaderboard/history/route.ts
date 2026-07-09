@@ -63,6 +63,19 @@ async function buildHistoryFromTrades(
     (!targetUserIds || targetUserIds.includes(u.id))
   ));
 
+  if (platform === 'kalshi') {
+    const realStrats = await db.query.strategies.findMany({
+      where: and(eq(strategies.platform, 'kalshi'), eq(strategies.agentMode, 'real'))
+    });
+    const realUserIds = new Set(realStrats.map((s: any) => s.userId));
+    const isKalshiReal = arguments[4] === true; // we will pass isKalshiReal as 5th argument
+    if (isKalshiReal) {
+      filteredUsers = filteredUsers.filter(u => realUserIds.has(u.id));
+    } else {
+      filteredUsers = filteredUsers.filter(u => !realUserIds.has(u.id));
+    }
+  }
+
   if (filteredUsers.length === 0) {
     return { strategies: [], history: [] };
   }
@@ -223,7 +236,9 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const granularityParam = searchParams.get('granularity');
     const granularity: Granularity = granularityParam === 'hourly' ? 'hourly' : 'daily';
-    const platform = normalizePlatform(searchParams.get('platform'));
+    const requestedPlatform = searchParams.get('platform') || 'polymarket';
+    const isKalshiReal = requestedPlatform === 'kalshi_real';
+    const platform = normalizePlatform(requestedPlatform);
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '8', 10) || 8));
 
@@ -263,7 +278,21 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 2. If snapshots are found, map them to the timeseries layout and return immediately
+    // 2. Filter kalshi real vs paper
+    if (platform === 'kalshi') {
+      const realStrats = await db.query.strategies.findMany({
+        where: and(eq(strategies.platform, 'kalshi'), eq(strategies.agentMode, 'real'))
+      });
+      const realUserIds = new Set(realStrats.map(s => s.userId));
+      
+      if (isKalshiReal) {
+        snaps = snaps.filter(s => realUserIds.has(s.userId));
+      } else {
+        snaps = snaps.filter(s => !realUserIds.has(s.userId));
+      }
+    }
+
+    // 3. If snapshots are found, map them to the timeseries layout and return immediately
     if (snaps.length > 0) {
       const periodMap = new Map<string, HistoryPoint>();
 
@@ -316,17 +345,17 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 3. Fallback: No snapshots found — compute from real trade records
+    // 4. Fallback: No snapshots found — compute from real trade records
     const targetUserIds = isAdmin ? undefined : [userId];
-    const { strategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds);
-    const paged = pageHistoryStrategies(strategies, history, page, pageSize);
+    const { strategies: resultStrategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds, isKalshiReal);
+    const paged = pageHistoryStrategies(resultStrategies, history, page, pageSize);
 
     // Fetch user colors for stable chart coloring
-    const fallbackUserRows = strategies.length > 0
+    const fallbackUserRows = resultStrategies.length > 0
       ? await db
           .select({ name: users.name, color: users.color })
           .from(users)
-          .where(inArray(users.name, strategies))
+          .where(inArray(users.name, resultStrategies))
       : [];
     const strategyColors: Record<string, string> = {};
     for (const row of fallbackUserRows) {
