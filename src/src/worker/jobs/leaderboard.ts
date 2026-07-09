@@ -44,24 +44,49 @@ export async function runLeaderboardCalculation() {
     const initialBalance = Number(port.initialBalance);
 
     if (isReal) {
-      // For real trading, use the latest official snapshot
-      const latestSnapshot = await db.query.portfolioSnapshots.findFirst({
-        where: and(
-          eq(portfolioSnapshots.userId, user.id),
-          eq(portfolioSnapshots.source, 'official')
-        ),
-        orderBy: [desc(portfolioSnapshots.capturedAt)]
-      });
+      try {
+        // For real trading, try to fetch the live official snapshot directly from the exchange
+        const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+        const realStrat = userStrategies.find(s => s.agentMode === 'real')!;
+        const platform = realStrat.platform === 'polymarket_us' ? 'polymarket_us' : 'kalshi';
+        const liveSnapshot = await getOfficialPortfolioSnapshot(platform);
+        
+        // Save the official snapshot to the database so history is preserved
+        await db.insert(portfolioSnapshots).values({
+           userId: user.id,
+           strategyId: realStrat.id,
+           source: 'official',
+           totalValue: liveSnapshot.totalValue.toString(),
+           cash: liveSnapshot.cash.toString(),
+           positionsValue: liveSnapshot.positionsValue.toString(),
+           pnl: liveSnapshot.pnl.toString(),
+           raw: liveSnapshot.raw
+        });
 
-      if (latestSnapshot) {
-        portfolioValue = Number(latestSnapshot.totalValue);
+        portfolioValue = Number(liveSnapshot.totalValue);
         totalPnl = portfolioValue - initialBalance;
         returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
-      } else {
-        // Fallback if no official snapshot yet: stay flat at initial balance
-        portfolioValue = initialBalance;
-        totalPnl = 0;
-        returnPct = 0;
+      } catch (err) {
+        console.error(`[Worker] Failed to fetch official snapshot for user ${user.id}:`, err);
+        // Fallback to the latest saved official snapshot
+        const latestSnapshot = await db.query.portfolioSnapshots.findFirst({
+          where: and(
+            eq(portfolioSnapshots.userId, user.id),
+            eq(portfolioSnapshots.source, 'official')
+          ),
+          orderBy: [desc(portfolioSnapshots.capturedAt)]
+        });
+
+        if (latestSnapshot) {
+          portfolioValue = Number(latestSnapshot.totalValue);
+          totalPnl = portfolioValue - initialBalance;
+          returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
+        } else {
+          // Fallback if no official snapshot yet: stay flat at initial balance
+          portfolioValue = initialBalance;
+          totalPnl = 0;
+          returnPct = 0;
+        }
       }
     } else {
       // Calculate total value including realized PnL from closed positions

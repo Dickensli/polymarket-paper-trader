@@ -20,6 +20,12 @@ describe('Leaderboard Job', () => {
         },
         positions: {
           findMany: vi.fn()
+        },
+        strategies: {
+          findMany: vi.fn()
+        },
+        portfolioSnapshots: {
+          findFirst: vi.fn()
         }
       },
       transaction: vi.fn(async (cb) => {
@@ -56,6 +62,10 @@ describe('Leaderboard Job', () => {
 
     mockDb.query.positions.findMany.mockResolvedValue([
        { isOpen: true, shares: '100', currentPrice: '0.5' }
+    ]);
+
+    mockDb.query.strategies.findMany.mockResolvedValue([
+       { id: 'strat1', userId: 'dummy', agentMode: 'paper', status: 'active', platform: 'kalshi' }
     ]);
 
     const count = await runLeaderboardCalculation();
