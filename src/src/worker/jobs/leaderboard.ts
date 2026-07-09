@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { getDb } from '@/lib/db';
-import { portfolios, positions, users, leaderboardSnapshots, portfolioSnapshots, strategies } from '@/lib/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { portfolios, positions, users, leaderboardSnapshots, strategies } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { getUserPlatform } from '@/lib/platform';
 
 /**
@@ -36,77 +36,32 @@ export async function runLeaderboardCalculation() {
     // and stops inserting new HOURLY/DAILY snapshot ticks while preserving past historical ticks.
     if (userStrategies.length === 0) continue;
 
-    const isReal = userStrategies.some(s => s.agentMode === 'real');
 
     let portfolioValue = 0;
     let totalPnl = 0;
     let returnPct = 0;
     const initialBalance = Number(port.initialBalance);
 
-    if (isReal) {
-      try {
-        // For real trading, try to fetch the live official snapshot directly from the exchange
-        const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
-        const realStrat = userStrategies.find(s => s.agentMode === 'real')!;
-        const platform = realStrat.platform === 'polymarket_us' ? 'polymarket_us' : 'kalshi';
-        const liveSnapshot = await getOfficialPortfolioSnapshot(platform);
-        
-        // Save the official snapshot to the database so history is preserved
-        await db.insert(portfolioSnapshots).values({
-           userId: user.id,
-           strategyId: realStrat.id,
-           source: 'official',
-           totalValue: liveSnapshot.totalValue.toString(),
-           cash: liveSnapshot.cash.toString(),
-           positionsValue: liveSnapshot.positionsValue.toString(),
-           pnl: liveSnapshot.pnl.toString(),
-           raw: liveSnapshot.raw
-        });
+    // Unified calculation for both real and paper trading.
+    // Real trades are mirrored to the local positions table by /api/agent/real-trades,
+    // and positions.currentPrice is kept fresh by runPriceRefresh (public API, no auth needed).
+    // This means we can use the same balance + positions formula for everyone.
+    const balance = Number(port.balance);
 
-        portfolioValue = Number(liveSnapshot.totalValue);
-        totalPnl = portfolioValue - initialBalance;
-        returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
-      } catch (err) {
-        console.error(`[Worker] Failed to fetch official snapshot for user ${user.id}:`, err);
-        // Fallback to the latest saved official snapshot
-        const latestSnapshot = await db.query.portfolioSnapshots.findFirst({
-          where: and(
-            eq(portfolioSnapshots.userId, user.id),
-            eq(portfolioSnapshots.source, 'official')
-          ),
-          orderBy: [desc(portfolioSnapshots.capturedAt)]
-        });
-
-        if (latestSnapshot) {
-          portfolioValue = Number(latestSnapshot.totalValue);
-          totalPnl = portfolioValue - initialBalance;
-          returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
-        } else {
-          // Fallback if no official snapshot yet: stay flat at initial balance
-          portfolioValue = initialBalance;
-          totalPnl = 0;
-          returnPct = 0;
-        }
+    let positionsValue = 0;
+    let closedRealizedPnl = 0;
+    for (const pos of userPositions) {
+      if (pos.isOpen) {
+        positionsValue += Number(pos.shares) * Number(pos.currentPrice);
+      } else {
+        // Include realized PnL from closed/resolved positions
+        closedRealizedPnl += Number(pos.realizedPnl) || 0;
       }
-    } else {
-      // Calculate total value including realized PnL from closed positions
-      const balance = Number(port.balance);
-
-      let positionsValue = 0;
-      let closedRealizedPnl = 0;
-      for (const pos of userPositions) {
-        if (pos.isOpen) {
-          positionsValue += Number(pos.shares) * Number(pos.currentPrice);
-        } else {
-          // Include realized PnL from closed/resolved positions
-          closedRealizedPnl += Number(pos.realizedPnl) || 0;
-        }
-      }
-
-      portfolioValue = balance + positionsValue;
-      totalPnl = portfolioValue - initialBalance;
-      returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
     }
+
+    portfolioValue = balance + positionsValue;
+    totalPnl = portfolioValue - initialBalance;
+    returnPct = initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0;
     const platform = getUserPlatform(user.settings, user.email);
 
     snapshots.push({
