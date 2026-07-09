@@ -55,3 +55,11 @@ next-env.d.ts
 # MCP server test files
 kalshi-mcp/test-server.cjs
 kalshi-mcp/error.log
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
