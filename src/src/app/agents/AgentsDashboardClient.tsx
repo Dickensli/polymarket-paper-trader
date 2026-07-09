@@ -96,22 +96,6 @@ type RealOrder = {
   updated_at?: string | null;
 };
 
-type ReconciliationLog = {
-  id: string;
-  agent_id?: string;
-  agent_email?: string | null;
-  agent_name?: string | null;
-  strategy_name: string | null;
-  platform: string;
-  severity: string;
-  difference_type: string;
-  message: string;
-  official_snapshot?: unknown;
-  local_snapshot?: unknown;
-  diff: unknown;
-  threshold?: unknown;
-  created_at: string;
-};
 
 type DashboardData = {
   access?: {
@@ -123,13 +107,11 @@ type DashboardData = {
     snapshots: number;
     real_orders: number;
     open_real_orders: number;
-    reconciliation_warnings: number;
   };
   strategies: Strategy[];
   reports: Report[];
   snapshots: Snapshot[];
   real_orders: RealOrder[];
-  reconciliation_logs: ReconciliationLog[];
   filter_options: {
     strategies: StrategyOption[];
     platforms: Platform[];
@@ -441,71 +423,6 @@ function OrderEntry({ order }: { order: RealOrder }) {
   );
 }
 
-/* ---------- Reconciliation warning expandable entry ---------- */
-function ReconciliationEntry({ log }: { log: ReconciliationLog }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="glass-card overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-start gap-3 p-4 text-left transition-colors hover:bg-white/[0.02]"
-      >
-        <ChevronIcon open={open} />
-        <div className="min-w-0 flex-1">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="min-w-0 truncate text-sm font-semibold text-foreground">
-              {agentLabel(log)} · {log.strategy_name ?? 'Unknown strategy'}
-            </div>
-            <Badge tone={statusClass(log.severity)}>{log.severity}</Badge>
-          </div>
-          <div className="text-sm text-foreground">{log.message}</div>
-          <div className="mt-2 flex flex-wrap gap-2 text-xs text-foreground-muted">
-            <span>{platformLabels[log.platform] ?? log.platform}</span>
-            <span>·</span>
-            <span>{log.difference_type}</span>
-            <span>·</span>
-            <span>{formatDate(log.created_at)}</span>
-          </div>
-        </div>
-      </button>
-
-      {open && (
-        <div className="border-t border-white/[0.06] px-4 py-4 space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Difference Details (Diff)</div>
-              <JsonBlock data={log.diff} />
-            </div>
-            {log.threshold != null && (
-              <div>
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Configured Threshold</div>
-                <JsonBlock data={log.threshold} />
-              </div>
-            )}
-          </div>
-          {(log.official_snapshot != null || log.local_snapshot != null) && (
-            <div className="grid gap-4 sm:grid-cols-2 border-t border-white/[0.04] pt-4">
-              {log.official_snapshot != null && (
-                <div>
-                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Official Exchange Snapshot</div>
-                  <JsonBlock data={log.official_snapshot} />
-                </div>
-              )}
-              {log.local_snapshot != null && (
-                <div>
-                  <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Local Database Snapshot</div>
-                  <JsonBlock data={log.local_snapshot} />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function AgentsDashboardClient() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -553,7 +470,7 @@ export default function AgentsDashboardClient() {
         <div>
           <h1 className="text-2xl font-bold text-foreground sm:text-3xl tracking-tight">Agent Operations</h1>
           <p className="mt-2 text-sm text-foreground-muted">
-            Reports, snapshots, audits, and reconciliation state.
+            Reports, snapshots, and audits.
             {data?.access?.scope === 'global' ? ' Global agent view enabled.' : ''}
           </p>
         </div>
@@ -618,11 +535,10 @@ export default function AgentsDashboardClient() {
             <Metric label="Reports" value={data.summary.reports} />
             <Metric label="Snapshots" value={data.summary.snapshots} />
             <Metric label="Real Orders" value={data.summary.real_orders} detail={`${data.summary.open_real_orders} open`} />
-            <Metric label="Warnings" value={data.summary.reconciliation_warnings} />
             <Metric label="Mode" value={modeLabels[agentMode]} detail={platformLabels[platform]} />
           </div>
 
-          <div className="grid gap-7 xl:grid-cols-[1.05fr_0.95fr]">
+          <div className="grid gap-7 xl:grid-cols-1">
             <section>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-foreground">Reports</h2>
@@ -639,21 +555,6 @@ export default function AgentsDashboardClient() {
               )}
             </section>
 
-            <section>
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-foreground">Reconciliation Warnings</h2>
-                <span className="text-xs text-foreground-muted">{data.reconciliation_logs.length} logs</span>
-              </div>
-              {data.reconciliation_logs.length === 0 ? (
-                <EmptyRow label="No reconciliation warnings match these filters." />
-              ) : (
-                <div className="space-y-3">
-                  {data.reconciliation_logs.slice(0, 8).map((log) => (
-                    <ReconciliationEntry key={log.id} log={log} />
-                  ))}
-                </div>
-              )}
-            </section>
           </div>
 
           <div className="grid gap-7 xl:grid-cols-2">

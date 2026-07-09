@@ -6,7 +6,6 @@ import {
   agentReports,
   portfolioSnapshots,
   realTradeOrders,
-  reconciliationLogs,
   strategies,
   users,
 } from '@/lib/db/schema';
@@ -95,7 +94,6 @@ export async function GET(request: NextRequest) {
       reports,
       snapshots,
       realOrders,
-      reconciliationWarnings,
     ] = await Promise.all([
       canViewAllAgents
         ? db.select().from(users).limit(1000)
@@ -109,9 +107,6 @@ export async function GET(request: NextRequest) {
       canViewAllAgents
         ? db.select().from(realTradeOrders).orderBy(desc(realTradeOrders.createdAt)).limit(200)
         : db.select().from(realTradeOrders).where(eq(realTradeOrders.userId, session.user.id)).orderBy(desc(realTradeOrders.createdAt)).limit(100),
-      canViewAllAgents
-        ? db.select().from(reconciliationLogs).orderBy(desc(reconciliationLogs.createdAt)).limit(200)
-        : db.select().from(reconciliationLogs).where(eq(reconciliationLogs.userId, session.user.id)).orderBy(desc(reconciliationLogs.createdAt)).limit(100),
     ]);
     const userById = new Map(visibleUsers.map((user) => [user.id, user]));
 
@@ -130,9 +125,6 @@ export async function GET(request: NextRequest) {
     const filteredRealOrders = realOrders
       .filter((order) => belongsToKnownStrategy(order.strategyId))
       .filter((order) => belongsToVisibleStrategy(order.strategyId));
-    const filteredWarnings = reconciliationWarnings
-      .filter((log) => belongsToKnownStrategy(log.strategyId))
-      .filter((log) => belongsToVisibleStrategy(log.strategyId));
 
     const latestSnapshotByStrategy = new Map<string, typeof filteredSnapshots[number]>();
     for (const snapshot of filteredSnapshots) {
@@ -141,7 +133,6 @@ export async function GET(request: NextRequest) {
     }
 
     const openOrderStatuses = new Set(['PENDING', 'SUBMITTING', 'SUBMITTED', 'OPEN', 'LIVE']);
-    const activeWarningCount = filteredWarnings.filter((log) => log.severity !== 'info').length;
     const openRealOrderCount = filteredRealOrders.filter((order) => openOrderStatuses.has(order.status)).length;
 
     return NextResponse.json({
@@ -159,7 +150,6 @@ export async function GET(request: NextRequest) {
         snapshots: filteredSnapshots.length,
         real_orders: filteredRealOrders.length,
         open_real_orders: openRealOrderCount,
-        reconciliation_warnings: activeWarningCount,
       },
       strategies: filteredStrategies.map((strategy) => {
         const latestSnapshot = latestSnapshotByStrategy.get(strategy.id);
@@ -235,24 +225,6 @@ export async function GET(request: NextRequest) {
         error: order.error,
         created_at: order.createdAt,
         updated_at: order.updatedAt,
-      })),
-      reconciliation_logs: filteredWarnings.map((log) => ({
-        id: log.id,
-        agent_id: log.userId,
-        agent_email: userById.get(log.userId)?.email ?? null,
-        agent_name: userById.get(log.userId)?.name ?? null,
-        strategy_id: log.strategyId,
-        strategy_name: strategyName(strategyById.get(log.strategyId) ?? ({} as typeof strategies.$inferSelect)) || null,
-        run_id: log.runId,
-        platform: log.platform,
-        severity: log.severity,
-        difference_type: log.differenceType,
-        official_snapshot: log.officialSnapshot,
-        local_snapshot: log.localSnapshot,
-        diff: log.diff,
-        threshold: log.threshold,
-        message: log.message,
-        created_at: log.createdAt,
       })),
       filter_options: {
         strategies: allStrategies.map(strategyPayload),

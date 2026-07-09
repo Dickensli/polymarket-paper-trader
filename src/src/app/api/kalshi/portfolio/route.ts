@@ -4,8 +4,7 @@ import { getPortfolio, resetPortfolio } from '@/lib/trading-engine';
 import { getDb } from '@/lib/db';
 import { strategies } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { realTradeOrders, reconciliationLogs, portfolios } from '@/lib/db/schema';
-import { compareSnapshots, DEFAULT_THRESHOLDS } from '../../agent/reconcile/route';
+import { realTradeOrders, portfolios } from '@/lib/db/schema';
 export async function GET() {
   try {
     const session = await auth();
@@ -39,54 +38,6 @@ export async function GET() {
           await db.update(realTradeOrders)
             .set({ status: order.status.toUpperCase(), updatedAt: new Date() })
             .where(and(eq(realTradeOrders.userId, session.user.id), eq(realTradeOrders.officialOrderId, order.order_id)));
-        }
-      }
-
-      const localOrders = await db.query.realTradeOrders.findMany({
-        where: and(
-          eq(realTradeOrders.strategyId, strategy.id),
-          eq(realTradeOrders.userId, session.user.id),
-        ),
-      });
-      const localPortfolio = await getPortfolio(session.user.id);
-      
-      const differences = compareSnapshots(
-        {
-          cash: localPortfolio.balance,
-          positions_value: localPortfolio.totalValue - localPortfolio.balance,
-          total_value: localPortfolio.totalValue,
-          pnl: localPortfolio.totalPnL,
-          positions: localPortfolio.positions,
-          orders: localOrders,
-          open_orders: localOrders,
-        },
-        realPortfolio,
-        DEFAULT_THRESHOLDS
-      );
-
-      const hasWarningsOrErrors = differences.some(d => d.severity !== 'info');
-      if (hasWarningsOrErrors) {
-        for (const difference of differences) {
-          if (difference.severity === 'info') continue;
-          await db.insert(reconciliationLogs).values({
-            strategyId: strategy.id,
-            userId: session.user.id,
-            runId: null,
-            platform: strategy.platform,
-            severity: difference.severity,
-            differenceType: difference.type,
-            officialSnapshot: realPortfolio,
-            localSnapshot: {
-              cash: localPortfolio.balance,
-              positions_value: localPortfolio.totalValue - localPortfolio.balance,
-              total_value: localPortfolio.totalValue,
-              pnl: localPortfolio.totalPnL,
-              positions: localPortfolio.positions,
-            },
-            diff: difference.diff,
-            threshold: DEFAULT_THRESHOLDS,
-            message: difference.message,
-          });
         }
       }
 
