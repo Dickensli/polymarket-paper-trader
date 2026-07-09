@@ -23,6 +23,21 @@ test.describe('Application Routes & Interactions', () => {
   });
 
   test('Leaderboard Analytics chart and filters work correctly', async ({ page }) => {
+    // Mock the API so it doesn't fail if the local database is empty
+    await page.route('**/api/leaderboard/history**', route => {
+      route.fulfill({
+        json: {
+          success: true,
+          strategies: ['TestStrat'],
+          history: [
+            { date: '2024-01-01T00:00:00Z', TestStrat: 1000, TestStrat_pnl: 100 },
+            { date: '2024-01-02T00:00:00Z', TestStrat: 1100, TestStrat_pnl: 200 }
+          ],
+          meta: { totalPages: 1 }
+        }
+      });
+    });
+
     await page.goto('/leaderboard/analytics');
     
     // Ensure the page is visible and wait for loading to finish
