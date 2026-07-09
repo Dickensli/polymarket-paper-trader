@@ -13,7 +13,7 @@ type LeaderboardUser = {
   returnPct: number;
 };
 
-type Platform = 'polymarket' | 'kalshi' | 'polymarket_us';
+type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
 
 export default function LeaderboardClient() {
   const [data, setData] = useState<LeaderboardUser[]>([]);
@@ -72,7 +72,7 @@ export default function LeaderboardClient() {
       <div className="space-y-4">
         <PlatformTabs platform={platform} onSelect={selectPlatform} />
         <div className="p-12 text-center text-foreground-muted bg-surface rounded-xl border border-border/50">
-          No active {platform === 'kalshi' ? 'Kalshi' : platform === 'polymarket_us' ? 'Polymarket US' : 'Polymarket'} traders yet.
+          No active {platform === 'kalshi' ? 'Kalshi' : platform === 'kalshi_real' ? 'Kalshi Real' : platform === 'polymarket_us' ? 'Polymarket US' : platform === 'polymarket_us_real' ? 'Poly US Real' : 'Polymarket'} traders yet.
         </div>
       </div>
     );
@@ -144,7 +144,7 @@ export default function LeaderboardClient() {
 function PlatformTabs({ platform, onSelect }: { platform: Platform; onSelect: (platform: Platform) => void }) {
   return (
     <div className="inline-flex gap-1 rounded-lg border border-border/50 bg-background-secondary p-1">
-      {(['polymarket', 'kalshi', 'polymarket_us'] as Platform[]).map((item) => (
+      {(['polymarket', 'kalshi', 'kalshi_real', 'polymarket_us', 'polymarket_us_real'] as Platform[]).map((item) => (
         <button
           key={item}
           onClick={() => onSelect(item)}
@@ -154,7 +154,7 @@ function PlatformTabs({ platform, onSelect }: { platform: Platform; onSelect: (p
               : 'text-foreground-muted hover:text-foreground'
           }`}
         >
-          {item === 'kalshi' ? 'Kalshi' : item === 'polymarket_us' ? 'Polymarket US' : 'Polymarket'}
+          {item === 'kalshi' ? 'Kalshi' : item === 'kalshi_real' ? 'Kalshi Real' : item === 'polymarket_us' ? 'Polymarket US' : item === 'polymarket_us_real' ? 'Poly US Real' : 'Polymarket'}
         </button>
       ))}
     </div>

@@ -13,7 +13,7 @@ type HistoryPoint = {
 type Granularity = 'daily' | 'hourly';
 type TimeRange = '1H' | '6H' | '1D' | '1W' | 'ALL';
 type ChartMetric = 'value' | 'pnl';
-type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us';
+type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
 
 /* ─── Constants ─────────────────────────────────────── */
 const STRATEGY_COLORS = [
@@ -1279,13 +1279,13 @@ function PlatformTabs({
 }) {
   return (
     <div className="analytics-pill-group">
-      {(['polymarket', 'kalshi', 'kalshi_real', 'polymarket_us'] as Platform[]).map((item) => (
+      {(['polymarket', 'kalshi', 'kalshi_real', 'polymarket_us', 'polymarket_us_real'] as Platform[]).map((item) => (
         <button
           key={item}
           onClick={() => onSelect(item)}
           className={`analytics-pill ${platform === item ? 'analytics-pill-active' : ''}`}
         >
-          {item === 'kalshi' ? 'Kalshi' : item === 'kalshi_real' ? 'Kalshi Real' : item === 'polymarket_us' ? 'Polymarket US' : 'Polymarket'}
+          {item === 'kalshi' ? 'Kalshi' : item === 'kalshi_real' ? 'Kalshi Real' : item === 'polymarket_us' ? 'Polymarket US' : item === 'polymarket_us_real' ? 'Poly US Real' : 'Polymarket'}
         </button>
       ))}
     </div>

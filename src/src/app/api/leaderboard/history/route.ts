@@ -13,6 +13,7 @@ type Granularity = 'daily' | 'hourly';
 type HistoryPoint = { date: string } & Record<string, string | number>;
 
 function pageHistoryStrategies(
+// ... omitted lines ...
   strategies: string[],
   history: HistoryPoint[],
   page: number,
@@ -63,13 +64,13 @@ async function buildHistoryFromTrades(
     (!targetUserIds || targetUserIds.includes(u.id))
   ));
 
-  if (platform === 'kalshi') {
+  if (platform === 'kalshi' || platform === 'polymarket_us') {
     const realStrats = await db.query.strategies.findMany({
-      where: and(eq(strategies.platform, 'kalshi'), eq(strategies.agentMode, 'real'))
+      where: and(eq(strategies.platform, platform), eq(strategies.agentMode, 'real'))
     });
     const realUserIds = new Set(realStrats.map((s: any) => s.userId));
-    const isKalshiReal = arguments[4] === true; // we will pass isKalshiReal as 5th argument
-    if (isKalshiReal) {
+    const isRealTab = arguments[4] === true; // we pass isRealTab as 5th argument
+    if (isRealTab) {
       filteredUsers = filteredUsers.filter(u => realUserIds.has(u.id));
     } else {
       filteredUsers = filteredUsers.filter(u => !realUserIds.has(u.id));
@@ -237,8 +238,8 @@ export async function GET(request: NextRequest) {
     const granularityParam = searchParams.get('granularity');
     const granularity: Granularity = granularityParam === 'hourly' ? 'hourly' : 'daily';
     const requestedPlatform = searchParams.get('platform') || 'polymarket';
-    const isKalshiReal = requestedPlatform === 'kalshi_real';
-    const platform = normalizePlatform(requestedPlatform);
+    const isRealTab = requestedPlatform.endsWith('_real');
+    const platform = normalizePlatform(requestedPlatform.replace('_real', ''));
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '8', 10) || 8));
 
@@ -278,14 +279,14 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 2. Filter kalshi real vs paper
-    if (platform === 'kalshi') {
+    // 2. Filter real vs paper
+    if (platform === 'kalshi' || platform === 'polymarket_us') {
       const realStrats = await db.query.strategies.findMany({
-        where: and(eq(strategies.platform, 'kalshi'), eq(strategies.agentMode, 'real'))
+        where: and(eq(strategies.platform, platform), eq(strategies.agentMode, 'real'))
       });
       const realUserIds = new Set(realStrats.map(s => s.userId));
       
-      if (isKalshiReal) {
+      if (isRealTab) {
         snaps = snaps.filter(s => realUserIds.has(s.userId));
       } else {
         snaps = snaps.filter(s => !realUserIds.has(s.userId));
@@ -347,7 +348,7 @@ export async function GET(request: NextRequest) {
 
     // 4. Fallback: No snapshots found — compute from real trade records
     const targetUserIds = isAdmin ? undefined : [userId];
-    const { strategies: resultStrategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds, isKalshiReal);
+    const { strategies: resultStrategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds, isRealTab);
     const paged = pageHistoryStrategies(resultStrategies, history, page, pageSize);
 
     // Fetch user colors for stable chart coloring

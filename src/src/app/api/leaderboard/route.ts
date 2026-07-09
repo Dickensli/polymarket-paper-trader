@@ -15,7 +15,9 @@ export async function GET(request: Request) {
   try {
     const db = getDb();
     const { searchParams } = new URL(request.url);
-    const platform = normalizePlatform(searchParams.get('platform'));
+    const requestedPlatform = searchParams.get('platform') || 'polymarket';
+    const isRealTab = requestedPlatform.endsWith('_real');
+    const platform = normalizePlatform(requestedPlatform.replace('_real', ''));
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '25', 10) || 25));
 
@@ -54,7 +56,7 @@ export async function GET(request: Request) {
     // 3.5. Fetch latest official snapshots for real trading users
     // Find users with real strategies
     const realStrats = await db.query.strategies.findMany({
-      where: eq(strategies.agentMode, 'real')
+      where: and(eq(strategies.platform, platform), eq(strategies.agentMode, 'real'))
     });
     const realUserIds = new Set(realStrats.map(s => s.userId));
 
@@ -75,6 +77,7 @@ export async function GET(request: Request) {
     // 4. Calculate PnL for each user
     const leaderboard = usersData
       .filter((u) => getUserPlatform(u.settings) === platform)
+      .filter((u) => isRealTab ? realUserIds.has(u.userId) : !realUserIds.has(u.userId))
       .map((u) => {
         let totalValue = 0;
         let totalPnL = 0;
@@ -122,7 +125,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       data: paginated,
       meta: {
-        platform,
+        platform: requestedPlatform,
         page,
         pageSize,
         total,
