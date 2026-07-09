@@ -462,7 +462,23 @@ export default function AgentsDashboardClient() {
     };
   }, [query]);
 
-  const strategyOptions = data?.filter_options.strategies ?? [];
+  const strategyOptions = useMemo(() => {
+    const allStrategies = data?.filter_options.strategies ?? [];
+    return allStrategies.filter(strategy => {
+      const matchPlatform = platform === 'all' || strategy.platform === platform;
+      const matchMode = agentMode === 'all' || strategy.agent_mode === agentMode;
+      return matchPlatform && matchMode;
+    });
+  }, [data?.filter_options.strategies, platform, agentMode]);
+
+  useEffect(() => {
+    if (strategyId !== 'all') {
+      const isValid = strategyOptions.some(s => s.id === strategyId);
+      if (!isValid) {
+        setStrategyId('all');
+      }
+    }
+  }, [strategyOptions, strategyId]);
 
   return (
     <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto w-full">
