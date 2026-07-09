@@ -474,7 +474,7 @@ export default function AgentsDashboardClient() {
             {data?.access?.scope === 'global' ? ' Global agent view enabled.' : ''}
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:min-w-[680px]">
+        <div className={`grid grid-cols-1 gap-3 ${platform !== 'all' && agentMode !== 'all' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} lg:min-w-[680px]`}>
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Platform</span>
             <select
@@ -499,19 +499,21 @@ export default function AgentsDashboardClient() {
               ))}
             </select>
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Strategy</span>
-            <select
-              value={strategyId}
-              onChange={(event) => setStrategyId(event.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
-            >
-              <option value="all">All strategies</option>
-              {strategyOptions.map((strategy) => (
-                <option key={strategy.id} value={strategy.id}>{strategy.strategy_name}</option>
-              ))}
-            </select>
-          </label>
+          {platform !== 'all' && agentMode !== 'all' && (
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Strategy</span>
+              <select
+                value={strategyId}
+                onChange={(event) => setStrategyId(event.target.value)}
+                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
+              >
+                <option value="all">All strategies</option>
+                {strategyOptions.map((strategy) => (
+                  <option key={strategy.id} value={strategy.id}>{strategy.strategy_name}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </div>
 
