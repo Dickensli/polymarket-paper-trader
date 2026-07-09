@@ -1,6 +1,18 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Application Routes & Interactions', () => {
+  test.beforeEach(async ({ page }) => {
+    // Mock the session so that the client thinks we're logged in
+    await page.route('**/api/auth/session**', route => {
+      route.fulfill({
+        json: {
+          user: { id: 'test-user', name: 'Test User', email: 'test@example.com' },
+          expires: new Date(Date.now() + 86400 * 1000).toISOString()
+        }
+      });
+    });
+  });
+
   test('Dashboard loads successfully', async ({ page }) => {
     await page.goto('/');
     // Check if the page has loaded by expecting the title or a generic element
