@@ -4,7 +4,7 @@ import { getPortfolio, resetPortfolio } from '@/lib/trading-engine';
 import { getDb } from '@/lib/db';
 import { strategies } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { realTradeOrders, reconciliationLogs } from '@/lib/db/schema';
+import { realTradeOrders, reconciliationLogs, portfolios } from '@/lib/db/schema';
 import { compareSnapshots, DEFAULT_THRESHOLDS } from '../../agent/reconcile/route';
 export async function GET() {
   try {
@@ -23,6 +23,25 @@ export async function GET() {
       const platform = strategy.platform === 'polymarket_us' ? 'polymarket_us' : 'kalshi';
       const realPortfolio = await getOfficialPortfolioSnapshot(platform);
       
+      const localPortfolioBefore = await getPortfolio(session.user.id);
+
+      // Sync official state down to local DB to prevent false warnings
+      // and ensure local PnL/balance accurately match official Kalshi
+      if (realPortfolio) {
+        // 1. Sync Cash Balance
+        await db.update(portfolios)
+          .set({ balance: realPortfolio.cash.toFixed(2), updatedAt: new Date() })
+          .where(eq(portfolios.userId, session.user.id));
+          
+        // 2. Sync Order Statuses
+        const validOrders = realPortfolio.orders.map((o: any) => o).filter(o => o && o.order_id && o.status);
+        for (const order of validOrders) {
+          await db.update(realTradeOrders)
+            .set({ status: order.status.toUpperCase(), updatedAt: new Date() })
+            .where(and(eq(realTradeOrders.userId, session.user.id), eq(realTradeOrders.officialOrderId, order.order_id)));
+        }
+      }
+
       const localOrders = await db.query.realTradeOrders.findMany({
         where: and(
           eq(realTradeOrders.strategyId, strategy.id),

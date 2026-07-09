@@ -34,6 +34,7 @@ export const DEFAULT_THRESHOLDS = {
 };
 
 const TERMINAL_ORDER_STATUSES = new Set([
+  'CANCELED',
   'CANCELLED',
   'REJECTED',
   'ERROR',
