@@ -1,3 +1,4 @@
 #!/bin/sh
 cd "$(dirname "$0")/.."
 npm run test:commit
+npm run test:agents-dashboard

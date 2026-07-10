@@ -1,6 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  buildAgentPositionSummaries,
+  normalizePositionRows,
+  type AgentPositionSummary,
+} from '@/lib/agent-positions';
 
 type Platform = 'all' | 'polymarket' | 'kalshi' | 'polymarket_us';
 type AgentMode = 'all' | 'paper' | 'real';
@@ -60,6 +65,7 @@ type Snapshot = {
   agent_id?: string;
   agent_email?: string | null;
   agent_name?: string | null;
+  strategy_id?: string | null;
   strategy_name: string | null;
   platform: string | null;
   agent_mode: string | null;
@@ -150,7 +156,7 @@ function formatDate(value: string) {
 }
 
 function countArray(value: unknown) {
-  return Array.isArray(value) ? value.length : 0;
+  return normalizePositionRows(value).length;
 }
 
 function agentLabel(item: { agent_name?: string | null; agent_email?: string | null; agent_id?: string | null }) {
@@ -219,6 +225,178 @@ function JsonBlock({ data }: { data: unknown }) {
     <pre className="max-h-[320px] overflow-auto rounded-md border border-white/[0.06] bg-white/[0.02] p-3 text-xs text-foreground-muted whitespace-pre-wrap break-words">
       {typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
     </pre>
+  );
+}
+
+function formatPrice(value: number | null) {
+  if (value == null) return '--';
+  return `${(value * 100).toFixed(1)}c`;
+}
+
+function formatCompactNumber(value: number | null) {
+  if (value == null) return '--';
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: 2,
+  });
+}
+
+function PositionValue({ value }: { value: number | null }) {
+  if (value == null) return <span className="text-foreground-muted">--</span>;
+  const tone = value > 0 ? 'text-profit-light' : value < 0 ? 'text-loss-light' : 'text-foreground-muted';
+  return <span className={tone}>{formatMoney(value)}</span>;
+}
+
+function AgentPositionsPanel({
+  summaries,
+  selectedAgentId,
+  onAgentChange,
+}: {
+  summaries: AgentPositionSummary[];
+  selectedAgentId: string;
+  onAgentChange: (agentId: string) => void;
+}) {
+  const agentOptions = useMemo(() => {
+    const agents = new Map<string, string>();
+    for (const summary of summaries) {
+      agents.set(summary.agentId, summary.agentLabel);
+    }
+    return [...agents.entries()].map(([id, label]) => ({ id, label }));
+  }, [summaries]);
+
+  const visibleSummaries = selectedAgentId === 'all'
+    ? summaries
+    : summaries.filter((summary) => summary.agentId === selectedAgentId);
+  const visiblePositionCount = visibleSummaries.reduce((total, summary) => total + summary.positions.length, 0);
+  const visiblePositionsValue = visibleSummaries.reduce((total, summary) => total + summary.positionsValue, 0);
+  const visiblePnl = visibleSummaries.reduce((total, summary) => total + summary.pnl, 0);
+
+  return (
+    <section>
+      <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Current Agent Positions</h2>
+          <p className="mt-1 text-xs text-foreground-muted">
+            Latest snapshot per strategy, grouped by agent.
+          </p>
+        </div>
+        <label className="block w-full md:w-[280px]">
+          <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Agent</span>
+          <select
+            value={selectedAgentId}
+            onChange={(event) => onAgentChange(event.target.value)}
+            className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
+          >
+            <option value="all">All agents</option>
+            {agentOptions.map((agent) => (
+              <option key={agent.id} value={agent.id}>{agent.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {summaries.length === 0 ? (
+        <EmptyRow label="No current positions found in the latest snapshots." />
+      ) : (
+        <div className="glass-card overflow-hidden">
+          <div className="grid gap-px bg-white/[0.04] md:grid-cols-3">
+            <div className="bg-background-secondary/80 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Open Positions</div>
+              <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{visiblePositionCount}</div>
+            </div>
+            <div className="bg-background-secondary/80 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Positions Value</div>
+              <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{formatMoney(visiblePositionsValue)}</div>
+            </div>
+            <div className="bg-background-secondary/80 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Snapshot PnL</div>
+              <div className={`mt-2 text-2xl font-bold tabular-nums ${visiblePnl >= 0 ? 'text-profit-light' : 'text-loss-light'}`}>
+                {formatMoney(visiblePnl)}
+              </div>
+            </div>
+          </div>
+
+          {visibleSummaries.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-foreground-muted">
+              This agent has no current positions in the active filters.
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.06]">
+              {visibleSummaries.map((summary) => (
+                <div key={summary.key} className="p-4">
+                  <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-foreground">{summary.agentLabel}</span>
+                        <Badge>{summary.strategyName}</Badge>
+                        {summary.platform && <Badge>{platformLabels[summary.platform] ?? summary.platform}</Badge>}
+                        {summary.agentMode && <Badge>{modeLabels[summary.agentMode] ?? summary.agentMode}</Badge>}
+                      </div>
+                      <div className="mt-1 text-xs text-foreground-muted">
+                        {summary.positions.length} positions · captured {formatDate(summary.capturedAt)}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-right lg:min-w-[360px]">
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Cash</div>
+                        <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">{formatMoney(summary.cash)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Total</div>
+                        <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">{formatMoney(summary.totalValue)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">PnL</div>
+                        <div className={`mt-1 text-sm font-semibold tabular-nums ${summary.pnl >= 0 ? 'text-profit-light' : 'text-loss-light'}`}>
+                          {formatMoney(summary.pnl)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[780px] text-sm">
+                      <thead>
+                        <tr className="border-y border-white/[0.04] bg-white/[0.02]">
+                          <th className="px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Market</th>
+                          <th className="px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Outcome</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Shares</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Avg</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Mark</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Value</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">PnL</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.positions.slice(0, 8).map((position) => (
+                          <tr key={position.id} className="border-b border-white/[0.03] last:border-0">
+                            <td className="max-w-[320px] px-3 py-3 text-foreground">
+                              <div className="truncate">{position.market}</div>
+                            </td>
+                            <td className="px-3 py-3">
+                              <Badge>{position.outcome}</Badge>
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatCompactNumber(position.shares)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatPrice(position.avgPrice)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatPrice(position.currentPrice)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-foreground">{position.value == null ? '--' : formatMoney(position.value)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums font-semibold"><PositionValue value={position.pnl} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {summary.positions.length > 8 && (
+                    <div className="mt-3 text-xs text-foreground-muted">
+                      Showing 8 of {summary.positions.length} positions for this strategy.
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -439,6 +617,7 @@ export default function AgentsDashboardClient() {
   const [platform, setPlatform] = useState<Platform>('all');
   const [agentMode, setAgentMode] = useState<AgentMode>('all');
   const [strategyId, setStrategyId] = useState('all');
+  const [selectedPositionAgentId, setSelectedPositionAgentId] = useState('all');
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -479,14 +658,13 @@ export default function AgentsDashboardClient() {
     });
   }, [data?.filter_options.strategies, platform, agentMode]);
 
-  useEffect(() => {
-    if (strategyId !== 'all') {
-      const isValid = strategyOptions.some(s => s.id === strategyId);
-      if (!isValid) {
-        setStrategyId('all');
-      }
-    }
-  }, [strategyOptions, strategyId]);
+  const positionSummaries = useMemo(() => (
+    buildAgentPositionSummaries(data?.snapshots ?? [])
+  ), [data?.snapshots]);
+  const activePositionAgentId = selectedPositionAgentId !== 'all' &&
+    positionSummaries.some((summary) => summary.agentId === selectedPositionAgentId)
+    ? selectedPositionAgentId
+    : 'all';
 
   return (
     <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto w-full">
@@ -503,7 +681,10 @@ export default function AgentsDashboardClient() {
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Platform</span>
             <select
               value={platform}
-              onChange={(event) => setPlatform(event.target.value as Platform)}
+              onChange={(event) => {
+                setPlatform(event.target.value as Platform);
+                setStrategyId('all');
+              }}
               className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
             >
               {(['all', 'polymarket', 'kalshi', 'polymarket_us'] as Platform[]).map((option) => (
@@ -515,7 +696,10 @@ export default function AgentsDashboardClient() {
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Mode</span>
             <select
               value={agentMode}
-              onChange={(event) => setAgentMode(event.target.value as AgentMode)}
+              onChange={(event) => {
+                setAgentMode(event.target.value as AgentMode);
+                setStrategyId('all');
+              }}
               className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
             >
               {(['all', 'paper', 'real'] as AgentMode[]).map((option) => (
@@ -527,7 +711,7 @@ export default function AgentsDashboardClient() {
             <label className="block">
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Strategy</span>
               <select
-                value={strategyId}
+                value={strategyOptions.some((strategy) => strategy.id === strategyId) ? strategyId : 'all'}
                 onChange={(event) => setStrategyId(event.target.value)}
                 className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
               >
@@ -563,6 +747,12 @@ export default function AgentsDashboardClient() {
             <Metric label="Real Orders" value={data.summary.real_orders} detail={`${data.summary.open_real_orders} open`} />
             <Metric label="Mode" value={modeLabels[agentMode]} detail={platformLabels[platform]} />
           </div>
+
+          <AgentPositionsPanel
+            summaries={positionSummaries}
+            selectedAgentId={activePositionAgentId}
+            onAgentChange={setSelectedPositionAgentId}
+          />
 
           <div className="grid gap-7 xl:grid-cols-1">
             <section>
