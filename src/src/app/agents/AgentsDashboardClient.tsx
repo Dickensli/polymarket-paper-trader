@@ -159,10 +159,10 @@ function agentLabel(item: { agent_name?: string | null; agent_email?: string | n
 
 function statusClass(status: string) {
   const normalized = status.toLowerCase();
-  if (normalized === 'active' || normalized === 'submitted' || normalized === 'open') {
+  if (normalized === 'active' || normalized === 'submitted' || normalized === 'open' || normalized === 'filled') {
     return 'bg-profit/10 text-profit-light border-profit/25';
   }
-  if (normalized === 'paused' || normalized === 'warning') {
+  if (normalized === 'paused' || normalized === 'warning' || normalized === 'pending' || normalized === 'cancelled' || normalized === 'canceled') {
     return 'bg-primary/10 text-primary-light border-primary/25';
   }
   if (normalized === 'disabled' || normalized === 'critical' || normalized.includes('error') || normalized === 'rejected') {
@@ -328,6 +328,14 @@ function ReportEntry({ report }: { report: Report }) {
   );
 }
 
+function formatOrderPrice(order: RealOrder) {
+  if (!order.price) return '--';
+  if (order.platform === 'kalshi') {
+    return `${order.price.toFixed(1)}c`;
+  }
+  return `${(order.price * 100).toFixed(1)}c`;
+}
+
 /* ---------- Real order expandable entry ---------- */
 function OrderEntry({ order }: { order: RealOrder }) {
   const [open, setOpen] = useState(false);
@@ -349,7 +357,7 @@ function OrderEntry({ order }: { order: RealOrder }) {
           <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-foreground-muted">
             <span className="truncate max-w-[260px]">{order.market_slug_or_ticker ?? order.official_order_id ?? order.client_order_id ?? order.id}</span>
             <span>Qty: {order.quantity || '--'}</span>
-            <span>Price: {order.price ? `${(order.price * 100).toFixed(1)}c` : '--'}</span>
+            <span>Price: {formatOrderPrice(order)}</span>
             <span>{formatDate(order.created_at)}</span>
           </div>
         </div>

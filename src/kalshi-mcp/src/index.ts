@@ -230,6 +230,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: "submit_real_trade",
+      description: "Submit a real Kalshi trade through the PolyTrader API. Used ONLY for real-money strategies.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          strategy_id: { type: "string", description: "Registered strategy ID." },
+          slug: { type: "string", description: "Market ticker or slug." },
+          outcome: { type: "string", enum: ["YES", "NO"] },
+          side: { type: "string", enum: ["BUY", "SELL"] },
+          price: { type: "number", description: "Limit price (0-1)." },
+          amount: { type: "number", description: "Dollar amount to spend." },
+          shares: { type: "number", description: "Exact shares to buy/sell." },
+          time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], default: "GTC" },
+        },
+        required: ["strategy_id", "slug", "outcome", "side", "price"],
+      },
+    },
     // ── Agent Reports (Retro) ──────────────────────────────────────
     {
       name: "save_report",
@@ -389,24 +407,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       });
       return json({ ok: true, data: data.data ?? data });
     }
-    case "buy": {
-      const idempotencyKey = generateIdempotencyKey();
-      const data = await callPolyTrader("/agent/trades", {
-        method: "POST",
-        headers: getAgentHeaders(args, idempotencyKey),
-        body: JSON.stringify({
-          strategy_id: (args as any).strategy_id,
-          slug: (args as any).ticker,
-          outcome: (args as any).outcome || "YES",
-          side: "BUY",
-          amount: (args as any).amount,
-          shares: (args as any).shares,
-          price: (args as any).price,
-          client_order_id: idempotencyKey,
-        }),
-      });
-      return json({ ok: true, data: data.data ?? data, idempotency_key: idempotencyKey });
-    }
+        case "buy":
+        case "submit_real_trade": {
+            const idempotencyKey = generateIdempotencyKey();
+            const data = await callPolyTrader("/agent/trades", {
+                method: "POST",
+                headers: getAgentHeaders(args, idempotencyKey),
+                body: JSON.stringify({
+                    strategy_id: (args as any).strategy_id,
+                    slug: (args as any).ticker || (args as any).slug,
+                    outcome: (args as any).outcome || "YES",
+                    side: (args as any).side || "BUY",
+                    amount: (args as any).amount,
+                    shares: (args as any).shares,
+                    price: (args as any).price,
+                    time_in_force: (args as any).time_in_force || "GTC",
+                    client_order_id: idempotencyKey,
+                }),
+            });
+            return json({ ok: true, data: data.data ?? data, idempotency_key: idempotencyKey });
+        }
     case "sell": {
       const idempotencyKey = generateIdempotencyKey();
       const quantity = (args as any).quantity || "ALL";

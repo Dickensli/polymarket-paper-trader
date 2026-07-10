@@ -166,12 +166,17 @@ async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialT
   const price = yesSidePrice(intent.outcome, clampPrice(intent.price ?? NaN));
   const quantity = resolveQuantity(intent);
   const clientOrderId = intent.clientOrderId ?? randomUUID();
+  
+  // Kalshi V2 API expects price in cents (e.g., 45 for $0.45) and count as an integer.
+  const priceInCents = Math.round(price * 100);
+  const countInt = Math.floor(quantity);
+
   const request = {
     ticker: intent.slug,
     client_order_id: clientOrderId,
     side: kalshiBookSide(intent.outcome, intent.side),
-    count: fixed(quantity, 2),
-    price: fixed(price, 4),
+    count: countInt,
+    price: priceInCents,
     time_in_force: kalshiTimeInForce(intent.timeInForce),
     self_trade_prevention_type: 'taker_at_cross',
     post_only: false,
@@ -229,11 +234,26 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
   const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
 
+  let positionsValueCents = 0;
+  let pnlCents = 0;
+  for (const pos of positionRows) {
+    const p = pos as Record<string, unknown>;
+    const marketVal = Number(p.market_value || p.value || 0);
+    const cost = Number(p.position_cost || 0);
+    const realized = Number(p.realized_pnl || 0);
+    positionsValueCents += marketVal;
+    pnlCents += (realized + (marketVal - cost));
+  }
+
+  const positionsValue = positionsValueCents / 100;
+  const pnl = pnlCents / 100;
+  const totalValue = cash + positionsValue;
+
   return {
     cash,
-    positionsValue: 0,
-    totalValue: cash,
-    pnl: 0,
+    positionsValue,
+    totalValue,
+    pnl,
     positions: positionRows,
     orders: orderRows,
     fills: fillRows,

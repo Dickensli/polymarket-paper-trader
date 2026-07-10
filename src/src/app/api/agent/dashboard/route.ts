@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import {
@@ -79,16 +79,6 @@ export async function GET(request: NextRequest) {
         .orderBy(desc(strategies.createdAt))
         .limit(200);
 
-    const filteredStrategies = allStrategies.filter((strategy) => {
-      if (strategyId !== 'all' && strategy.id !== strategyId) return false;
-      if (platform !== 'all' && strategy.platform !== platform) return false;
-      if (agentMode !== 'all' && strategy.agentMode !== agentMode) return false;
-      return true;
-    });
-    const visibleStrategyIds = new Set(filteredStrategies.map((strategy) => strategy.id));
-    const allStrategyIds = new Set(allStrategies.map((strategy) => strategy.id));
-    const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
-
     const [
       visibleUsers,
       reports,
@@ -108,23 +98,62 @@ export async function GET(request: NextRequest) {
         ? db.select().from(realTradeOrders).orderBy(desc(realTradeOrders.createdAt)).limit(200)
         : db.select().from(realTradeOrders).where(eq(realTradeOrders.userId, session.user.id)).orderBy(desc(realTradeOrders.createdAt)).limit(100),
     ]);
+
+    const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
+    const missingStrategyIds = new Set<string>();
+    
+    const checkStrategy = (id: string | null) => {
+      if (id && !strategyById.has(id)) missingStrategyIds.add(id);
+    };
+    
+    reports.forEach(r => checkStrategy(r.strategyId));
+    snapshots.forEach(s => checkStrategy(s.strategyId));
+    realOrders.forEach(o => checkStrategy(o.strategyId));
+    
+    if (missingStrategyIds.size > 0) {
+      const missingStrategies = await db
+        .select()
+        .from(strategies)
+        .where(inArray(strategies.id, Array.from(missingStrategyIds)));
+      
+      missingStrategies.forEach((strategy) => {
+        strategyById.set(strategy.id, strategy);
+        allStrategies.push(strategy);
+      });
+    }
+
+    const filteredStrategies = allStrategies.filter((strategy) => {
+      if (strategyId !== 'all' && strategy.id !== strategyId) return false;
+      if (platform !== 'all' && strategy.platform !== platform) return false;
+      if (agentMode !== 'all' && strategy.agentMode !== agentMode) return false;
+      return true;
+    });
+    
     const userById = new Map(visibleUsers.map((user) => [user.id, user]));
 
-    const belongsToVisibleStrategy = (id: string | null) => {
-      if (!id) return strategyId === 'all' && platform === 'all' && agentMode === 'all';
-      return visibleStrategyIds.has(id);
-    };
-    const belongsToKnownStrategy = (id: string | null) => !id || allStrategyIds.has(id);
+    const filteredReports = reports.filter((report) => {
+      if (strategyId !== 'all' && report.strategyId !== strategyId) return false;
+      const strategy = report.strategyId ? strategyById.get(report.strategyId) : null;
+      if (platform !== 'all' && strategy?.platform !== platform) return false;
+      if (agentMode !== 'all' && strategy?.agentMode !== agentMode) return false;
+      return true;
+    });
 
-    const filteredReports = reports
-      .filter((report) => belongsToKnownStrategy(report.strategyId))
-      .filter((report) => belongsToVisibleStrategy(report.strategyId));
-    const filteredSnapshots = snapshots
-      .filter((snapshot) => belongsToKnownStrategy(snapshot.strategyId))
-      .filter((snapshot) => belongsToVisibleStrategy(snapshot.strategyId));
-    const filteredRealOrders = realOrders
-      .filter((order) => belongsToKnownStrategy(order.strategyId))
-      .filter((order) => belongsToVisibleStrategy(order.strategyId));
+    const filteredSnapshots = snapshots.filter((snapshot) => {
+      if (strategyId !== 'all' && snapshot.strategyId !== strategyId) return false;
+      const strategy = snapshot.strategyId ? strategyById.get(snapshot.strategyId) : null;
+      if (platform !== 'all' && (snapshot.platform || strategy?.platform) !== platform) return false;
+      if (agentMode !== 'all' && (snapshot.agentMode || strategy?.agentMode) !== agentMode) return false;
+      return true;
+    });
+
+    const filteredRealOrders = realOrders.filter((order) => {
+      if (strategyId !== 'all' && order.strategyId !== strategyId) return false;
+      if (platform !== 'all' && order.platform !== platform) return false;
+      const strategy = order.strategyId ? strategyById.get(order.strategyId) : null;
+      if (agentMode !== 'all' && strategy?.agentMode !== agentMode) return false;
+      return true;
+    });
 
     const latestSnapshotByStrategy = new Map<string, typeof filteredSnapshots[number]>();
     for (const snapshot of filteredSnapshots) {
