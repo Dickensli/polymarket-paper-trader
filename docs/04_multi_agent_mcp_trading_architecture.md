@@ -1,6 +1,6 @@
 # Multi-Agent MCP Trading Architecture
 
-Last updated: 2026-07-04
+Last updated: 2026-07-10
 
 This document captures the target design for a mature Codex/Gemini-style multi-agent trading system spanning Polymarket International, Kalshi, and Polymarket US. It is intended to be the durable reference for future MCP, server, Supabase, and strategy-agent work.
 
@@ -49,7 +49,7 @@ Build a unified strategy-agent trading platform where scheduled Codex-compatible
 6. Persist trade results, portfolio snapshots, reflections, reports, and reconciliation logs to Supabase.
 7. Restore context on the next run from prior reports and prior portfolio state.
 
-The mature flow should make the client-side strategy loop look the same for paper and real agents. The server decides whether a write is simulated or calls a real trading API.
+The mature flow should make the client-side strategy loop look the same for paper and real agents. The server decides whether a write is simulated or calls a real trading API. Strategy agents should only see high-level `buy` and `sell` tools; lower-level real-trading submission helpers are server implementation details and must not be exposed as separate MCP tools.
 
 ## Platform Support Matrix
 
@@ -72,8 +72,8 @@ Every strategy run should follow the same lifecycle:
    - Apply strategy-specific research, risk limits, sizing, and exit rules.
    - For real trading, use official data as source of truth.
 3. Execute
-   - Paper agent: submit simulated order intent to server.
-   - Real agent: submit real order intent to server; server calls official API.
+   - Paper agent: call the platform MCP `buy`/`sell` tool; server simulates the fill.
+   - Real agent: call the same platform MCP `buy`/`sell` tool; server routes to the official API and records the audit trail.
 4. Persist
    - Save order/trade result.
    - Save portfolio snapshot.
@@ -91,6 +91,7 @@ To prevent AI hallucination leading to catastrophic trading mistakes (e.g., exec
 1. **Context Registration & Lock-in**:
    - The strategy's operating parameters (`agent_mode`, `platform`, risk settings) are defined and locked at the server level during `register_strategy` or via the host script database.
    - Subsequent execution tools (e.g., `buy`, `sell`, `portfolio`, `get_strategy_context`) **MUST NOT** ask the AI to specify `agent_mode` or `platform` dynamically on every trade. The server resolves these parameters internally by looking up the `strategy_name` (or authenticated header contexts).
+   - Real trading is selected by registration state, not by a separate client-selected tool. A strategy registered as `agent_mode = real` must have ordinary `buy`/`sell` calls routed through the server's official-trading path (`/api/agent/real-trades` internally), while a paper strategy routes to paper simulation. Before routing a real trade, `/api/agent/trades` refreshes the official private portfolio snapshot and persists it as `source = official`; if that refresh fails, the server refuses to place the real order. This prevents the "ghost trade" failure mode where an agent accidentally calls a paper buy/sell tool during a real run.
 
 2. **Stateless Initialization & Synchronization**:
    - To prevent the polling AI from calling setup/registration tools on every execution (since it is stateless), the system implements three guardrails:
@@ -217,7 +218,7 @@ For real agents on `kalshi` or `polymarket_us`:
 
 1. Validate strategy registration and that `agent_mode = real`.
 2. Validate real trading is allowed for this strategy/platform.
-3. Read official market/portfolio/order state.
+3. Read official private portfolio/order state immediately before each real trade and persist that snapshot as the current source of truth.
 4. Submit order to official venue API.
 5. Persist:
    - order request
@@ -411,8 +412,9 @@ Add a new `/api/agent/*` API family in `polymarket-paper-trader`.
 | `/api/agent/context` | GET/POST | Return prior reports, portfolio, orders, and official snapshot if real. |
 | `/api/agent/reports` | GET/POST | List/write strategy reports. |
 | `/api/agent/reports/[id]` | GET | Read one report. |
+| `/api/agent/trades` | POST | Unified execution entrypoint. Resolves `agent_mode` from strategy registration, then routes to paper or real execution. |
 | `/api/agent/paper-trades` | POST | Execute or record a paper trade. |
-| `/api/agent/real-trades` | POST | Execute a real trade and persist audit. |
+| `/api/agent/real-trades` | POST | Internal/advanced real-trade execution path. Persists official audit trail; not exposed as an MCP strategy tool. |
 | `/api/agent/real-orders/[id]/cancel` | POST | Cancel a real order and persist audit. |
 | `/api/agent/reconcile` | POST | Reconcile official venue state against local state. |
 
@@ -531,9 +533,10 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `GET /api/agent/context`.
 - [x] Add `GET/POST /api/reports` (existing).
 - [x] Add `GET /api/reports/[filename]` (existing).
-- [ ] Add `POST /api/agent/paper-trades` (unified cross-platform paper trade endpoint).
-- [ ] Add `POST /api/agent/real-trades`.
-- [ ] Add `POST /api/agent/real-orders/[id]/cancel`.
+- [x] Add `POST /api/agent/trades` (unified mode-routing execution endpoint).
+- [x] Add `POST /api/agent/paper-trades` (cross-platform paper trade endpoint).
+- [x] Add `POST /api/agent/real-trades` (internal/advanced official execution endpoint).
+- [x] Add `POST /api/agent/real-orders/[id]/cancel`.
 - [ ] Add `POST /api/agent/reconcile`.
 - [x] Keep compatibility wrappers for old `init_account`, `portfolio`, `history`, `stats`, `buy`, and `sell`.
 
@@ -543,8 +546,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Kalshi paper trading flow (via `/api/kalshi/trade/buy`, `/api/kalshi/trade/sell`).
 - [x] Polymarket US paper market-data client (via official `polymarket-us` SDK).
 - [x] Polymarket US paper fill simulator (via `/api/polymarket-us/trade/buy`, `/api/polymarket-us/trade/sell`).
-- [ ] Normalize all three into unified `/api/agent/paper-trades`.
-- [ ] Ensure all paper trades write portfolio snapshot and report link.
+- [x] Normalize all three into unified `/api/agent/paper-trades`.
+- [x] Ensure all paper trades write portfolio snapshot and report link.
 - [x] Idempotency enforcement per strategy/platform.
 
 ### Phase 4 - Real Trading
@@ -552,8 +555,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [ ] Move or reuse Kalshi official trading client server-side.
 - [ ] Move or reuse Polymarket US official trading client server-side.
 - [ ] Add real-trading enable flags per platform and per strategy.
-- [ ] Add `submit_real_trade` MCP flow for Kalshi.
-- [ ] Add `submit_real_trade` MCP flow for Polymarket US.
+- [x] Route Kalshi MCP `buy`/`sell` through unified `/api/agent/trades`; hide `submit_real_trade` from MCP tools.
+- [x] Route Polymarket US MCP `buy`/`sell` through unified `/api/agent/trades`; hide `submit_real_trade` from MCP tools.
 - [ ] Add cancel-order flow for both real platforms.
 - [ ] Persist every official request/response in `real_trade_orders`.
 - [ ] Add official portfolio snapshot after each real write.
@@ -575,8 +578,8 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [x] Add `save_report` / `list_reports` / `read_report` tools (all 3 MCP servers).
 - [x] Create per-platform Jetski skills with verified tool inventories (`polymarket-trading`, `kalshi-trading`, `polymarket-us-trading`).
 - [x] Document per-platform tool comparison matrix in architecture doc.
-- [ ] Add `record_paper_trade` tool (unified).
-- [ ] Add `submit_real_trade` tool.
+- [x] Use `buy` / `sell` as the unified execution tools for paper and real strategies.
+- [x] Do not expose `submit_real_trade` as an MCP tool; keep real submission server-side.
 - [ ] Add `cancel_real_order` tool.
 - [ ] Add `reconcile_portfolio` tool.
 - [x] Execution tools (buy/sell) use only `strategy_name` — server resolves platform via server-side binding.
@@ -612,4 +615,3 @@ This keeps real venue credentials away from frontend code and away from strategy
 - [ ] Mock official real trade clients for Kalshi and Polymarket US.
 - [ ] Test reconciliation thresholds and log creation.
 - [ ] MCP smoke test listing and calling new tools.
-

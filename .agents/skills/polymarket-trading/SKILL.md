@@ -25,7 +25,7 @@ All trading tools come from the **`polytraders-web`** MCP server. Call them via 
 | Tool | Purpose | ⚠️ |
 |---|---|---|
 | `get_strategy_context` | Full context: setup state, portfolio, positions, trades, reports, warnings. **Call FIRST every session.** | |
-| `register_strategy` | Register strategy identity (mode, platform, balance). Idempotent. | |
+| `register_strategy` | Register strategy identity and lock `agent_mode`/platform server-side. Polymarket International currently supports paper execution only. Idempotent. | |
 | `get_balance` | Quick cash / positions / total value / PnL summary. | |
 | `init_account` | Wipes all trades, positions, resets cash. | **DESTRUCTIVE** |
 | `reset_account` | Same as init_account. | **DESTRUCTIVE** |
@@ -45,21 +45,20 @@ All trading tools come from the **`polytraders-web`** MCP server. Call them via 
 
 ### Trading
 
-⚠️ **CRITICAL TOOL SELECTION RULE:**
-You must select the correct trading tool based on your current `agent_mode` (from `get_strategy_context`):
-- If **Paper Trading** (`agent_mode: "paper"`): Use `buy`, `sell`, `place_limit_order`, etc.
-- If **Real Trading** (`agent_mode: "real"`): Use `submit_real_trade` (pass `side="BUY"` or `side="SELL"`) and `cancel_real_order`. DO NOT use any of the paper tools.
+⚠️ **CRITICAL EXECUTION RULE:**
+Polymarket International currently supports **paper execution only** in this system. The server still routes `buy` / `sell` through the unified strategy-binding endpoint, so if a strategy is accidentally registered as `agent_mode: "real"`, the server will reject the trade instead of silently creating a paper fill.
+
+Do not call or invent `submit_real_trade`; it is not an MCP tool. International Polymarket real trading is out of scope until wallet/EIP-712/CLOB auth is implemented server-side.
 
 | Tool | Purpose |
 |---|---|
-| `buy` | (PAPER ONLY) Buy shares. Requires `slug_or_id`, `outcome`, `amount_usd`, `account`. |
-| `sell` | (PAPER ONLY) Sell shares. Requires `slug_or_id`, `outcome`, `shares`, `account`. |
+| `buy` | Buy paper shares for the registered strategy. Requires `slug_or_id`, `outcome`, `amount_usd`, `account` or `strategy_id`. |
+| `sell` | Sell paper shares for the registered strategy. Requires `slug_or_id`, `outcome`, `shares`, `account` or `strategy_id`. |
 | `place_limit_order` | (PAPER ONLY) GTC/GTD limit order. |
 | `list_orders` | (PAPER ONLY) List pending limit orders. |
 | `cancel_order` | (PAPER ONLY) Cancel a specific order by ID. |
 | `cancel_all_orders` | (PAPER ONLY) Cancel all pending orders. |
 | `check_orders` | (PAPER ONLY) Trigger limit order fill checks against live prices. |
-| `submit_real_trade` | (REAL ONLY) Real order. Requires `side` (BUY/SELL), `slug`, `outcome`, `price`, `amount` (or `shares`), `strategy_id`. |
 | `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
 ### Portfolio & History
@@ -138,6 +137,7 @@ Every session follows four phases:
 ## Critical Safety Rules
 
 - **NEVER** call `init_account` or `reset_account` unless the user explicitly says to wipe the account.
+- **NEVER** call or reference `submit_real_trade`; Polymarket International real execution is unsupported and server-side guarded.
 - **NEVER** trade without checking `get_balance` or `portfolio` first.
 - **NEVER** exceed the hard risk limits above, even if the user asks.
 - **NEVER** use internal codebase search, internal developer tools, or internal documentation wikis for trading research. Use public web search instead.

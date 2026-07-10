@@ -30,7 +30,7 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 | --- | --- |
 | `init_account` | ⚠️ **DESTRUCTIVE** — wipes all trades, positions, and resets cash. **NEVER call unless explicitly instructed.** |
 | `get_balance` | Quick cash / positions / total value / PnL summary. |
-| `register_strategy` | Register strategy identity (mode, platform, balance). Idempotent — safe to call on every run. |
+| `register_strategy` | Register strategy identity and lock `agent_mode`/platform server-side. Use `is_paper_trading: false` for real trading. Idempotent — safe to call on every run. |
 | `get_strategy_context` | Full context: `is_setup`, portfolio, positions, recent trades, reports, warnings. **Call this FIRST.** |
 
 ### Market Data (Read-Only)
@@ -47,16 +47,16 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 
 ### Trading
 
-⚠️ **CRITICAL TOOL SELECTION RULE:**
-You must select the correct trading tool based on your current `agent_mode` (from `get_strategy_context`):
-- If **Paper Trading** (`agent_mode: "paper"`): Use `buy` and `sell` tools.
-- If **Real Trading** (`agent_mode: "real"`): Use `submit_real_trade` (pass `side="BUY"` or `side="SELL"`) and `cancel_real_order`. DO NOT use `buy` or `sell`.
+⚠️ **CRITICAL EXECUTION RULE:**
+You do **not** choose a separate paper-vs-real execution tool. The server selects the execution path from the strategy registration:
+- If the strategy was registered with `is_paper_trading: true`, `buy` / `sell` simulate paper fills.
+- If the strategy was registered with `is_paper_trading: false`, `buy` / `sell` first refresh the official Kalshi portfolio snapshot, then submit through the real Kalshi API and persist the audit trail.
+- Do not call or invent `submit_real_trade`; it is not an MCP tool. It is a server-side implementation detail.
 
 | Tool | Purpose |
 | --- | --- |
-| `buy` | (PAPER ONLY) Buy contracts. Requires `ticker`, `outcome`, `amount_usd`, `account`. |
-| `sell` | (PAPER ONLY) Sell contracts. Requires `ticker`, `outcome`, `shares`, `account`. |
-| `submit_real_trade` | (REAL ONLY) Real order. Requires `side` (BUY/SELL), `slug` (ticker), `outcome`, `price`, `amount` (or `shares`), `strategy_id`. |
+| `buy` | Buy contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and `amount` or `shares`; use explicit `price` for real trading. |
+| `sell` | Sell contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading; use explicit `price` for real trading. |
 | `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
 ### Portfolio & History
@@ -153,7 +153,7 @@ You must select the correct trading tool based on your current `agent_mode` (fro
 
 ### Phase 3 — Execute
 
-1. **Place trades**: Use `buy` / `sell` with your `account` parameter.
+1. **Place trades**: Use `buy` / `sell` with your `strategy_id` parameter. For real trading, include an explicit limit `price`.
 2. **Verify**: After each trade, call `portfolio` or `get_balance` to confirm the server-side state matches expectations.
 
 ### Phase 4 — Report & Persist
@@ -173,6 +173,7 @@ You must select the correct trading tool based on your current `agent_mode` (fro
 
 - ⛔ **NEVER** call `init_account` unless the user explicitly says to reset.
 - ⛔ **NEVER** specify `agent_mode` or `platform` on trading tools — the server resolves these from your strategy registration.
+- ⛔ **NEVER** call or reference `submit_real_trade`; real execution is selected by registration and reached through `buy` / `sell`.
 - ⛔ **NEVER** trade without first reading `get_strategy_context`.
 - ⛔ **NEVER** trust your own arithmetic over the server's `portfolio` / `get_balance` response.
 - ✅ **ALWAYS** pass the correct `account` and `agent_user_id` parameters matching what was registered on every state-touching tool call.

@@ -100,7 +100,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_balance",
-      description: "Get Polymarket US paper cash, positions value, total value, and P&L.",
+      description: "Get Polymarket US strategy cash, positions value, total value, and P&L from server-side state.",
       inputSchema: { type: "object", properties: accountProps, required: ["strategy_id"] },
     },
     {
@@ -158,7 +158,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "buy",
-      description: "Buy YES or NO shares in a Polymarket US paper market.",
+      description: "Buy YES or NO shares in a Polymarket US market. The server routes to paper simulation or real trading based on the registered strategy mode.",
       inputSchema: {
         type: "object",
         properties: {
@@ -174,7 +174,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "sell",
-      description: "Sell Polymarket US paper shares by positionId or slug/outcome.",
+      description: "Sell Polymarket US shares by slug/outcome. The server routes to paper simulation or real trading based on the registered strategy mode.",
       inputSchema: {
         type: "object",
         properties: {
@@ -190,17 +190,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "portfolio",
-      description: "Get the complete Polymarket US paper portfolio including positions and trade history.",
+      description: "Get the complete Polymarket US strategy portfolio including positions and trade history.",
       inputSchema: { type: "object", properties: accountProps, required: ["strategy_id"] },
     },
     {
       name: "history",
-      description: "Get recent Polymarket US paper trade history.",
+      description: "Get recent Polymarket US strategy trade history.",
       inputSchema: { type: "object", properties: { limit: { type: "number" }, ...accountProps }, required: ["strategy_id"] },
     },
     {
       name: "stats",
-      description: "Summarize Polymarket US paper trading performance.",
+      description: "Summarize Polymarket US strategy trading performance.",
       inputSchema: { type: "object", properties: accountProps, required: ["strategy_id"] },
     },
     // ── Agent Reports (Retro) ──────────────────────────────────────
@@ -273,13 +273,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Agent Strategy ─────────────────────────────────────────────
     {
       name: "register_strategy",
-      description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
+      description: "Register a strategy identity on the server. Locks in agent_mode and platform; set is_paper_trading=false for real Polymarket US trading. Safe to call repeatedly (idempotent). Call this first on your initial run.",
       inputSchema: {
         type: "object",
         properties: {
           strategy_id: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
           account_id: { type: "string", description: "Account ID, defaults to AGENT_USER_ID if not provided." },
-          is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode (default true)", default: true },
+          is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode. Set false to register this strategy for real Polymarket US trading.", default: true },
           platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
           balance: { type: "number", description: "Starting paper balance in USD" },
         },
@@ -295,25 +295,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           strategy_id: { type: "string", description: "Strategy name to get context for" },
         },
         required: ["strategy_id"],
-      },
-    },
-    {
-      name: "submit_real_trade",
-      description: "Submit a real Polymarket US trade for a registered real strategy. The server validates real-trading enablement and persists the official audit trail.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          strategy_id: { type: "string", description: "Registered real strategy name" },
-          slug: { type: "string", description: "Polymarket US market slug" },
-          outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
-          side: { type: "string", enum: ["BUY", "SELL"], description: "Trade side" },
-          amount: { type: "number", description: "USD notional. Requires price if shares is omitted." },
-          shares: { type: "number", description: "Number of contracts/shares" },
-          price: { type: "number", description: "Explicit limit price from 0 to 1" },
-          client_order_id: { type: "string", description: "Optional client order id" },
-          time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
-        },
-        required: ["strategy_id", "slug", "outcome", "side", "price"],
       },
     },
     {
@@ -418,30 +399,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     case "buy": {
       const idempotencyKey = generateIdempotencyKey();
-      const data = await callPolyTrader("/polymarket-us/trade/buy", {
+      const data = await callPolyTrader("/agent/trades", {
         method: "POST",
         headers: getAgentHeaders(args, idempotencyKey),
         body: JSON.stringify({
+          strategy_id: (args as any).strategy_id,
           slug: (args as any).slug,
           outcome: (args as any).outcome || "YES",
+          side: "BUY",
           amount: (args as any).amount,
           shares: (args as any).shares,
           price: (args as any).price,
+          client_order_id: idempotencyKey,
         }),
       });
       return json({ ok: true, data: data.data ?? data, idempotency_key: idempotencyKey });
     }
     case "sell": {
       const idempotencyKey = generateIdempotencyKey();
-      const data = await callPolyTrader("/polymarket-us/trade/sell", {
+      const quantity = (args as any).quantity || "ALL";
+      const data = await callPolyTrader("/agent/trades", {
         method: "POST",
         headers: getAgentHeaders(args, idempotencyKey),
         body: JSON.stringify({
-          positionId: (args as any).positionId,
+          strategy_id: (args as any).strategy_id,
           slug: (args as any).slug,
           outcome: (args as any).outcome || "YES",
-          quantity: (args as any).quantity || "ALL",
+          side: "SELL",
+          shares: typeof quantity === "number" ? quantity : undefined,
           price: (args as any).price,
+          client_order_id: idempotencyKey,
         }),
       });
       return json({ ok: true, data: data.data ?? data, idempotency_key: idempotencyKey });
@@ -548,32 +535,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`,
         { headers: getAgentHeaders(args) },
       );
-      return json({ ok: true, data: data.data ?? data });
-    }
-    case "submit_real_trade": {
-      const strategy_id = String((args as any).strategy_id);
-      const slug = String((args as any).slug);
-      const outcome = String((args as any).outcome);
-      const side = String((args as any).side);
-      const price = Number((args as any).price);
-      if (!strategy_id || !slug || !outcome || !side || !Number.isFinite(price)) {
-        throw new Error("Missing required fields: strategy_id, slug, outcome, side, price");
-      }
-      const data = await callPolyTrader("/agent/real-trades", {
-        method: "POST",
-        headers: getAgentHeaders(args),
-        body: JSON.stringify({
-          strategy_id,
-          slug,
-          outcome,
-          side,
-          amount: (args as any).amount,
-          shares: (args as any).shares,
-          price,
-          client_order_id: (args as any).client_order_id,
-          time_in_force: (args as any).time_in_force,
-        }),
-      });
       return json({ ok: true, data: data.data ?? data });
     }
     case "cancel_real_order": {

@@ -27,7 +27,7 @@ Only the 18 tools listed below exist on this server. Do NOT call tools from othe
 
 | Tool | Purpose |
 | --- | --- |
-| `register_strategy` | Register strategy identity (mode, platform, balance). Idempotent — safe to call every run. |
+| `register_strategy` | Register strategy identity and lock `agent_mode`/platform server-side. Use `is_paper_trading: false` for real trading. Idempotent — safe to call every run. |
 | `get_strategy_context` | Full context: `is_setup`, portfolio, positions, recent trades, reports, warnings. **Call FIRST.** |
 | `get_balance` | Quick cash / positions / total value / PnL summary. |
 | `init_account` | ⚠️ **DESTRUCTIVE** — wipes all trades, positions, resets cash. **NEVER call unless explicitly instructed.** |
@@ -46,19 +46,19 @@ Only the 18 tools listed below exist on this server. Do NOT call tools from othe
 
 ### Trading
 
-⚠️ **CRITICAL TOOL SELECTION RULE:**
-You must select the correct trading tool based on your current `agent_mode` (from `get_strategy_context`):
-- If **Paper Trading** (`agent_mode: "paper"`): Use `buy` and `sell` tools.
-- If **Real Trading** (`agent_mode: "real"`): Use `submit_real_trade` (pass `side="BUY"` or `side="SELL"`) and `cancel_real_order`. DO NOT use `buy` or `sell`.
+⚠️ **CRITICAL EXECUTION RULE:**
+You do **not** choose a separate paper-vs-real execution tool. The server selects the execution path from the strategy registration:
+- If the strategy was registered with `is_paper_trading: true`, `buy` / `sell` simulate paper fills.
+- If the strategy was registered with `is_paper_trading: false`, `buy` / `sell` first refresh the official Polymarket US portfolio snapshot, then submit through the real Polymarket US API and persist the audit trail.
+- Do not call or invent `submit_real_trade`; it is not an MCP tool. It is a server-side implementation detail.
 
 | Tool | Purpose |
 | --- | --- |
-| `buy` | (PAPER ONLY) Buy shares. Requires market ID, outcome, amount, strategy_id. |
-| `sell` | (PAPER ONLY) Sell shares. Requires market ID, outcome, shares, strategy_id. |
-| `submit_real_trade` | (REAL ONLY) Real order. Requires `side` (BUY/SELL), `slug`, `outcome`, `price`, `amount` (or `shares`), `strategy_id`. |
+| `buy` | Buy shares for the registered strategy. Requires `slug`, `outcome`, `strategy_id`, and `amount` or `shares`; use explicit `price` for real trading. |
+| `sell` | Sell shares for the registered strategy. Requires `slug`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading; use explicit `price` for real trading. |
 | `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
-> There are **no limit-order tools** on this server for paper trading (no `place_limit_order`, `list_orders`, `cancel_order`, `cancel_all_orders`, `check_orders`). Real trading uses `submit_real_trade` which is limit-based.
+> There are **no limit-order tools** on this server for paper trading (no `place_limit_order`, `list_orders`, `cancel_order`, `cancel_all_orders`, `check_orders`). Real trading is limit-based through `buy` / `sell` with explicit `price`.
 
 ### Portfolio & History
 
@@ -149,7 +149,7 @@ You must select the correct trading tool based on your current `agent_mode` (fro
 
 ### Phase 3 — Execute
 
-1. Place trades with `buy` / `sell`, always passing `strategy_id`.
+1. Place trades with `buy` / `sell`, always passing `strategy_id`. For real trading, include an explicit limit `price`.
 2. After each trade, call `portfolio` or `get_balance` to verify server-side state.
 
 ### Phase 4 — Report & Persist
@@ -169,9 +169,9 @@ You must select the correct trading tool based on your current `agent_mode` (fro
 
 - ⛔ **NEVER** call `init_account` unless the user explicitly says to reset.
 - ⛔ **NEVER** specify `agent_mode` or `platform` on trading tools — the server resolves these from registration.
+- ⛔ **NEVER** call or reference `submit_real_trade`; real execution is selected by registration and reached through `buy` / `sell`.
 - ⛔ **NEVER** trade without first reading `get_strategy_context`.
 - ⛔ **NEVER** trust your own arithmetic over the server's `portfolio`/`get_balance`.
 - ⛔ **NEVER** use internal codebase search, internal developer tools, or internal documentation wikis for trading research. Use public web search instead.
 - ✅ **ALWAYS** pass the correct `strategy_id` and `account_id` parameters matching what was registered on every state-touching tool call.
 - ✅ **ALWAYS** write a `save_report` at the end of every session.
-

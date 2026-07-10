@@ -341,7 +341,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // ── Trading (Market Orders) ─────────────────────────────────────
             {
                 name: "buy",
-                description: "Buy shares of a prediction outcome. Simulates real exchange order book execution.",
+                description: "Buy shares of a prediction outcome. The server routes by registered strategy mode; Polymarket International supports paper execution only.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -350,6 +350,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         amount_usd: { type: "number", description: "USD cash amount to spend" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_id: { type: "string", description: "Optional explicit registered strategy id. Defaults to account." },
                         override_price: { type: "number", description: "Optional exact execution price per share to enforce" },
                         override_shares: { type: "number", description: "Optional exact share quantity to purchase" }
                     },
@@ -358,7 +359,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "sell",
-                description: "Sell shares of a prediction position. Simulates real bid book execution.",
+                description: "Sell shares of a prediction position. The server routes by registered strategy mode; Polymarket International supports paper execution only.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -367,6 +368,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         shares: { type: "number", description: "Number of shares to sell" },
                         order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
                         account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
+                        strategy_id: { type: "string", description: "Optional explicit registered strategy id. Defaults to account." },
                         override_price: { type: "number", description: "Optional exact execution price per share to enforce" }
                     },
                     required: ["slug_or_id", "outcome", "shares", "account"]
@@ -623,12 +625,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // ── Agent Strategy Lifecycle ────────────────────────────────
             {
                 name: "register_strategy",
-                description: "Register a strategy identity on the server. Locks in agent_mode (paper/real) and platform. Safe to call repeatedly (idempotent). Call this first on your initial run.",
+                description: "Register a strategy identity on the server. Locks in agent_mode and platform; Polymarket International currently supports paper execution only. Safe to call repeatedly (idempotent). Call this first on your initial run.",
                 inputSchema: {
                     type: "object",
                     properties: {
                         strategy_id: { type: "string", description: "Stable strategy name, e.g. 'conservative_arb'" },
-                        is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode (default true)", default: true },
+                        is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode. Keep true for Polymarket International; real execution is currently unsupported.", default: true },
                         platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
                         balance: { type: "number", description: "Starting paper balance in USD" },
                         account: { type: "string", description: "Strategy account name" },
@@ -646,26 +648,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         account: { type: "string", description: "Strategy account name" },
                     },
                     required: ["strategy_id"]
-                }
-            },
-            {
-                name: "submit_real_trade",
-                description: "Submit a real trade for a registered real strategy. Server-side binding resolves the platform and trading mode from strategy_id.",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        strategy_id: { type: "string", description: "Registered real strategy name" },
-                        slug: { type: "string", description: "Kalshi ticker or Polymarket US market slug" },
-                        outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side" },
-                        side: { type: "string", enum: ["BUY", "SELL"], description: "Trade side" },
-                        amount: { type: "number", description: "USD notional. Requires price if shares is omitted." },
-                        shares: { type: "number", description: "Number of contracts/shares" },
-                        price: { type: "number", description: "Explicit limit price from 0 to 1" },
-                        client_order_id: { type: "string", description: "Optional venue client order id" },
-                        time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], description: "Time in force; default IOC" },
-                        account: { type: "string", description: "Strategy account name" },
-                    },
-                    required: ["strategy_id", "slug", "outcome", "side", "price"]
                 }
             },
             {
@@ -935,59 +917,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const amountUsd = args?.amount_usd;
                 const overridePrice = args?.override_price;
                 const overrideShares = args?.override_shares;
-                const resolved = await resolveMarketAndToken(slugOrId, outcome);
+                const strategyId = args?.strategy_id || args?.account;
                 const idempotencyKey = generateIdempotencyKey();
-                const res = await fetch(`${POLYTRADER_API_URL}/trade/buy`, {
+                const res = await fetch(`${POLYTRADER_API_URL}/agent/trades`, {
                     method: "POST",
                     headers: {
                         ...getAgentHeaders(args),
                         "X-Idempotency-Key": idempotencyKey,
                     },
                     body: JSON.stringify({
-                        marketConditionId: resolved.marketId,
-                        side: resolved.outcome,
+                        strategy_id: strategyId,
+                        slug: slugOrId,
+                        outcome: outcome?.toUpperCase() || "YES",
+                        side: "BUY",
                         amount: amountUsd,
-                        overridePrice,
-                        overrideShares,
+                        price: overridePrice,
+                        shares: overrideShares,
+                        client_order_id: idempotencyKey,
                     })
                 });
                 const data = await res.json();
                 if (!res.ok) {
                     return { content: [{ type: "text", text: `Trade failed: ${data.error || JSON.stringify(data)}` }], isError: true };
                 }
-                const fill = data.data || data;
-                // Fetch fresh portfolio for cash balance
-                const portRes = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders(args)
-                });
-                let cash = 0;
-                if (portRes.ok) {
-                    const portData = await portRes.json();
-                    const portfolio = portData.data || portData;
-                    cash = portfolio.balance;
-                }
                 return {
                     content: [{
                             type: "text",
-                            text: JSON.stringify({
-                                ok: true,
-                                data: {
-                                    trade: {
-                                        id: fill.id,
-                                        market_slug: resolved.slug,
-                                        outcome: fill.outcome.toLowerCase(),
-                                        side: fill.side.toLowerCase(),
-                                        avg_price: parseFloat(fill.price),
-                                        amount_usd: parseFloat(fill.total),
-                                        shares: parseFloat(fill.shares),
-                                        fee: 0,
-                                        slippage_bps: Math.round(parseFloat(fill.slippageApplied || "0") * 10000)
-                                    },
-                                    account: {
-                                        cash: cash
-                                    }
-                                }
-                            }, null, 2)
+                            text: JSON.stringify({ ok: true, data: data.data || data, idempotency_key: idempotencyKey }, null, 2)
                         }]
                 };
             }
@@ -996,69 +952,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const outcome = args?.outcome;
                 const shares = args?.shares;
                 const overridePrice = args?.override_price;
-                const resolved = await resolveMarketAndToken(slugOrId, outcome);
-                // Fetch portfolio to find the corresponding position ID
-                const portRes = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders(args)
-                });
-                if (!portRes.ok)
-                    throw new Error("Could not retrieve portfolio for position lookup.");
-                const portData = await portRes.json();
-                const portfolio = portData.data || portData;
-                const position = (portfolio.positions || []).find((p) => p.marketId === resolved.marketId && p.outcome === resolved.outcome);
-                if (!position) {
-                    throw new Error(`No active position found for ${slugOrId} (${outcome})`);
-                }
+                const strategyId = args?.strategy_id || args?.account;
                 const idempotencyKey = generateIdempotencyKey();
-                const res = await fetch(`${POLYTRADER_API_URL}/trade/sell`, {
+                const res = await fetch(`${POLYTRADER_API_URL}/agent/trades`, {
                     method: "POST",
                     headers: {
                         ...getAgentHeaders(args),
                         "X-Idempotency-Key": idempotencyKey,
                     },
                     body: JSON.stringify({
-                        positionId: position.id,
-                        quantity: shares,
-                        overridePrice,
+                        strategy_id: strategyId,
+                        slug: slugOrId,
+                        outcome: outcome?.toUpperCase() || "YES",
+                        side: "SELL",
+                        shares,
+                        price: overridePrice,
+                        client_order_id: idempotencyKey,
                     })
                 });
                 const data = await res.json();
                 if (!res.ok) {
                     return { content: [{ type: "text", text: `Sell failed: ${data.error || JSON.stringify(data)}` }], isError: true };
                 }
-                const fill = data.data || data;
-                // Fetch fresh portfolio for cash balance
-                const portRes2 = await fetch(`${POLYTRADER_API_URL}/portfolio`, {
-                    headers: getAgentHeaders(args)
-                });
-                let cash = 0;
-                if (portRes2.ok) {
-                    const portData2 = await portRes2.json();
-                    const portfolio2 = portData2.data || portData2;
-                    cash = portfolio2.balance;
-                }
                 return {
                     content: [{
                             type: "text",
-                            text: JSON.stringify({
-                                ok: true,
-                                data: {
-                                    trade: {
-                                        id: fill.id,
-                                        market_slug: resolved.slug,
-                                        outcome: fill.outcome.toLowerCase(),
-                                        side: fill.side.toLowerCase(),
-                                        avg_price: parseFloat(fill.price),
-                                        amount_usd: parseFloat(fill.total),
-                                        shares: parseFloat(fill.shares),
-                                        fee: 0,
-                                        slippage_bps: Math.round(parseFloat(fill.slippageApplied || "0") * 10000)
-                                    },
-                                    account: {
-                                        cash: cash
-                                    }
-                                }
-                            }, null, 2)
+                            text: JSON.stringify({ ok: true, data: data.data || data, idempotency_key: idempotencyKey }, null, 2)
                         }]
                 };
             }
@@ -1588,40 +1507,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     throw new Error(`API returned ${res.status}: ${errBody}`);
                 }
                 const data = await res.json();
-                return {
-                    content: [{
-                            type: "text",
-                            text: JSON.stringify({ ok: true, data: data.data || data }, null, 2)
-                        }]
-                };
-            }
-            case "submit_real_trade": {
-                const strategy_id = args?.strategy_id;
-                const slug = args?.slug;
-                const outcome = args?.outcome;
-                const side = args?.side;
-                const price = args?.price;
-                if (!strategy_id || !slug || !outcome || !side || price === undefined) {
-                    throw new Error("Missing required fields: strategy_id, slug, outcome, side, price");
-                }
-                const res = await fetch(`${POLYTRADER_API_URL}/agent/real-trades`, {
-                    method: "POST",
-                    headers: getAgentHeaders(args),
-                    body: JSON.stringify({
-                        strategy_id,
-                        slug,
-                        outcome,
-                        side,
-                        amount: args?.amount,
-                        shares: args?.shares,
-                        price,
-                        client_order_id: args?.client_order_id,
-                        time_in_force: args?.time_in_force,
-                    }),
-                });
-                const data = await res.json();
-                if (!res.ok)
-                    throw new Error(`API returned ${res.status}: ${JSON.stringify(data)}`);
                 return {
                     content: [{
                             type: "text",
