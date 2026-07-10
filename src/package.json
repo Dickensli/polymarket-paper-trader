@@ -13,10 +13,13 @@
     "test:unit": "vitest run __tests__/unit/",
     "test:integration": "vitest run __tests__/integration/trading-engine.test.ts",
     "test:live-api": "vitest run __tests__/integration/polymarket-live.test.ts --test-timeout=15000",
+    "test:commit": "npm run db:verify",
+    "test:pre-push": "npm run db:verify && npm run test:e2e",
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
+    "db:verify": "node scripts/verify-supabase-schema.mjs",
     "db:studio": "drizzle-kit studio",
     "prepare": "husky"
   },
