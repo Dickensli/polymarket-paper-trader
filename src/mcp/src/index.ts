@@ -387,7 +387,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // ── Trading (Market Orders) ─────────────────────────────────────
       {
         name: "buy",
-        description: "Buy shares of a prediction outcome. The server routes by registered strategy mode; Polymarket International supports paper execution only.",
+        description: "Buy shares of a prediction outcome. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes by registered strategy mode; Polymarket International supports paper execution only.",
         inputSchema: {
           type: "object",
           properties: {
@@ -397,7 +397,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             order_type: { type: "string", enum: ["fok", "fak"], description: "FOK = Fill-Or-Kill, FAK = Fill-And-Kill (default: fok)" },
             account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
             strategy_id: { type: "string", description: "Optional explicit registered strategy id. Defaults to account." },
-            override_price: { type: "number", description: "Optional exact execution price per share to enforce" },
+            override_price: { type: "number", description: "DO NOT USE. Market orders only." },
             override_shares: { type: "number", description: "Optional exact share quantity to purchase" }
           },
           required: ["slug_or_id", "outcome", "amount_usd", "account"]
@@ -405,7 +405,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "sell",
-        description: "Sell shares of a prediction position. The server routes by registered strategy mode; Polymarket International supports paper execution only.",
+        description: "Sell shares of a prediction position. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes by registered strategy mode; Polymarket International supports paper execution only.",
         inputSchema: {
           type: "object",
           properties: {
@@ -415,7 +415,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             order_type: { type: "string", enum: ["fok", "fak"], description: "FOK or FAK (default: fok)" },
             account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
             strategy_id: { type: "string", description: "Optional explicit registered strategy id. Defaults to account." },
-            override_price: { type: "number", description: "Optional exact execution price per share to enforce" }
+            override_price: { type: "number", description: "DO NOT USE. Market orders only." }
           },
           required: ["slug_or_id", "outcome", "shares", "account"]
         }

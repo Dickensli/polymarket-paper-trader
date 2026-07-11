@@ -140,7 +140,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "buy",
-      description: "Buy YES or NO shares in a Kalshi market. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
+      description: "Buy YES or NO shares in a Kalshi market. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
       inputSchema: {
         type: "object",
         properties: {
@@ -148,7 +148,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           outcome: { type: "string", enum: ["YES", "NO"] },
           amount: { type: "number", description: "Dollar amount to spend." },
           shares: { type: "number", description: "Optional exact shares to buy." },
-          price: { type: "number", description: "Optional override execution price, 0-1." },
+          price: { type: "number", description: "DO NOT USE. Market orders only." },
           ...accountProps,
         },
         required: ["ticker", "strategy_id"],
@@ -156,7 +156,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "sell",
-      description: "Sell Kalshi shares by ticker/outcome. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
+      description: "Sell Kalshi shares by ticker/outcome. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
       inputSchema: {
         type: "object",
         properties: {
@@ -164,7 +164,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           ticker: { type: "string" },
           outcome: { type: "string", enum: ["YES", "NO"] },
           quantity: { anyOf: [{ type: "number" }, { type: "string", enum: ["ALL"] }] },
-          price: { type: "number", description: "Optional override execution price, 0-1." },
+          price: { type: "number", description: "DO NOT USE. Market orders only." },
           ...accountProps,
         },
         required: ["strategy_id"],

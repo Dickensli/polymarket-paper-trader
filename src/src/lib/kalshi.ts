@@ -15,7 +15,10 @@ export async function getKalshiMarket(ticker: string): Promise<Record<string, un
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.warn(`[Kalshi] Failed to fetch market ${ticker}: ${res.status} ${res.statusText}`);
+    return null;
+  }
   const json = (await res.json()) as KalshiMarketResponse;
   return json.market ?? (json as Record<string, unknown>);
 }

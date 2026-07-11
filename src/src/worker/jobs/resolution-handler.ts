@@ -146,8 +146,20 @@ export async function runResolutionCheckForUser(userId: string): Promise<number>
       let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
 
       if (isKalshi) {
-        const market = await getKalshiMarket(marketId).catch(() => null);
-        if (!market) continue;
+        const market = await getKalshiMarket(marketId).catch((err) => {
+          console.error(`[Resolution] Failed to fetch Kalshi market ${marketId}:`, err);
+          return null;
+        });
+        
+        if (!market) {
+          // Delay to respect rate limits even on failure
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
+        
+        // Rate limit: 10 requests per second max, delay ~150ms to be safe
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        
         const status = String(market.status).toLowerCase();
         if (status === 'finalized' || status === 'settled') {
           const result = String(market.result).toUpperCase();
@@ -228,8 +240,20 @@ export async function runResolutionCheck() {
       let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
 
       if (isKalshi) {
-        const market = await getKalshiMarket(marketId).catch(() => null);
-        if (!market) continue;
+        const market = await getKalshiMarket(marketId).catch((err) => {
+          console.error(`[Resolution] Failed to fetch Kalshi market ${marketId}:`, err);
+          return null;
+        });
+        
+        if (!market) {
+          // Delay to respect rate limits even on failure
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
+        
+        // Rate limit: 10 requests per second max, delay ~150ms to be safe
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        
         const status = String(market.status).toLowerCase();
         if (status === 'finalized' || status === 'settled') {
           const result = String(market.result).toUpperCase();

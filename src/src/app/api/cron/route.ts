@@ -4,6 +4,8 @@ import { runResolutionCheck } from '@/worker/jobs/resolution-handler';
 import { runLeaderboardCalculation } from '@/worker/jobs/leaderboard';
 import { runOrderCheck } from '@/worker/jobs/order-checker';
 
+export const maxDuration = 60; // 60 seconds (Pro plan limit)
+
 export async function GET(req: Request) {
   // Protect cron endpoint using Vercel CRON_SECRET or NEXTAUTH_SECRET as fallback (RLS secured)
   const authHeader = req.headers.get('authorization');

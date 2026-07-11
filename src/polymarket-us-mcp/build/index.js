@@ -2,9 +2,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
+import fs from "fs";
 function log(msg) {
     const timestamp = new Date().toISOString();
     console.error(`[${timestamp}] ${msg}`);
+    fs.appendFileSync("/usr/local/google/home/dickensli/mcp-direct.log", `[${timestamp}] ${msg}\n`);
 }
 const STRATEGY_WHITELIST_RAW = process.env.STRATEGY_WHITELIST;
 if (!STRATEGY_WHITELIST_RAW) {
@@ -154,7 +156,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "buy",
-            description: "Buy YES or NO shares in a Polymarket US market. The server routes to paper simulation or real trading based on the registered strategy mode.",
+            description: "Buy YES or NO shares in a Polymarket US market. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes to paper simulation or real trading based on the registered strategy mode.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -162,7 +164,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side." },
                     amount: { type: "number", description: "Dollar amount to spend." },
                     shares: { type: "number", description: "Optional exact shares to buy." },
-                    price: { type: "number", description: "Optional override execution price, 0-1." },
+                    price: { type: "number", description: "DO NOT USE. Market orders only." },
                     ...accountProps,
                 },
                 required: ["slug", "strategy_id"],
@@ -170,7 +172,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "sell",
-            description: "Sell Polymarket US shares by slug/outcome. The server routes to paper simulation or real trading based on the registered strategy mode.",
+            description: "Sell Polymarket US shares by slug/outcome. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes to paper simulation or real trading based on the registered strategy mode.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -178,7 +180,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     slug: { type: "string", description: "Market slug." },
                     outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side." },
                     quantity: { anyOf: [{ type: "number" }, { type: "string", enum: ["ALL"] }], description: "Number of shares to sell, or 'ALL'." },
-                    price: { type: "number", description: "Optional override execution price, 0-1." },
+                    price: { type: "number", description: "DO NOT USE. Market orders only." },
                     ...accountProps,
                 },
                 required: ["strategy_id"],
@@ -278,6 +280,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode. Set false to register this strategy for real Polymarket US trading.", default: true },
                     platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
                     balance: { type: "number", description: "Starting paper balance in USD" },
+                    force_enable: { type: "boolean", description: "Administrative override to re-enable a disabled strategy." },
                 },
                 required: ["strategy_id"],
             },
@@ -514,11 +517,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 method: "POST",
                 headers: getAgentHeaders(args),
                 body: JSON.stringify({
-                    strategy_id,
                     account_id,
                     is_paper_trading: args.is_paper_trading !== false,
                     platform: args.platform || "polymarket_us",
                     balance: Number(args.balance || 10000),
+                    ...args, // Pass everything else!
                 }),
             });
             return json({ ok: true, data: data.data ?? data });

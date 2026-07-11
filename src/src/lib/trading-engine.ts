@@ -6,6 +6,7 @@ import {
   positions,
   ledgerEntries,
   marketCache,
+  limitOrders,
 } from '@/lib/db/schema';
 import type {
   Portfolio,
@@ -17,7 +18,7 @@ import type {
 import { Redis } from '@upstash/redis';
 import { getMidpoint, getMarket } from '@/lib/polymarket';
 import { getKalshiOutcomePrice, parseKalshiTokenId } from '@/lib/kalshi';
-import { runResolutionCheckForUser } from '@/worker/jobs/resolution-handler';
+export { runResolutionCheckForUser } from '@/worker/jobs/resolution-handler';
 
 // Constants
 const DEFAULT_BALANCE = 10000;
@@ -631,17 +632,13 @@ export async function resetPortfolio(userId: string, initialBalance?: number): P
       })
       .where(eq(portfolios.userId, userId));
 
-    // 2. Close all positions
-    await tx
-      .update(positions)
-      .set({
-        shares: '0.000000',
-        isOpen: false,
-        updatedAt: new Date(),
-      })
-      .where(eq(positions.userId, userId));
+    // 2. Delete all limit orders first to prevent foreign key violations (filled_trade_id -> paperTrades)
+    await tx.delete(limitOrders).where(eq(limitOrders.userId, userId));
 
-    // 3. Clear trade history
+    // 3. Delete all positions
+    await tx.delete(positions).where(eq(positions.userId, userId));
+
+    // 4. Clear trade history
     await tx.delete(paperTrades).where(eq(paperTrades.userId, userId));
     await tx.delete(ledgerEntries).where(eq(ledgerEntries.userId, userId));
   });

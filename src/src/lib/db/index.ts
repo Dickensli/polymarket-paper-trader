@@ -15,6 +15,7 @@ function getConnection() {
     }
     const poolMax = process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : 10;
     connection = postgres(databaseUrl, {
+      prepare: false, // Required for PgBouncer/Supabase pooler
       max: poolMax, // connection pool size
       idle_timeout: 20,
       connect_timeout: 10,

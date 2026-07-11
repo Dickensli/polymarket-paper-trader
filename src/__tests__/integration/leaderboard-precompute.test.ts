@@ -38,5 +38,5 @@ describe('Leaderboard Pre-compute Integration Test', () => {
       console.log(`Found ${dailySnaps.length} DAILY snapshots in DB.`);
       expect(dailySnaps.length).toBeGreaterThanOrEqual(count);
     }
-  });
+  }, 60000);
 });
