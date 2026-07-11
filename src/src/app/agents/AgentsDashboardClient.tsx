@@ -608,9 +608,6 @@ function ReportEntry({ report }: { report: Report }) {
 
 function formatOrderPrice(order: RealOrder) {
   if (!order.price) return '--';
-  if (order.platform === 'kalshi') {
-    return `${order.price.toFixed(1)}c`;
-  }
   return `${(order.price * 100).toFixed(1)}c`;
 }
 

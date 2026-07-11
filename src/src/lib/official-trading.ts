@@ -85,6 +85,17 @@ function kalshiTimeInForce(tif: TimeInForce | undefined): string {
   return 'immediate_or_cancel';
 }
 
+function formatKalshiCount(quantity: number): string {
+  if (!Number.isFinite(quantity)) {
+    throw new Error('Real order quantity must be finite.');
+  }
+  const fixedPointQuantity = Math.floor(quantity * 100) / 100;
+  if (fixedPointQuantity < 0.01) {
+    throw new Error('Kalshi real order quantity must be at least 0.01 contracts.');
+  }
+  return fixedPointQuantity.toFixed(2);
+}
+
 function polymarketUsTif(tif: TimeInForce | undefined): string {
   if (tif === 'GTC') return 'TIME_IN_FORCE_GOOD_TILL_CANCEL';
   if (tif === 'FOK') return 'TIME_IN_FORCE_FILL_OR_KILL';
@@ -163,26 +174,7 @@ async function kalshiRequest<T>(
 }
 
 async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialTradeResult> {
-  const price = yesSidePrice(intent.outcome, clampPrice(intent.price ?? NaN));
-  const quantity = resolveQuantity(intent);
-  const clientOrderId = intent.clientOrderId ?? randomUUID();
-  
-  // Kalshi V2 API expects price in cents (e.g., 45 for $0.45) and count as an integer.
-  const priceInCents = Math.round(price * 100);
-  const countInt = Math.floor(quantity);
-
-  const request = {
-    ticker: intent.slug,
-    client_order_id: clientOrderId,
-    side: kalshiBookSide(intent.outcome, intent.side),
-    count: String(countInt),
-    price: price.toFixed(4), 
-    time_in_force: kalshiTimeInForce(intent.timeInForce),
-    self_trade_prevention_type: 'taker_at_cross',
-    post_only: false,
-    cancel_order_on_pause: false,
-    reduce_only: intent.side === 'SELL' && (intent.timeInForce === 'IOC' || intent.timeInForce === 'FOK'),
-  };
+  const { request, clientOrderId } = buildKalshiOrderRequest(intent);
 
   const response = await kalshiRequest<Record<string, unknown>>('POST', '/portfolio/events/orders', request);
   const officialOrderId =
@@ -198,6 +190,33 @@ async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialT
     status: 'SUBMITTED',
     request,
     response,
+  };
+}
+
+export function buildKalshiOrderRequest(intent: OfficialTradeIntent): {
+  clientOrderId: string;
+  request: Record<string, unknown>;
+} {
+  const price = yesSidePrice(intent.outcome, clampPrice(intent.price ?? NaN));
+  const quantity = resolveQuantity(intent);
+  const clientOrderId = intent.clientOrderId ?? randomUUID();
+
+  const request = {
+    ticker: intent.slug,
+    client_order_id: clientOrderId,
+    side: kalshiBookSide(intent.outcome, intent.side),
+    count: formatKalshiCount(quantity),
+    price: price.toFixed(4),
+    time_in_force: kalshiTimeInForce(intent.timeInForce),
+    self_trade_prevention_type: 'taker_at_cross',
+    post_only: false,
+    cancel_order_on_pause: false,
+    reduce_only: intent.side === 'SELL' && (intent.timeInForce === 'IOC' || intent.timeInForce === 'FOK'),
+  };
+
+  return {
+    clientOrderId,
+    request,
   };
 }
 
