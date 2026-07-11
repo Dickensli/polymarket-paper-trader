@@ -239,6 +239,15 @@ const server = new Server(
   }
 );
 
+function requireDestructiveResetConfirmation(args: Record<string, unknown> | undefined) {
+  if (args?.confirm_destructive_reset !== true) {
+    throw new Error(
+      "init_account is destructive and requires confirm_destructive_reset=true. " +
+      "Use portfolio/get_balance for normal account inspection.",
+    );
+  }
+}
+
 // ==========================================================================
 // Tool Definitions
 // ==========================================================================
@@ -254,9 +263,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             balance: { type: "number", description: "Starting USD balance (default: 10,000)" },
+            confirm_destructive_reset: {
+              type: "boolean",
+              description: "Must be true to confirm wiping all paper trades, positions, and ledger entries.",
+            },
+            reset_reason: { type: "string", description: "Human-readable reason for the destructive reset." },
             account: { type: "string", description: "The trading strategy or profile name (e.g., 'aggressive', 'momentum') to isolate portfolios." },
           },
-          required: ["account"]
+          required: ["account", "confirm_destructive_reset"]
         }
       },
       {
@@ -714,6 +728,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       // ── Account / Lifecycle ────────────────────────────────────────
       case "init_account": {
+        requireDestructiveResetConfirmation(args as Record<string, unknown> | undefined);
         const balance = args?.balance as number || 10000;
         const res = await fetch(`${POLYTRADER_API_URL}/portfolio?balance=${balance}`, {
           method: "DELETE",

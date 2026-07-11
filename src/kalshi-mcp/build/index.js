@@ -68,6 +68,12 @@ function json(data) {
 const accountProps = {
     strategy_id: { type: "string", description: "Strategy name to isolate Kalshi paper portfolios." },
 };
+function requireDestructiveResetConfirmation(args) {
+    if (args.confirm_destructive_reset !== true) {
+        throw new Error("init_account is destructive and requires confirm_destructive_reset=true. " +
+            "Use portfolio/get_balance for normal account inspection.");
+    }
+}
 const server = new Server({ name: "kalshi-paper-trader-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -76,8 +82,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: "Initialize or reset a Kalshi paper trading account with a starting balance.",
             inputSchema: {
                 type: "object",
-                properties: { balance: { type: "number", description: "Starting USD balance, default 10000." }, ...accountProps },
-                required: ["strategy_id"],
+                properties: {
+                    balance: { type: "number", description: "Starting USD balance, default 10000." },
+                    confirm_destructive_reset: {
+                        type: "boolean",
+                        description: "Must be true to confirm wiping all paper trades, positions, and ledger entries.",
+                    },
+                    reset_reason: { type: "string", description: "Human-readable reason for the destructive reset." },
+                    ...accountProps,
+                },
+                required: ["strategy_id", "confirm_destructive_reset"],
             },
         },
         {
@@ -341,6 +355,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
     switch (name) {
         case "init_account": {
+            requireDestructiveResetConfirmation(args);
             const balance = Number(args.balance || 10000);
             const data = await callPolyTrader(`/kalshi/portfolio?balance=${encodeURIComponent(String(balance))}`, {
                 method: "DELETE",

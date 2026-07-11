@@ -82,6 +82,15 @@ const accountProps = {
   strategy_id: { type: "string", description: "Strategy name to isolate Polymarket US paper portfolios." },
 };
 
+function requireDestructiveResetConfirmation(args: Record<string, unknown>) {
+  if (args.confirm_destructive_reset !== true) {
+    throw new Error(
+      "init_account is destructive and requires confirm_destructive_reset=true. " +
+      "Use portfolio/get_balance for normal account inspection.",
+    );
+  }
+}
+
 const server = new Server(
   { name: "polymarket-us-paper-trader-mcp", version: "1.0.0" },
   { capabilities: { tools: {} } },
@@ -94,8 +103,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Initialize or reset a Polymarket US paper trading account with a starting balance.",
       inputSchema: {
         type: "object",
-        properties: { balance: { type: "number", description: "Starting USD balance, default 10000." }, ...accountProps },
-        required: ["strategy_id"],
+        properties: {
+          balance: { type: "number", description: "Starting USD balance, default 10000." },
+          confirm_destructive_reset: {
+            type: "boolean",
+            description: "Must be true to confirm wiping all paper trades, positions, and ledger entries.",
+          },
+          reset_reason: { type: "string", description: "Human-readable reason for the destructive reset." },
+          ...accountProps,
+        },
+        required: ["strategy_id", "confirm_destructive_reset"],
       },
     },
     {
@@ -317,6 +334,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "init_account": {
+      requireDestructiveResetConfirmation(args as Record<string, unknown>);
       const balance = Number((args as any).balance || 10000);
       const data = await callPolyTrader(`/polymarket-us/portfolio?balance=${encodeURIComponent(String(balance))}`, {
         method: "DELETE",
