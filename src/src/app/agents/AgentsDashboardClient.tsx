@@ -106,6 +106,26 @@ type RealOrder = {
   updated_at?: string | null;
 };
 
+type SettledPosition = {
+  id: string;
+  strategy_id: string;
+  strategy_name: string;
+  agent_id: string;
+  agent_email?: string | null;
+  agent_name?: string | null;
+  platform: string;
+  market_id: string;
+  market: string;
+  outcome: string;
+  shares: number;
+  avg_price: number;
+  settlement_price: number;
+  cost_basis: number;
+  proceeds: number;
+  realized_pnl: number;
+  settled_at: string;
+};
+
 
 type DashboardData = {
   access?: {
@@ -120,6 +140,7 @@ type DashboardData = {
   };
   strategies: Strategy[];
   current_portfolios: Snapshot[];
+  settled_positions: SettledPosition[];
   reports: Report[];
   snapshots: Snapshot[];
   real_orders: RealOrder[];
@@ -380,6 +401,101 @@ function AgentPositionsPanel({
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+function SettledPositionsPanel({ positions }: { positions: SettledPosition[] }) {
+  const [open, setOpen] = useState(false);
+  const totalProceeds = positions.reduce((total, position) => total + position.proceeds, 0);
+  const totalRealizedPnl = positions.reduce((total, position) => total + position.realized_pnl, 0);
+
+  return (
+    <section className="glass-card overflow-hidden">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50 sm:px-5"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <ChevronIcon open={open} />
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-foreground">Settled Position History</h2>
+            <p className="mt-1 text-xs text-foreground-muted">Realized results for positions closed at market settlement.</p>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-sm font-semibold tabular-nums text-foreground">{positions.length}</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Settled</div>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-white/[0.06]">
+          <div className="grid gap-px bg-white/[0.04] sm:grid-cols-3">
+            <div className="bg-background-secondary/80 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Closed Positions</div>
+              <div className="mt-2 text-xl font-bold tabular-nums text-foreground">{positions.length}</div>
+            </div>
+            <div className="bg-background-secondary/80 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Settlement Proceeds</div>
+              <div className="mt-2 text-xl font-bold tabular-nums text-foreground">{formatMoney(totalProceeds)}</div>
+            </div>
+            <div className="bg-background-secondary/80 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Realized PnL</div>
+              <div className={`mt-2 text-xl font-bold tabular-nums ${totalRealizedPnl >= 0 ? 'text-profit-light' : 'text-loss-light'}`}>
+                {formatMoney(totalRealizedPnl)}
+              </div>
+            </div>
+          </div>
+
+          {positions.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-foreground-muted">No settled positions match these filters.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1040px] text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.06]">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Strategy / Market</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Outcome</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Shares</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Avg</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Settled</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Cost</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Proceeds</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Realized PnL</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Closed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.slice(0, 50).map((position) => (
+                    <tr key={position.id} className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]">
+                      <td className="max-w-[320px] px-4 py-3">
+                        <div className="truncate font-medium text-foreground">{position.market}</div>
+                        <div className="mt-1 truncate text-xs text-foreground-muted">
+                          {agentLabel(position)} · {position.strategy_name} · {platformLabels[position.platform] ?? position.platform}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3"><Badge>{position.outcome}</Badge></td>
+                      <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatCompactNumber(position.shares)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatPrice(position.avg_price)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatPrice(position.settlement_price)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatMoney(position.cost_basis)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-foreground">{formatMoney(position.proceeds)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums font-semibold"><PositionValue value={position.realized_pnl} /></td>
+                      <td className="px-4 py-3 text-xs text-foreground-muted">{formatDate(position.settled_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {positions.length > 50 && (
+            <div className="border-t border-white/[0.06] px-4 py-3 text-xs text-foreground-muted">Showing 50 of {positions.length} settled positions.</div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -753,6 +869,8 @@ export default function AgentsDashboardClient() {
           <AgentPositionsPanel
             summaries={positionSummaries}
           />
+
+          <SettledPositionsPanel positions={data.settled_positions ?? []} />
 
           <div className="grid gap-7 xl:grid-cols-1">
             <section>

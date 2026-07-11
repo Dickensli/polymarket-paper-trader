@@ -6,9 +6,11 @@ import {
   matchesStrategyLifecycle,
   parseStrategyLifecycleFilter,
 } from '@/lib/agent-dashboard-filters';
+import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 import {
   agentReports,
   portfolioSnapshots,
+  paperTradeOrders,
   positions,
   realTradeOrders,
   strategies,
@@ -91,6 +93,8 @@ export async function GET(request: NextRequest) {
       snapshots,
       realOrders,
       openPositions,
+      closedPositions,
+      paperOrders,
     ] = await Promise.all([
       canViewAllAgents
         ? db.select().from(users).limit(1000)
@@ -107,6 +111,12 @@ export async function GET(request: NextRequest) {
       canViewAllAgents
         ? db.select().from(positions).where(eq(positions.isOpen, true)).limit(2000)
         : db.select().from(positions).where(and(eq(positions.userId, session.user.id), eq(positions.isOpen, true))).limit(500),
+      canViewAllAgents
+        ? db.select().from(positions).where(eq(positions.isOpen, false)).orderBy(desc(positions.resolvedAt)).limit(1000)
+        : db.select().from(positions).where(and(eq(positions.userId, session.user.id), eq(positions.isOpen, false))).orderBy(desc(positions.resolvedAt)).limit(500),
+      canViewAllAgents
+        ? db.select().from(paperTradeOrders).orderBy(desc(paperTradeOrders.createdAt)).limit(5000)
+        : db.select().from(paperTradeOrders).where(eq(paperTradeOrders.userId, session.user.id)).orderBy(desc(paperTradeOrders.createdAt)).limit(2000),
     ]);
 
     const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
@@ -245,6 +255,16 @@ export async function GET(request: NextRequest) {
         captured_at: latestSnapshot.capturedAt,
       }];
     });
+    const settledPositions = buildSettledStrategyPositions(
+      closedPositions,
+      paperOrders,
+      filteredStrategies.map((strategy) => ({
+        id: strategy.id,
+        userId: strategy.userId,
+        name: strategyName(strategy),
+        platform: strategy.platform,
+      })),
+    );
 
     return NextResponse.json({
       filters: {
@@ -283,6 +303,11 @@ export async function GET(request: NextRequest) {
         };
       }),
       current_portfolios: currentPortfolios,
+      settled_positions: settledPositions.map((position) => ({
+        ...position,
+        agent_email: userById.get(position.agent_id)?.email ?? null,
+        agent_name: userById.get(position.agent_id)?.name ?? null,
+      })),
       reports: filteredReports.map((report) => ({
         id: report.id,
         agent_id: report.userId,

@@ -11,7 +11,7 @@
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "test:unit": "vitest run __tests__/unit/",
-    "test:agents-dashboard": "vitest run __tests__/unit/agent-positions.test.ts __tests__/unit/worker/price-refresh.test.ts",
+    "test:agents-dashboard": "vitest run __tests__/unit/agent-positions.test.ts __tests__/unit/agent-settled-positions.test.ts __tests__/unit/worker/price-refresh.test.ts",
     "test:integration": "vitest run __tests__/integration/trading-engine.test.ts",
     "test:live-api": "vitest run __tests__/integration/polymarket-live.test.ts --test-timeout=15000",
     "test:commit": "npm run db:verify",
