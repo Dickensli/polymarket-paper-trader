@@ -141,7 +141,7 @@ export async function runResolutionCheckForUser(userId: string): Promise<number>
     try {
       // Determine platform from open positions
       const marketPositions = openPositions.filter(p => p.marketId === marketId);
-      const isKalshi = marketPositions.some(p => p.tokenId.startsWith('kalshi:'));
+      const isKalshi = marketId.startsWith('KX');
 
       let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
 
@@ -150,11 +150,9 @@ export async function runResolutionCheckForUser(userId: string): Promise<number>
         if (!market) continue;
         const status = String(market.status).toLowerCase();
         if (status === 'finalized' || status === 'settled') {
-          const result = String(market.result).toLowerCase();
-          if (result === 'yes') {
-            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:YES` };
-          } else if (result === 'no') {
-            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:NO` };
+          const result = String(market.result).toUpperCase();
+          if (result === 'YES' || result === 'NO') {
+            resolution = { type: 'resolved', winningTokenId: result };
           } else {
             resolution = { type: 'voided' };
           }
@@ -171,7 +169,12 @@ export async function runResolutionCheckForUser(userId: string): Promise<number>
         try {
           if (resolution.type === 'resolved') {
             // Winner gets $1/share, loser gets $0/share
-            const exitPrice = pos.tokenId === resolution.winningTokenId ? 1 : 0;
+            let exitPrice = 0;
+            if (isKalshi) {
+              exitPrice = pos.outcome.toUpperCase() === resolution.winningTokenId ? 1 : 0;
+            } else {
+              exitPrice = pos.tokenId === resolution.winningTokenId ? 1 : 0;
+            }
             await settlePosition(pos, exitPrice, 'RESOLVED');
           } else {
             // Voided: refund at avg entry price (break-even)
@@ -220,7 +223,7 @@ export async function runResolutionCheck() {
   for (const marketId of uniqueMarketIds) {
     try {
       const marketPositions = openPositions.filter(p => p.marketId === marketId);
-      const isKalshi = marketPositions.some(p => p.tokenId.startsWith('kalshi:'));
+      const isKalshi = marketId.startsWith('KX');
 
       let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
 
@@ -229,11 +232,9 @@ export async function runResolutionCheck() {
         if (!market) continue;
         const status = String(market.status).toLowerCase();
         if (status === 'finalized' || status === 'settled') {
-          const result = String(market.result).toLowerCase();
-          if (result === 'yes') {
-            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:YES` };
-          } else if (result === 'no') {
-            resolution = { type: 'resolved', winningTokenId: `kalshi:${marketId}:NO` };
+          const result = String(market.result).toUpperCase();
+          if (result === 'YES' || result === 'NO') {
+            resolution = { type: 'resolved', winningTokenId: result };
           } else {
             resolution = { type: 'voided' };
           }
@@ -249,7 +250,12 @@ export async function runResolutionCheck() {
       for (const pos of marketPositions) {
         try {
           if (resolution.type === 'resolved') {
-            const exitPrice = pos.tokenId === resolution.winningTokenId ? 1 : 0;
+            let exitPrice = 0;
+            if (isKalshi) {
+              exitPrice = pos.outcome.toUpperCase() === resolution.winningTokenId ? 1 : 0;
+            } else {
+              exitPrice = pos.tokenId === resolution.winningTokenId ? 1 : 0;
+            }
             await settlePosition(pos, exitPrice, 'RESOLVED');
           } else {
             // Voided: refund at avg entry price

@@ -175,13 +175,13 @@ async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialT
     ticker: intent.slug,
     client_order_id: clientOrderId,
     side: kalshiBookSide(intent.outcome, intent.side),
-    count: countInt,
-    price: priceInCents,
+    count: String(countInt),
+    price: price.toFixed(4), 
     time_in_force: kalshiTimeInForce(intent.timeInForce),
     self_trade_prevention_type: 'taker_at_cross',
     post_only: false,
     cancel_order_on_pause: false,
-    reduce_only: intent.side === 'SELL',
+    reduce_only: intent.side === 'SELL' && (intent.timeInForce === 'IOC' || intent.timeInForce === 'FOK'),
   };
 
   const response = await kalshiRequest<Record<string, unknown>>('POST', '/portfolio/events/orders', request);
@@ -230,7 +230,8 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
     (balanceRecord.balance ? Number(balanceRecord.balance) / 100 : 0) ||
     Number(balanceRecord.available_balance) ||
     0;
-  const positionRows = Array.isArray(positionsRecord.positions) ? positionsRecord.positions : [];
+  const positionRows = Array.isArray(positionsRecord.market_positions) ? positionsRecord.market_positions : 
+                       (Array.isArray(positionsRecord.positions) ? positionsRecord.positions : []);
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
   const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
 
