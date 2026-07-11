@@ -67,8 +67,8 @@ describe('Price Refresh Job', () => {
 
   it('fetches prices via Kalshi public API for KX-prefixed tickers', async () => {
     mockDb.query.positions.findMany.mockResolvedValue([
-      { id: '1', tokenId: 'KXBTC15M-26JUL091115-15', outcome: 'NO' },
-      { id: '2', tokenId: 'KXBTCD-26JUL0914-T62999.99', outcome: 'YES' },
+      { id: '1', tokenId: 'KXBTC15M-26JUL091115-15:NO', outcome: 'NO' },
+      { id: '2', tokenId: 'kalshi:KXBTCD-26JUL0914-T62999.99:YES', outcome: 'YES' },
       { id: '3', tokenId: 'polyTokenA', outcome: 'YES' }, // Polymarket position
     ]);
 

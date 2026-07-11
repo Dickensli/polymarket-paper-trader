@@ -36,8 +36,10 @@ describe('agent position helpers', () => {
         ticker: 'KXTEST',
         side: 'NO',
         count: 3,
+        avgEntryPrice: '0.50',
+        currentPrice: '0.40',
         market_value: '1.20',
-        unrealized_pnl: '-0.30',
+        unrealizedPnL: '-0.30',
       },
     ])).toMatchObject([
       {
@@ -54,6 +56,8 @@ describe('agent position helpers', () => {
         market: 'KXTEST',
         outcome: 'NO',
         shares: 3,
+        avgPrice: 0.5,
+        currentPrice: 0.4,
         value: 1.2,
         pnl: -0.3,
       },

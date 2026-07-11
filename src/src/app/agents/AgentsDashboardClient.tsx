@@ -119,6 +119,7 @@ type DashboardData = {
     open_real_orders: number;
   };
   strategies: Strategy[];
+  current_portfolios: Snapshot[];
   reports: Report[];
   snapshots: Snapshot[];
   real_orders: RealOrder[];
@@ -263,6 +264,7 @@ function AgentPositionsPanel({
 }) {
   const visiblePositionCount = summaries.reduce((total, summary) => total + summary.positions.length, 0);
   const visiblePositionsValue = summaries.reduce((total, summary) => total + summary.positionsValue, 0);
+  const visiblePortfolioValue = summaries.reduce((total, summary) => total + summary.totalValue, 0);
   const visiblePnl = summaries.reduce((total, summary) => total + summary.pnl, 0);
 
   return (
@@ -277,7 +279,7 @@ function AgentPositionsPanel({
       </div>
 
       <div className="glass-card overflow-hidden">
-        <div className="grid gap-px bg-white/[0.04] md:grid-cols-3">
+        <div className="grid gap-px bg-white/[0.04] sm:grid-cols-2 xl:grid-cols-4">
           <div className="bg-background-secondary/80 p-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Open Positions</div>
             <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{visiblePositionCount}</div>
@@ -285,6 +287,10 @@ function AgentPositionsPanel({
           <div className="bg-background-secondary/80 p-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Positions Value</div>
             <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{formatMoney(visiblePositionsValue)}</div>
+          </div>
+          <div className="bg-background-secondary/80 p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Current Portfolio</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{formatMoney(visiblePortfolioValue)}</div>
           </div>
           <div className="bg-background-secondary/80 p-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Snapshot PnL</div>
@@ -646,8 +652,8 @@ export default function AgentsDashboardClient() {
   const positionSummaries = useMemo(() => buildAgentPositionSummaries(
     strategyStatus === 'archived'
       ? []
-      : (data?.snapshots ?? []).filter((snapshot) => snapshot.strategy_id && activeStrategyIds.has(snapshot.strategy_id)),
-  ), [activeStrategyIds, data?.snapshots, strategyStatus]);
+      : (data?.current_portfolios ?? []).filter((snapshot) => snapshot.strategy_id && activeStrategyIds.has(snapshot.strategy_id)),
+  ), [activeStrategyIds, data?.current_portfolios, strategyStatus]);
 
   return (
     <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto w-full">

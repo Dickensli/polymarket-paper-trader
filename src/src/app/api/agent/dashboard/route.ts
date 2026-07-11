@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import {
@@ -9,6 +9,7 @@ import {
 import {
   agentReports,
   portfolioSnapshots,
+  positions,
   realTradeOrders,
   strategies,
   users,
@@ -89,6 +90,7 @@ export async function GET(request: NextRequest) {
       reports,
       snapshots,
       realOrders,
+      openPositions,
     ] = await Promise.all([
       canViewAllAgents
         ? db.select().from(users).limit(1000)
@@ -102,6 +104,9 @@ export async function GET(request: NextRequest) {
       canViewAllAgents
         ? db.select().from(realTradeOrders).orderBy(desc(realTradeOrders.createdAt)).limit(200)
         : db.select().from(realTradeOrders).where(eq(realTradeOrders.userId, session.user.id)).orderBy(desc(realTradeOrders.createdAt)).limit(100),
+      canViewAllAgents
+        ? db.select().from(positions).where(eq(positions.isOpen, true)).limit(2000)
+        : db.select().from(positions).where(and(eq(positions.userId, session.user.id), eq(positions.isOpen, true))).limit(500),
     ]);
 
     const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
@@ -172,6 +177,74 @@ export async function GET(request: NextRequest) {
 
     const openOrderStatuses = new Set(['PENDING', 'SUBMITTING', 'SUBMITTED', 'OPEN', 'LIVE']);
     const openRealOrderCount = filteredRealOrders.filter((order) => openOrderStatuses.has(order.status)).length;
+    const openPositionsByUser = new Map<string, typeof openPositions>();
+    for (const position of openPositions) {
+      const rows = openPositionsByUser.get(position.userId) ?? [];
+      rows.push(position);
+      openPositionsByUser.set(position.userId, rows);
+    }
+
+    const currentPortfolios = filteredStrategies.flatMap((strategy) => {
+      const latestSnapshot = latestSnapshotByStrategy.get(strategy.id);
+      if (!latestSnapshot) return [];
+      if (strategy.agentMode !== 'paper') {
+        return [{
+          id: latestSnapshot.id,
+          agent_id: latestSnapshot.userId,
+          agent_email: userById.get(latestSnapshot.userId)?.email ?? null,
+          agent_name: userById.get(latestSnapshot.userId)?.name ?? null,
+          strategy_id: strategy.id,
+          strategy_name: strategyName(strategy),
+          platform: latestSnapshot.platform,
+          agent_mode: latestSnapshot.agentMode,
+          cash: numeric(latestSnapshot.cash),
+          positions_value: numeric(latestSnapshot.positionsValue),
+          total_value: numeric(latestSnapshot.totalValue),
+          pnl: numeric(latestSnapshot.pnl),
+          positions: latestSnapshot.positions,
+          captured_at: latestSnapshot.capturedAt,
+        }];
+      }
+
+      const currentPositions = (openPositionsByUser.get(strategy.userId) ?? []).map((position) => {
+        const shares = numeric(position.shares);
+        const avgEntryPrice = numeric(position.avgEntryPrice);
+        const currentPrice = numeric(position.currentPrice);
+        return {
+          id: position.id,
+          marketId: position.marketId,
+          marketQuestion: position.marketQuestion,
+          tokenId: position.tokenId,
+          outcome: position.outcome,
+          shares,
+          avgEntryPrice,
+          currentPrice,
+          unrealizedPnL: shares * (currentPrice - avgEntryPrice),
+        };
+      });
+      const positionsValue = currentPositions.reduce(
+        (total, position) => total + position.shares * position.currentPrice,
+        0,
+      );
+      const cash = numeric(latestSnapshot.cash);
+      const totalValue = cash + positionsValue;
+      return [{
+        id: latestSnapshot.id,
+        agent_id: strategy.userId,
+        agent_email: userById.get(strategy.userId)?.email ?? null,
+        agent_name: userById.get(strategy.userId)?.name ?? null,
+        strategy_id: strategy.id,
+        strategy_name: strategyName(strategy),
+        platform: strategy.platform,
+        agent_mode: strategy.agentMode,
+        cash,
+        positions_value: positionsValue,
+        total_value: totalValue,
+        pnl: totalValue - numeric(strategy.startingBalance),
+        positions: currentPositions,
+        captured_at: latestSnapshot.capturedAt,
+      }];
+    });
 
     return NextResponse.json({
       filters: {
@@ -209,6 +282,7 @@ export async function GET(request: NextRequest) {
             : null,
         };
       }),
+      current_portfolios: currentPortfolios,
       reports: filteredReports.map((report) => ({
         id: report.id,
         agent_id: report.userId,

@@ -16,7 +16,7 @@ import { executeTrade, getPortfolio, TradingError } from '@/lib/trading-engine';
 // Polymarket helpers
 import { getMarket, getMidpoint } from '@/lib/polymarket';
 // Kalshi helpers
-import { getKalshiOutcomePrice } from '@/lib/kalshi';
+import { getKalshiOutcomePrice, kalshiTokenId } from '@/lib/kalshi';
 // Polymarket US helpers
 import { getPolymarketUsOutcomePrice, getPolymarketUsMarket, polymarketUsTokenId } from '@/lib/polymarket-us';
 
@@ -219,7 +219,7 @@ export async function POST(request: NextRequest) {
     } else if (platform === 'kalshi') {
       // Kalshi
       marketId = order.slug;
-      tokenId = `${order.slug}:${order.outcome}`;
+      tokenId = kalshiTokenId(order.slug, order.outcome);
       marketQuestion = order.slug;
 
       if (order.price) {
