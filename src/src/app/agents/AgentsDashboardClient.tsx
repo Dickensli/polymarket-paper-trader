@@ -6,6 +6,10 @@ import {
   normalizePositionRows,
   type AgentPositionSummary,
 } from '@/lib/agent-positions';
+import {
+  matchesStrategyLifecycle,
+  type StrategyLifecycleFilter,
+} from '@/lib/agent-dashboard-filters';
 
 type Platform = 'all' | 'polymarket' | 'kalshi' | 'polymarket_us';
 type AgentMode = 'all' | 'paper' | 'real';
@@ -138,6 +142,12 @@ const modeLabels: Record<string, string> = {
   real: 'Real',
 };
 
+const lifecycleLabels: Record<StrategyLifecycleFilter, string> = {
+  active: 'Active',
+  archived: 'Archived',
+  all: 'All',
+};
+
 function formatMoney(value: number) {
   return value.toLocaleString('en-US', {
     style: 'currency',
@@ -248,80 +258,49 @@ function PositionValue({ value }: { value: number | null }) {
 
 function AgentPositionsPanel({
   summaries,
-  selectedAgentId,
-  onAgentChange,
 }: {
   summaries: AgentPositionSummary[];
-  selectedAgentId: string;
-  onAgentChange: (agentId: string) => void;
 }) {
-  const agentOptions = useMemo(() => {
-    const agents = new Map<string, string>();
-    for (const summary of summaries) {
-      agents.set(summary.agentId, summary.agentLabel);
-    }
-    return [...agents.entries()].map(([id, label]) => ({ id, label }));
-  }, [summaries]);
-
-  const visibleSummaries = selectedAgentId === 'all'
-    ? summaries
-    : summaries.filter((summary) => summary.agentId === selectedAgentId);
-  const visiblePositionCount = visibleSummaries.reduce((total, summary) => total + summary.positions.length, 0);
-  const visiblePositionsValue = visibleSummaries.reduce((total, summary) => total + summary.positionsValue, 0);
-  const visiblePnl = visibleSummaries.reduce((total, summary) => total + summary.pnl, 0);
+  const visiblePositionCount = summaries.reduce((total, summary) => total + summary.positions.length, 0);
+  const visiblePositionsValue = summaries.reduce((total, summary) => total + summary.positionsValue, 0);
+  const visiblePnl = summaries.reduce((total, summary) => total + summary.pnl, 0);
 
   return (
     <section>
-      <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div className="mb-3">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Current Agent Positions</h2>
           <p className="mt-1 text-xs text-foreground-muted">
             Latest snapshot per strategy, grouped by agent.
           </p>
         </div>
-        <label className="block w-full md:w-[280px]">
-          <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Agent</span>
-          <select
-            value={selectedAgentId}
-            onChange={(event) => onAgentChange(event.target.value)}
-            className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
-          >
-            <option value="all">All agents</option>
-            {agentOptions.map((agent) => (
-              <option key={agent.id} value={agent.id}>{agent.label}</option>
-            ))}
-          </select>
-        </label>
       </div>
 
-      {summaries.length === 0 ? (
-        <EmptyRow label="No current positions found in the latest snapshots." />
-      ) : (
-        <div className="glass-card overflow-hidden">
-          <div className="grid gap-px bg-white/[0.04] md:grid-cols-3">
-            <div className="bg-background-secondary/80 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Open Positions</div>
-              <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{visiblePositionCount}</div>
-            </div>
-            <div className="bg-background-secondary/80 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Positions Value</div>
-              <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{formatMoney(visiblePositionsValue)}</div>
-            </div>
-            <div className="bg-background-secondary/80 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Snapshot PnL</div>
-              <div className={`mt-2 text-2xl font-bold tabular-nums ${visiblePnl >= 0 ? 'text-profit-light' : 'text-loss-light'}`}>
-                {formatMoney(visiblePnl)}
-              </div>
+      <div className="glass-card overflow-hidden">
+        <div className="grid gap-px bg-white/[0.04] md:grid-cols-3">
+          <div className="bg-background-secondary/80 p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Open Positions</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{visiblePositionCount}</div>
+          </div>
+          <div className="bg-background-secondary/80 p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Positions Value</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums text-foreground">{formatMoney(visiblePositionsValue)}</div>
+          </div>
+          <div className="bg-background-secondary/80 p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Snapshot PnL</div>
+            <div className={`mt-2 text-2xl font-bold tabular-nums ${visiblePnl >= 0 ? 'text-profit-light' : 'text-loss-light'}`}>
+              {formatMoney(visiblePnl)}
             </div>
           </div>
+        </div>
 
-          {visibleSummaries.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-foreground-muted">
-              This agent has no current positions in the active filters.
-            </div>
-          ) : (
-            <div className="divide-y divide-white/[0.06]">
-              {visibleSummaries.map((summary) => (
+        {summaries.length === 0 ? (
+          <div className="border-t border-white/[0.06] px-4 py-8 text-center text-sm text-foreground-muted">
+            No current positions found in the active strategies.
+          </div>
+        ) : (
+          <div className="divide-y divide-white/[0.06]">
+              {summaries.map((summary) => (
                 <div key={summary.key} className="p-4">
                   <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
@@ -392,10 +371,9 @@ function AgentPositionsPanel({
                   )}
                 </div>
               ))}
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -616,16 +594,17 @@ export default function AgentsDashboardClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [platform, setPlatform] = useState<Platform>('all');
   const [agentMode, setAgentMode] = useState<AgentMode>('all');
+  const [strategyStatus, setStrategyStatus] = useState<StrategyLifecycleFilter>('active');
   const [strategyId, setStrategyId] = useState('all');
-  const [selectedPositionAgentId, setSelectedPositionAgentId] = useState('all');
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
     params.set('platform', platform);
     params.set('agent_mode', agentMode);
+    params.set('strategy_status', strategyStatus);
     params.set('strategy_id', strategyId);
     return params.toString();
-  }, [platform, agentMode, strategyId]);
+  }, [platform, agentMode, strategyStatus, strategyId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -654,17 +633,21 @@ export default function AgentsDashboardClient() {
     return allStrategies.filter(strategy => {
       const matchPlatform = platform === 'all' || strategy.platform === platform;
       const matchMode = agentMode === 'all' || strategy.agent_mode === agentMode;
-      return matchPlatform && matchMode;
+      const matchLifecycle = matchesStrategyLifecycle(strategy.status, strategyStatus);
+      return matchPlatform && matchMode && matchLifecycle;
     });
-  }, [data?.filter_options.strategies, platform, agentMode]);
+  }, [data?.filter_options.strategies, platform, agentMode, strategyStatus]);
 
-  const positionSummaries = useMemo(() => (
-    buildAgentPositionSummaries(data?.snapshots ?? [])
-  ), [data?.snapshots]);
-  const activePositionAgentId = selectedPositionAgentId !== 'all' &&
-    positionSummaries.some((summary) => summary.agentId === selectedPositionAgentId)
-    ? selectedPositionAgentId
-    : 'all';
+  const activeStrategyIds = useMemo(() => new Set(
+    (data?.filter_options.strategies ?? [])
+      .filter((strategy) => strategy.status === 'active')
+      .map((strategy) => strategy.id),
+  ), [data?.filter_options.strategies]);
+  const positionSummaries = useMemo(() => buildAgentPositionSummaries(
+    strategyStatus === 'archived'
+      ? []
+      : (data?.snapshots ?? []).filter((snapshot) => snapshot.strategy_id && activeStrategyIds.has(snapshot.strategy_id)),
+  ), [activeStrategyIds, data?.snapshots, strategyStatus]);
 
   return (
     <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto w-full">
@@ -676,7 +659,7 @@ export default function AgentsDashboardClient() {
             {data?.access?.scope === 'global' ? ' Global agent view enabled.' : ''}
           </p>
         </div>
-        <div className={`grid grid-cols-1 gap-3 ${platform !== 'all' && agentMode !== 'all' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} lg:min-w-[680px]`}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:min-w-[760px] lg:grid-cols-4">
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Platform</span>
             <select
@@ -707,8 +690,22 @@ export default function AgentsDashboardClient() {
               ))}
             </select>
           </label>
-          {platform !== 'all' && agentMode !== 'all' && (
-            <label className="block">
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Status</span>
+            <select
+              value={strategyStatus}
+              onChange={(event) => {
+                setStrategyStatus(event.target.value as StrategyLifecycleFilter);
+                setStrategyId('all');
+              }}
+              className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none transition-colors hover:bg-white/[0.06] focus:border-primary/50"
+            >
+              {(['active', 'archived', 'all'] as StrategyLifecycleFilter[]).map((option) => (
+                <option key={option} value={option}>{lifecycleLabels[option]}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Strategy</span>
               <select
                 value={strategyOptions.some((strategy) => strategy.id === strategyId) ? strategyId : 'all'}
@@ -720,8 +717,7 @@ export default function AgentsDashboardClient() {
                   <option key={strategy.id} value={strategy.id}>{strategy.strategy_name}</option>
                 ))}
               </select>
-            </label>
-          )}
+          </label>
         </div>
       </div>
 
@@ -750,8 +746,6 @@ export default function AgentsDashboardClient() {
 
           <AgentPositionsPanel
             summaries={positionSummaries}
-            selectedAgentId={activePositionAgentId}
-            onAgentChange={setSelectedPositionAgentId}
           />
 
           <div className="grid gap-7 xl:grid-cols-1">

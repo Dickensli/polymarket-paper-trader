@@ -3,6 +3,10 @@ import { desc, eq, inArray } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import {
+  matchesStrategyLifecycle,
+  parseStrategyLifecycleFilter,
+} from '@/lib/agent-dashboard-filters';
+import {
   agentReports,
   portfolioSnapshots,
   realTradeOrders,
@@ -62,6 +66,7 @@ export async function GET(request: NextRequest) {
 
     const platform = parsePlatform(request.nextUrl.searchParams.get('platform'));
     const agentMode = parseMode(request.nextUrl.searchParams.get('agent_mode'));
+    const strategyStatus = parseStrategyLifecycleFilter(request.nextUrl.searchParams.get('strategy_status'));
     const strategyId = request.nextUrl.searchParams.get('strategy_id') || 'all';
     const db = getDb();
     const canViewAllAgents = GLOBAL_AGENT_VIEWER_EMAILS.has(session.user.email ?? '');
@@ -126,6 +131,7 @@ export async function GET(request: NextRequest) {
       if (strategyId !== 'all' && strategy.id !== strategyId) return false;
       if (platform !== 'all' && strategy.platform !== platform) return false;
       if (agentMode !== 'all' && strategy.agentMode !== agentMode) return false;
+      if (!matchesStrategyLifecycle(strategy.status, strategyStatus)) return false;
       return true;
     });
     
@@ -136,6 +142,7 @@ export async function GET(request: NextRequest) {
       const strategy = report.strategyId ? strategyById.get(report.strategyId) : null;
       if (platform !== 'all' && strategy?.platform !== platform) return false;
       if (agentMode !== 'all' && strategy?.agentMode !== agentMode) return false;
+      if (!matchesStrategyLifecycle(strategy?.status, strategyStatus)) return false;
       return true;
     });
 
@@ -144,6 +151,7 @@ export async function GET(request: NextRequest) {
       const strategy = snapshot.strategyId ? strategyById.get(snapshot.strategyId) : null;
       if (platform !== 'all' && (snapshot.platform || strategy?.platform) !== platform) return false;
       if (agentMode !== 'all' && (snapshot.agentMode || strategy?.agentMode) !== agentMode) return false;
+      if (!matchesStrategyLifecycle(strategy?.status, strategyStatus)) return false;
       return true;
     });
 
@@ -152,6 +160,7 @@ export async function GET(request: NextRequest) {
       if (platform !== 'all' && order.platform !== platform) return false;
       const strategy = order.strategyId ? strategyById.get(order.strategyId) : null;
       if (agentMode !== 'all' && strategy?.agentMode !== agentMode) return false;
+      if (!matchesStrategyLifecycle(strategy?.status, strategyStatus)) return false;
       return true;
     });
 
@@ -168,6 +177,7 @@ export async function GET(request: NextRequest) {
       filters: {
         platform,
         agent_mode: agentMode,
+        strategy_status: strategyStatus,
         strategy_id: strategyId,
       },
       access: {

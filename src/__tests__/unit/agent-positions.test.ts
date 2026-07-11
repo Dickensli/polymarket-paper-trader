@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { buildAgentPositionSummaries, normalizePositionRows } from '@/lib/agent-positions';
+import {
+  matchesStrategyLifecycle,
+  parseStrategyLifecycleFilter,
+} from '@/lib/agent-dashboard-filters';
+
+describe('agent dashboard filters', () => {
+  it('defaults to active and separates archived strategies', () => {
+    expect(parseStrategyLifecycleFilter(null)).toBe('active');
+    expect(parseStrategyLifecycleFilter('unexpected')).toBe('active');
+    expect(parseStrategyLifecycleFilter('archived')).toBe('archived');
+    expect(parseStrategyLifecycleFilter('all')).toBe('all');
+
+    expect(matchesStrategyLifecycle('active', 'active')).toBe(true);
+    expect(matchesStrategyLifecycle('paused', 'active')).toBe(false);
+    expect(matchesStrategyLifecycle('disabled', 'archived')).toBe(true);
+    expect(matchesStrategyLifecycle('active', 'archived')).toBe(false);
+    expect(matchesStrategyLifecycle('active', 'all')).toBe(true);
+    expect(matchesStrategyLifecycle('disabled', 'all')).toBe(true);
+  });
+});
 
 describe('agent position helpers', () => {
   it('normalizes paper and official position row shapes', () => {
