@@ -82,3 +82,44 @@ export async function enrichOpenOrdersWithMarkets(
     return { ...order, ...(await cache.get(marketId)!) };
   }));
 }
+
+export async function enrichPositionRowsWithMarkets(
+  platform: 'kalshi' | 'polymarket' | 'polymarket_us',
+  positions: unknown,
+): Promise<unknown> {
+  if (!Array.isArray(positions)) return positions;
+  const cache = new Map<string, Promise<AgentMarketContext>>();
+  return Promise.all(positions.map(async (position) => {
+    if (!position || typeof position !== 'object') return position;
+    const row = position as Record<string, unknown>;
+    const marketId = String(row.ticker ?? row.marketId ?? row.market_id ?? row.slug ?? '');
+    if (!marketId) return row;
+    if (!cache.has(marketId)) cache.set(marketId, getAgentMarketContext(platform, marketId));
+    const context = await cache.get(marketId)!;
+    return {
+      ...row,
+      marketQuestion: context.market_title ?? row.marketQuestion ?? row.market_question ?? marketId,
+      market_context: context,
+    };
+  }));
+}
+
+export async function enrichSettledRowsWithMarkets<T extends {
+  platform: string;
+  market_id: string;
+  market: string;
+}>(rows: T[]): Promise<T[]> {
+  const cache = new Map<string, Promise<AgentMarketContext>>();
+  return Promise.all(rows.map(async (row) => {
+    if (row.platform !== 'kalshi' && row.platform !== 'polymarket' && row.platform !== 'polymarket_us') return row;
+    const key = `${row.platform}:${row.market_id}`;
+    if (!cache.has(key)) {
+      cache.set(key, getAgentMarketContext(row.platform, row.market_id));
+    }
+    const context = await cache.get(key)!;
+    return {
+      ...row,
+      market: context.market_title ?? row.market,
+    };
+  }));
+}

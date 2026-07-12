@@ -11,6 +11,10 @@ import {
 } from '@/lib/agent-dashboard-filters';
 import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 import {
+  enrichPositionRowsWithMarkets,
+  enrichSettledRowsWithMarkets,
+} from '@/lib/agent-market-context';
+import {
   agentReports,
   portfolioSnapshots,
   paperTradeOrders,
@@ -303,6 +307,14 @@ export async function GET(request: NextRequest) {
         platform: strategy.platform,
       })),
     );
+    const enrichedCurrentPortfolios = await Promise.all(currentPortfolios.map(async (portfolio) => ({
+      ...portfolio,
+      positions: await enrichPositionRowsWithMarkets(
+        portfolio.platform as 'kalshi' | 'polymarket' | 'polymarket_us',
+        portfolio.positions,
+      ),
+    })));
+    const enrichedSettledPositions = await enrichSettledRowsWithMarkets(settledPositions);
 
     return NextResponse.json({
       filters: {
@@ -340,8 +352,8 @@ export async function GET(request: NextRequest) {
             : null,
         };
       }),
-      current_portfolios: currentPortfolios,
-      settled_positions: settledPositions.map((position) => ({
+      current_portfolios: enrichedCurrentPortfolios,
+      settled_positions: enrichedSettledPositions.map((position) => ({
         ...position,
         agent_email: userById.get(position.agent_id)?.email ?? null,
         agent_name: userById.get(position.agent_id)?.name ?? null,

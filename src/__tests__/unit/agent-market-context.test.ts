@@ -7,7 +7,11 @@ vi.mock('@/lib/polymarket', () => ({ getMarket: vi.fn() }));
 import { getKalshiMarket } from '@/lib/kalshi';
 import { getMarket } from '@/lib/polymarket';
 import { getPolymarketUsMarket } from '@/lib/polymarket-us';
-import { getAgentMarketContext } from '@/lib/agent-market-context';
+import {
+  enrichPositionRowsWithMarkets,
+  enrichSettledRowsWithMarkets,
+  getAgentMarketContext,
+} from '@/lib/agent-market-context';
 
 describe('agent open-order market context', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -23,6 +27,20 @@ describe('agent open-order market context', () => {
       market_title: 'Bitcoin up this interval?',
       market_status: 'open',
     });
+  });
+
+  it('uses readable Kalshi titles for current and settled position rows', async () => {
+    vi.mocked(getKalshiMarket).mockResolvedValue({ title: 'Bitcoin up this interval?', status: 'finalized' });
+    await expect(enrichPositionRowsWithMarkets('kalshi', [{ ticker: 'KXBTC15M-TEST' }])).resolves.toMatchObject([
+      { ticker: 'KXBTC15M-TEST', marketQuestion: 'Bitcoin up this interval?' },
+    ]);
+    await expect(enrichSettledRowsWithMarkets([{
+      platform: 'kalshi',
+      market_id: 'KXBTC15M-TEST',
+      market: 'KXBTC15M-TEST',
+    }])).resolves.toMatchObject([
+      { market: 'Bitcoin up this interval?' },
+    ]);
   });
 
   it('enriches Polymarket US slugs', async () => {

@@ -123,6 +123,21 @@ describe('agent position helpers', () => {
     ]);
   });
 
+  it('normalizes current Kalshi fixed-point position fields', () => {
+    expect(normalizePositionRows([{
+      ticker: 'KXBTC15M-TEST',
+      marketQuestion: 'Bitcoin up this interval?',
+      position_fp: '71.00',
+      market_exposure_dollars: '36.210000',
+      realized_pnl_dollars: '-2.500000',
+    }])).toMatchObject([{
+      market: 'Bitcoin up this interval?',
+      shares: 71,
+      value: 36.21,
+      pnl: -2.5,
+    }]);
+  });
+
   it('builds one latest current-position summary per strategy', () => {
     const summaries = buildAgentPositionSummaries([
       {

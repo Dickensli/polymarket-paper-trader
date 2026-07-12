@@ -93,12 +93,12 @@ export function normalizePositionRows(value: unknown): AgentPositionRow[] {
         'token_id',
       ], 'Unknown market');
       const outcome = firstString(row, ['outcome', 'side', 'contract', 'position', 'answer'], 'Position');
-      const shares = firstNumber(row, ['shares', 'quantity', 'qty', 'count', 'contracts', 'size']);
+      const shares = firstNumber(row, ['shares', 'position_fp', 'quantity', 'qty', 'count', 'contracts', 'size']);
       const avgPrice = firstNumber(row, ['avgPrice', 'avgEntryPrice', 'avg_entry_price', 'averagePrice', 'average_price', 'entryPrice', 'entry_price', 'price']);
       const currentPrice = firstNumber(row, ['currentPrice', 'current_price', 'markPrice', 'mark_price', 'lastPrice', 'last_price']);
-      const explicitValue = firstNumber(row, ['value', 'marketValue', 'market_value', 'currentValue', 'current_value', 'notional']);
+      const explicitValue = firstNumber(row, ['market_exposure_dollars', 'market_value_dollars', 'value', 'marketValue', 'market_value', 'currentValue', 'current_value', 'notional']);
       const value = explicitValue ?? (shares != null && currentPrice != null ? shares * currentPrice : null);
-      const explicitPnl = firstNumber(row, ['pnl', 'unrealizedPnL', 'unrealizedPnl', 'unrealized_pnl', 'profitLoss', 'profit_loss']);
+      const explicitPnl = firstNumber(row, ['realized_pnl_dollars', 'pnl', 'unrealizedPnL', 'unrealizedPnl', 'unrealized_pnl', 'profitLoss', 'profit_loss']);
       const cost = shares != null && avgPrice != null ? shares * avgPrice : null;
       const pnl = explicitPnl ?? (value != null && cost != null ? value - cost : null);
 
