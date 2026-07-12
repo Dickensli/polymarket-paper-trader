@@ -3,6 +3,7 @@ import {
   buildKalshiOrderRequest,
   normalizeKalshiOrderStatus,
   resolveOfficialOrderQuantity,
+  validateOfficialPortfolioSnapshot,
 } from '@/lib/official-trading';
 
 describe('official trading helpers', () => {
@@ -70,5 +71,14 @@ describe('official trading helpers', () => {
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '12.00', remaining_count: '38.00' })).toBe('PARTIALLY_FILLED');
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '0.00', remaining_count: '0.00' })).toBe('CANCELED');
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '50.00', remaining_count: '0.00' })).toBe('EXECUTED');
+  });
+
+  it('rejects an official snapshot when a critical Kalshi request failed', () => {
+    expect(() => validateOfficialPortfolioSnapshot('kalshi', {
+      balance: { balance: 10000 },
+      positions: { error: 'authentication failed' },
+      orders: { orders: [] },
+      fills: { fills: [] },
+    })).toThrow('Kalshi official portfolio sync failed: positions: authentication failed');
   });
 });

@@ -46,6 +46,7 @@ vi.mock('@/lib/official-trading', () => ({
   submitOfficialRealTrade: vi.fn(),
   cancelOfficialRealOrder: vi.fn(),
   getOfficialPortfolioSnapshot: vi.fn(),
+  resolveOfficialOrderQuantity: vi.fn(({ shares, amount, price }) => shares ?? amount / price),
 }));
 
 type JsonBody = Record<string, unknown>;
@@ -104,6 +105,7 @@ function createMockDb() {
       paperTradeOrders: { findFirst: vi.fn() },
       realTradeOrders: { findFirst: vi.fn(), findMany: vi.fn() },
       strategies: { findFirst: vi.fn() },
+      portfolios: { findFirst: vi.fn() },
       strategyRuns: { findFirst: vi.fn() },
     },
     insert: vi.fn(() => ({ values: insertValues })),
@@ -239,6 +241,49 @@ describe('agent route handlers', () => {
     await expect(read.json()).resolves.toMatchObject({
       data: { filename: 'run.md', content: '# Report' },
     });
+  });
+
+  it('persists an empty official snapshot when real strategy context refreshes after settlement', async () => {
+    const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { GET } = await import('@/app/api/agent/context/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1',
+      strategyId: 'high_freq_real',
+      userId: 'user-1',
+      agentMode: 'real',
+      platform: 'kalshi',
+      status: 'active',
+      startingBalance: '1000.00',
+      riskConfig: {},
+      schedule: '*/15 * * * *',
+    });
+    db.query.portfolios.findFirst.mockResolvedValue(null);
+    db.selectResults.push([], [], []);
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1250,
+      positionsValue: 0,
+      totalValue: 1250,
+      pnl: 250,
+      positions: [],
+      orders: [],
+      fills: [],
+      activity: [],
+      raw: {},
+    });
+
+    const response = await GET(makeRequest({
+      url: 'https://example.test/api/agent/context?strategy_name=high_freq_real',
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      strategyId: 'strategy-1',
+      source: 'official',
+      cash: '1250.00',
+      positionsValue: '0.00',
+      positions: [],
+    }));
   });
 
   it('returns existing paper order for duplicate idempotency key', async () => {

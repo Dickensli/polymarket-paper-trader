@@ -3,6 +3,7 @@ import { buildAgentPositionSummaries, normalizePositionRows } from '@/lib/agent-
 import {
   matchingReportStrategyIds,
   matchesStrategyLifecycle,
+  snapshotIsStale,
   parseStrategyLifecycleFilter,
 } from '@/lib/agent-dashboard-filters';
 
@@ -44,6 +45,12 @@ describe('agent dashboard filters', () => {
       lifecycle: 'archived',
       strategyId: 'all',
     })).toEqual(['archived-polymarket']);
+  });
+
+  it('marks snapshots older than the expected sync window as stale', () => {
+    const now = new Date('2026-07-12T17:00:00.000Z');
+    expect(snapshotIsStale('2026-07-12T16:45:00.000Z', now)).toBe(false);
+    expect(snapshotIsStale('2026-07-12T16:29:59.000Z', now)).toBe(true);
   });
 });
 

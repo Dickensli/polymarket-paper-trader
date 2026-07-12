@@ -6,6 +6,7 @@ import {
   matchingReportStrategyIds,
   matchesStrategyLifecycle,
   parseStrategyLifecycleFilter,
+  snapshotIsStale,
 } from '@/lib/agent-dashboard-filters';
 import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 import {
@@ -237,6 +238,7 @@ export async function GET(request: NextRequest) {
           pnl: numeric(latestSnapshot.pnl),
           positions: latestSnapshot.positions,
           captured_at: latestSnapshot.capturedAt,
+          is_stale: snapshotIsStale(latestSnapshot.capturedAt),
         }];
       }
 
@@ -277,6 +279,7 @@ export async function GET(request: NextRequest) {
         pnl: totalValue - numeric(strategy.startingBalance),
         positions: currentPositions,
         captured_at: latestSnapshot.capturedAt,
+        is_stale: snapshotIsStale(latestSnapshot.capturedAt),
       }];
     });
     const settledPositions = buildSettledStrategyPositions(

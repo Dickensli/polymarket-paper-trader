@@ -7,6 +7,7 @@ import {
   positions,
   paperTrades,
   agentReports,
+  portfolioSnapshots,
 } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 
@@ -157,6 +158,20 @@ export async function GET(request: NextRequest) {
       const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
       const platform = strategy.platform === 'kalshi' ? 'kalshi' : 'polymarket_us';
       const realPortfolio = await getOfficialPortfolioSnapshot(platform);
+
+      await db.insert(portfolioSnapshots).values({
+        strategyId: strategy.id,
+        userId: session.user.id,
+        platform: strategy.platform,
+        agentMode: strategy.agentMode,
+        source: 'official',
+        cash: realPortfolio.cash.toFixed(2),
+        positionsValue: realPortfolio.positionsValue.toFixed(2),
+        totalValue: realPortfolio.totalValue.toFixed(2),
+        pnl: realPortfolio.pnl.toFixed(6),
+        positions: realPortfolio.positions,
+        orders: realPortfolio.orders,
+      });
       
       portfolioState = {
         balance: realPortfolio.cash,

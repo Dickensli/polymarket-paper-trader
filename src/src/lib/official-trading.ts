@@ -45,6 +45,21 @@ export type OfficialPortfolioSnapshot = {
   raw: Record<string, unknown>;
 };
 
+export function validateOfficialPortfolioSnapshot(
+  platform: Platform,
+  raw: Record<string, unknown>,
+): void {
+  const criticalKeys = platform === 'kalshi' ? ['balance', 'positions'] : ['portfolio', 'positions'];
+  for (const key of criticalKeys) {
+    const value = raw[key];
+    if (value && typeof value === 'object' && 'error' in value) {
+      const message = String((value as Record<string, unknown>).error);
+      const label = platform === 'kalshi' ? 'Kalshi' : 'Polymarket US';
+      throw new Error(`${label} official portfolio sync failed: ${key}: ${message}`);
+    }
+  }
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -265,6 +280,13 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const ordersRecord = orders as Record<string, unknown>;
   const fillsRecord = fills as Record<string, unknown>;
 
+  validateOfficialPortfolioSnapshot('kalshi', {
+    balance: balanceRecord,
+    positions: positionsRecord,
+    orders: ordersRecord,
+    fills: fillsRecord,
+  });
+
   const cash =
     Number(balanceRecord.balance_dollars) ||
     (balanceRecord.balance ? Number(balanceRecord.balance) / 100 : 0) ||
@@ -381,6 +403,14 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const ordersRecord = orders as Record<string, unknown>;
   const fillsRecord = fills as Record<string, unknown>;
   const activityRecord = activity as Record<string, unknown>;
+
+  validateOfficialPortfolioSnapshot('polymarket_us', {
+    portfolio: portfolioRecord,
+    positions: positionsRecord,
+    orders: ordersRecord,
+    fills: fillsRecord,
+    activity: activityRecord,
+  });
 
   const cash = Number(portfolioRecord.cash ?? portfolioRecord.availableBalance ?? portfolioRecord.balance ?? 0);
   const positionRows = Array.isArray(positionsRecord.positions) ? positionsRecord.positions : [];

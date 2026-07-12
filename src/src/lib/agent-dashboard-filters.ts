@@ -40,3 +40,13 @@ export function matchingReportStrategyIds(
     })
     .map((strategy) => strategy.id);
 }
+
+export function snapshotIsStale(
+  capturedAt: string | Date,
+  now = new Date(),
+  maxAgeMinutes = 30,
+): boolean {
+  const capturedTime = new Date(capturedAt).getTime();
+  if (!Number.isFinite(capturedTime)) return true;
+  return now.getTime() - capturedTime > maxAgeMinutes * 60_000;
+}

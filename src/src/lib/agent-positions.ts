@@ -17,6 +17,7 @@ export type AgentPositionSummary = {
   platform: string | null;
   agentMode: string | null;
   capturedAt: string;
+  isStale: boolean;
   cash: number;
   totalValue: number;
   positionsValue: number;
@@ -39,6 +40,7 @@ export type AgentPositionSnapshot = {
   pnl: number;
   positions: unknown;
   captured_at: string;
+  is_stale?: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,6 +139,7 @@ export function buildAgentPositionSummaries(snapshots: AgentPositionSnapshot[]):
       platform: snapshot.platform,
       agentMode: snapshot.agent_mode,
       capturedAt: snapshot.captured_at,
+      isStale: snapshot.is_stale ?? false,
       cash: snapshot.cash,
       totalValue: snapshot.total_value,
       positionsValue: snapshot.positions_value,

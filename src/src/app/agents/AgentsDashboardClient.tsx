@@ -81,6 +81,7 @@ type Snapshot = {
   positions: unknown;
   orders: unknown;
   captured_at: string;
+  is_stale?: boolean;
 };
 
 type RealOrder = {
@@ -336,6 +337,7 @@ function AgentPositionsPanel({
                         <Badge>{summary.strategyName}</Badge>
                         {summary.platform && <Badge>{platformLabels[summary.platform] ?? summary.platform}</Badge>}
                         {summary.agentMode && <Badge>{modeLabels[summary.agentMode] ?? summary.agentMode}</Badge>}
+                        {summary.isStale && <Badge tone="bg-loss/10 text-loss-light border-loss/25">STALE</Badge>}
                       </div>
                       <div className="mt-1 text-xs text-foreground-muted">
                         {summary.positions.length} positions · captured {formatDate(summary.capturedAt)}
