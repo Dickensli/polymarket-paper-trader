@@ -147,6 +147,8 @@ export async function GET(request: NextRequest) {
     }
 
 
+    let openOrders: Record<string, unknown>[] = [];
+
     // ── 6. Compute summary values ──────────────────────────────
     let positionsValue = positionsSummary.reduce(
       (sum, p) => sum + p.shares * p.current_price,
@@ -194,6 +196,27 @@ export async function GET(request: NextRequest) {
               eq(realTradeOrders.officialOrderId, String(order.order_id)),
             ));
         }
+
+        openOrders = officialOrders
+          .map((order) => {
+            const initialQuantity = kalshiOrderQuantity(order);
+            const filledQuantity = Number(order.fill_count_fp ?? order.fill_count ?? 0);
+            const remainingQuantity = Number(order.remaining_count_fp ?? order.remaining_count ?? 0);
+            return {
+              order_id: String(order.order_id),
+              client_order_id: order.client_order_id ?? null,
+              ticker: order.ticker ?? null,
+              status: normalizeKalshiOrderStatus(order),
+              side: order.side ?? null,
+              action: order.action ?? null,
+              price: order.yes_price_dollars ?? order.price ?? null,
+              initial_quantity: initialQuantity,
+              filled_quantity: Number.isFinite(filledQuantity) ? filledQuantity : 0,
+              remaining_quantity: Number.isFinite(remainingQuantity) ? remainingQuantity : 0,
+              last_updated_at: order.last_update_time ?? order.last_updated_ts_ms ?? null,
+            };
+          })
+          .filter((order) => Number(order.remaining_quantity) > 0);
       }
       
       portfolioState = {
@@ -248,6 +271,7 @@ export async function GET(request: NextRequest) {
       },
       positions: positionsSummary,
       recent_trades: tradeHistory,
+      open_orders: openOrders,
       recent_reports: recentReports,
       warnings,
     });

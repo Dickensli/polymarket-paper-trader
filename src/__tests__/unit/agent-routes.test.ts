@@ -300,6 +300,15 @@ describe('agent route handlers', () => {
       quantity: '490.190000',
       officialResponse: expect.objectContaining({ fill_count_fp: '71.00' }),
     }));
+    await expect(response.json()).resolves.toMatchObject({
+      open_orders: [{
+        order_id: 'official-order-1',
+        status: 'PARTIALLY_FILLED',
+        initial_quantity: 490.19,
+        filled_quantity: 71,
+        remaining_quantity: 419.19,
+      }],
+    });
   });
 
   it('returns existing paper order for duplicate idempotency key', async () => {
