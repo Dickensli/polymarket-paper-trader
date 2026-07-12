@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildAgentPositionSummaries, normalizePositionRows } from '@/lib/agent-positions';
 import {
+  matchingReportStrategyIds,
   matchesStrategyLifecycle,
   parseStrategyLifecycleFilter,
 } from '@/lib/agent-dashboard-filters';
@@ -19,6 +20,30 @@ describe('agent dashboard filters', () => {
     expect(matchesStrategyLifecycle('active', 'archived')).toBe(false);
     expect(matchesStrategyLifecycle('active', 'all')).toBe(true);
     expect(matchesStrategyLifecycle('disabled', 'all')).toBe(true);
+  });
+
+  it('selects archived report strategy ids before applying a report limit', () => {
+    const strategies = [
+      ...Array.from({ length: 200 }, (_, index) => ({
+        id: `active-${index}`,
+        platform: 'kalshi',
+        agentMode: 'real',
+        status: 'active',
+      })),
+      {
+        id: 'archived-polymarket',
+        platform: 'polymarket',
+        agentMode: 'paper',
+        status: 'disabled',
+      },
+    ];
+
+    expect(matchingReportStrategyIds(strategies, {
+      platform: 'polymarket',
+      agentMode: 'all',
+      lifecycle: 'archived',
+      strategyId: 'all',
+    })).toEqual(['archived-polymarket']);
   });
 });
 

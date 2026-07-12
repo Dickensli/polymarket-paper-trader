@@ -12,3 +12,31 @@ export function matchesStrategyLifecycle(
   if (filter === 'all') return true;
   return filter === 'active' ? status === 'active' : status !== 'active';
 }
+
+type ReportStrategy = {
+  id: string;
+  platform: string;
+  agentMode: string;
+  status: string;
+};
+
+type ReportStrategyFilters = {
+  platform: string;
+  agentMode: string;
+  lifecycle: StrategyLifecycleFilter;
+  strategyId: string;
+};
+
+export function matchingReportStrategyIds(
+  strategies: ReportStrategy[],
+  filters: ReportStrategyFilters,
+): string[] {
+  return strategies
+    .filter((strategy) => {
+      if (filters.strategyId !== 'all' && strategy.id !== filters.strategyId) return false;
+      if (filters.platform !== 'all' && strategy.platform !== filters.platform) return false;
+      if (filters.agentMode !== 'all' && strategy.agentMode !== filters.agentMode) return false;
+      return matchesStrategyLifecycle(strategy.status, filters.lifecycle);
+    })
+    .map((strategy) => strategy.id);
+}

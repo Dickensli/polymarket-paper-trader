@@ -3,6 +3,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import {
+  matchingReportStrategyIds,
   matchesStrategyLifecycle,
   parseStrategyLifecycleFilter,
 } from '@/lib/agent-dashboard-filters';
@@ -87,6 +88,31 @@ export async function GET(request: NextRequest) {
         .orderBy(desc(strategies.createdAt))
         .limit(200);
 
+    const reportQueryNeedsStrategyScope =
+      platform !== 'all' || agentMode !== 'all' || strategyStatus !== 'all' || strategyId !== 'all';
+    const matchingReportStrategyIdsList = matchingReportStrategyIds(allStrategies, {
+      platform,
+      agentMode,
+      lifecycle: strategyStatus,
+      strategyId,
+    });
+    const reportsPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof agentReports.$inferSelect)[])
+        : canViewAllAgents
+          ? db.select().from(agentReports)
+            .where(inArray(agentReports.strategyId, matchingReportStrategyIdsList))
+            .orderBy(desc(agentReports.createdAt)).limit(200)
+          : db.select().from(agentReports)
+            .where(and(
+              eq(agentReports.userId, session.user.id),
+              inArray(agentReports.strategyId, matchingReportStrategyIdsList),
+            ))
+            .orderBy(desc(agentReports.createdAt)).limit(100)
+      : canViewAllAgents
+        ? db.select().from(agentReports).orderBy(desc(agentReports.createdAt)).limit(200)
+        : db.select().from(agentReports).where(eq(agentReports.userId, session.user.id)).orderBy(desc(agentReports.createdAt)).limit(100);
+
     const [
       visibleUsers,
       reports,
@@ -99,9 +125,7 @@ export async function GET(request: NextRequest) {
       canViewAllAgents
         ? db.select().from(users).limit(1000)
         : db.select().from(users).where(eq(users.id, session.user.id)).limit(1),
-      canViewAllAgents
-        ? db.select().from(agentReports).orderBy(desc(agentReports.createdAt)).limit(200)
-        : db.select().from(agentReports).where(eq(agentReports.userId, session.user.id)).orderBy(desc(agentReports.createdAt)).limit(100),
+      reportsPromise,
       canViewAllAgents
         ? db.select().from(portfolioSnapshots).orderBy(desc(portfolioSnapshots.capturedAt)).limit(240)
         : db.select().from(portfolioSnapshots).where(eq(portfolioSnapshots.userId, session.user.id)).orderBy(desc(portfolioSnapshots.capturedAt)).limit(120),
