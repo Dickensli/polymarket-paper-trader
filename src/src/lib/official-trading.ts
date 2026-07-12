@@ -90,8 +90,8 @@ export function resolveOfficialOrderQuantity(intent: Pick<OfficialTradeIntent, '
 }
 
 export function normalizeKalshiOrderStatus(order: Record<string, unknown>): string {
-  const fillCount = Number(order.fill_count ?? 0);
-  const remainingCount = Number(order.remaining_count ?? 0);
+  const fillCount = Number(order.fill_count_fp ?? order.fill_count ?? 0);
+  const remainingCount = Number(order.remaining_count_fp ?? order.remaining_count ?? 0);
   const officialStatus = typeof order.status === 'string' ? order.status.toUpperCase() : '';
 
   // Counts are more useful than the lifecycle label for audit reporting. In
@@ -104,6 +104,11 @@ export function normalizeKalshiOrderStatus(order: Record<string, unknown>): stri
     return 'CANCELED';
   }
   return officialStatus || 'SUBMITTED';
+}
+
+export function kalshiOrderQuantity(order: Record<string, unknown>): number | null {
+  const quantity = Number(order.initial_count_fp ?? order.initial_count ?? order.count);
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : null;
 }
 
 function yesSidePrice(outcome: Outcome, price: number): number {

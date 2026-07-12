@@ -5,7 +5,7 @@ import { getDb } from '@/lib/db';
 import { strategies } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { realTradeOrders, portfolios } from '@/lib/db/schema';
-import { normalizeKalshiOrderStatus } from '@/lib/official-trading';
+import { kalshiOrderQuantity, normalizeKalshiOrderStatus } from '@/lib/official-trading';
 export async function GET() {
   try {
     const session = await auth();
@@ -37,9 +37,11 @@ export async function GET() {
             Boolean(order && typeof order === 'object' && 'order_id' in order),
         );
         for (const order of validOrders) {
+          const quantity = kalshiOrderQuantity(order);
           await db.update(realTradeOrders)
             .set({
               status: normalizeKalshiOrderStatus(order),
+              quantity: quantity == null ? undefined : quantity.toFixed(6),
               officialResponse: order,
               updatedAt: new Date(),
             })

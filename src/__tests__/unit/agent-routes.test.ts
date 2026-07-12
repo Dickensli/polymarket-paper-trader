@@ -47,6 +47,11 @@ vi.mock('@/lib/official-trading', () => ({
   cancelOfficialRealOrder: vi.fn(),
   getOfficialPortfolioSnapshot: vi.fn(),
   resolveOfficialOrderQuantity: vi.fn(({ shares, amount, price }) => shares ?? amount / price),
+  kalshiOrderQuantity: vi.fn((order) => Number(order.initial_count_fp ?? order.initial_count ?? order.count)),
+  normalizeKalshiOrderStatus: vi.fn((order) =>
+    Number(order.fill_count_fp ?? 0) > 0 && Number(order.remaining_count_fp ?? 0) > 0
+      ? 'PARTIALLY_FILLED'
+      : String(order.status ?? 'SUBMITTED').toUpperCase()),
 }));
 
 type JsonBody = Record<string, unknown>;
@@ -266,7 +271,13 @@ describe('agent route handlers', () => {
       totalValue: 1250,
       pnl: 250,
       positions: [],
-      orders: [],
+      orders: [{
+        order_id: 'official-order-1',
+        status: 'resting',
+        initial_count_fp: '490.19',
+        fill_count_fp: '71.00',
+        remaining_count_fp: '419.19',
+      }],
       fills: [],
       activity: [],
       raw: {},
@@ -283,6 +294,11 @@ describe('agent route handlers', () => {
       cash: '1250.00',
       positionsValue: '0.00',
       positions: [],
+    }));
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PARTIALLY_FILLED',
+      quantity: '490.190000',
+      officialResponse: expect.objectContaining({ fill_count_fp: '71.00' }),
     }));
   });
 

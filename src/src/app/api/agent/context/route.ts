@@ -8,8 +8,10 @@ import {
   paperTrades,
   agentReports,
   portfolioSnapshots,
+  realTradeOrders,
 } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
+import { kalshiOrderQuantity, normalizeKalshiOrderStatus } from '@/lib/official-trading';
 
 // ---------------------------------------------------------------------------
 // GET /api/agent/context?strategy_name=...
@@ -172,6 +174,27 @@ export async function GET(request: NextRequest) {
         positions: realPortfolio.positions,
         orders: realPortfolio.orders,
       });
+
+      if (platform === 'kalshi') {
+        const officialOrders = realPortfolio.orders.filter(
+          (order): order is Record<string, unknown> =>
+            Boolean(order && typeof order === 'object' && 'order_id' in order),
+        );
+        for (const order of officialOrders) {
+          const quantity = kalshiOrderQuantity(order);
+          await db.update(realTradeOrders)
+            .set({
+              status: normalizeKalshiOrderStatus(order),
+              quantity: quantity == null ? undefined : quantity.toFixed(6),
+              officialResponse: order,
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(realTradeOrders.strategyId, strategy.id),
+              eq(realTradeOrders.officialOrderId, String(order.order_id)),
+            ));
+        }
+      }
       
       portfolioState = {
         balance: realPortfolio.cash,

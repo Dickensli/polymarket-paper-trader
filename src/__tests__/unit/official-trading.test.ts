@@ -71,6 +71,8 @@ describe('official trading helpers', () => {
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '12.00', remaining_count: '38.00' })).toBe('PARTIALLY_FILLED');
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '0.00', remaining_count: '0.00' })).toBe('CANCELED');
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '50.00', remaining_count: '0.00' })).toBe('EXECUTED');
+    expect(normalizeKalshiOrderStatus({ status: 'resting', fill_count_fp: '71.00', remaining_count_fp: '419.19' })).toBe('PARTIALLY_FILLED');
+    expect(normalizeKalshiOrderStatus({ status: 'resting', fill_count_fp: '0.00', remaining_count_fp: '490.19' })).toBe('RESTING');
   });
 
   it('rejects an official snapshot when a critical Kalshi request failed', () => {
