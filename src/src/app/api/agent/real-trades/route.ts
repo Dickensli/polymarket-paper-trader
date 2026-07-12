@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { portfolioSnapshots, realTradeOrders, strategies } from '@/lib/db/schema';
-import { submitOfficialRealTrade } from '@/lib/official-trading';
+import { resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
 import { executeTrade, getPortfolio } from '@/lib/trading-engine';
 
 const realTradeSchema = z.object({
@@ -86,7 +86,6 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-
     const db = getDb();
     const strategy = await db.query.strategies.findFirst({
       where: and(
@@ -141,6 +140,7 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+    const resolvedQuantity = resolveOfficialOrderQuantity(order);
 
     const enabled = realTradingEnabled(strategy.metadata);
     if (!enabled) {
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
           clientOrderId: order.client_order_id ?? null,
           marketSlugOrTicker: order.slug,
           side: order.side,
-          quantity: order.shares?.toFixed(6) ?? null,
+          quantity: resolvedQuantity.toFixed(6),
           price: order.price.toFixed(6),
           status: 'REJECTED',
           request: order,
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
         clientOrderId: order.client_order_id ?? null,
         marketSlugOrTicker: order.slug,
         side: order.side,
-        quantity: order.shares?.toFixed(6) ?? null,
+        quantity: resolvedQuantity.toFixed(6),
         price: order.price.toFixed(6),
         status: 'SUBMITTING',
         request: order,

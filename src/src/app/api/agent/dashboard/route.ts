@@ -355,7 +355,10 @@ export async function GET(request: NextRequest) {
         market_id: order.marketId,
         market_slug_or_ticker: order.marketSlugOrTicker,
         side: order.side,
-        quantity: numeric(order.quantity),
+        quantity: numeric(order.quantity) || numeric((order.request as Record<string, unknown> | null)?.count)
+          || (numeric((order.request as Record<string, unknown> | null)?.amount) && numeric(order.price)
+            ? numeric((order.request as Record<string, unknown> | null)?.amount) / numeric(order.price)
+            : 0),
         price: numeric(order.price),
         status: order.status,
         request: order.request,

@@ -70,6 +70,27 @@ function resolveQuantity(intent: OfficialTradeIntent): number {
   throw new Error('Real order requires shares, or amount plus price.');
 }
 
+export function resolveOfficialOrderQuantity(intent: Pick<OfficialTradeIntent, 'shares' | 'amount' | 'price'>): number {
+  return resolveQuantity(intent as OfficialTradeIntent);
+}
+
+export function normalizeKalshiOrderStatus(order: Record<string, unknown>): string {
+  const fillCount = Number(order.fill_count ?? 0);
+  const remainingCount = Number(order.remaining_count ?? 0);
+  const officialStatus = typeof order.status === 'string' ? order.status.toUpperCase() : '';
+
+  // Counts are more useful than the lifecycle label for audit reporting. In
+  // particular, Kalshi can report an order as "executed" when its lifecycle is
+  // over even though no contracts filled.
+  if (remainingCount > 0 && fillCount > 0) return 'PARTIALLY_FILLED';
+  if (remainingCount > 0) return officialStatus === 'RESTING' ? 'RESTING' : 'OPEN';
+  if (fillCount > 0) return 'EXECUTED';
+  if (officialStatus === 'CANCELED' || officialStatus === 'CANCELLED' || officialStatus === 'EXECUTED') {
+    return 'CANCELED';
+  }
+  return officialStatus || 'SUBMITTED';
+}
+
 function yesSidePrice(outcome: Outcome, price: number): number {
   return outcome === 'YES' ? price : 1 - price;
 }
@@ -187,7 +208,7 @@ async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialT
   return {
     officialOrderId,
     clientOrderId,
-    status: 'SUBMITTED',
+    status: normalizeKalshiOrderStatus(response),
     request,
     response,
   };

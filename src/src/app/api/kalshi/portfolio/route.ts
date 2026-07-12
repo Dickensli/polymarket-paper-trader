@@ -5,6 +5,7 @@ import { getDb } from '@/lib/db';
 import { strategies } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { realTradeOrders, portfolios } from '@/lib/db/schema';
+import { normalizeKalshiOrderStatus } from '@/lib/official-trading';
 export async function GET() {
   try {
     const session = await auth();
@@ -22,8 +23,6 @@ export async function GET() {
       const platform = strategy.platform === 'polymarket_us' ? 'polymarket_us' : 'kalshi';
       const realPortfolio = await getOfficialPortfolioSnapshot(platform);
       
-      const localPortfolioBefore = await getPortfolio(session.user.id);
-
       // Sync official state down to local DB to prevent false warnings
       // and ensure local PnL/balance accurately match official Kalshi
       if (realPortfolio) {
@@ -33,11 +32,21 @@ export async function GET() {
           .where(eq(portfolios.userId, session.user.id));
           
         // 2. Sync Order Statuses
-        const validOrders = realPortfolio.orders.map((o: any) => o).filter(o => o && o.order_id && o.status);
+        const validOrders = realPortfolio.orders.filter(
+          (order): order is Record<string, unknown> =>
+            Boolean(order && typeof order === 'object' && 'order_id' in order),
+        );
         for (const order of validOrders) {
           await db.update(realTradeOrders)
-            .set({ status: order.status.toUpperCase(), updatedAt: new Date() })
-            .where(and(eq(realTradeOrders.userId, session.user.id), eq(realTradeOrders.officialOrderId, order.order_id)));
+            .set({
+              status: normalizeKalshiOrderStatus(order),
+              officialResponse: order,
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(realTradeOrders.userId, session.user.id),
+              eq(realTradeOrders.officialOrderId, String(order.order_id)),
+            ));
         }
       }
 
@@ -81,4 +90,3 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'Internal server error', details: message }, { status: 500 });
   }
 }
-

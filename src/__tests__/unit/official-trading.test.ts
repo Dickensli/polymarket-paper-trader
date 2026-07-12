@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildKalshiOrderRequest } from '@/lib/official-trading';
+import {
+  buildKalshiOrderRequest,
+  normalizeKalshiOrderStatus,
+  resolveOfficialOrderQuantity,
+} from '@/lib/official-trading';
 
 describe('official trading helpers', () => {
   it('builds Kalshi V2 orders with fixed-point count and dollar price strings', () => {
@@ -55,5 +59,16 @@ describe('official trading helpers', () => {
       price: 0.5,
       clientOrderId: 'client-3',
     })).toThrow('Kalshi real order quantity must be at least 0.01 contracts.');
+  });
+
+  it('derives audit quantity when an amount is used', () => {
+    expect(resolveOfficialOrderQuantity({ amount: 100, price: 0.8 })).toBe(125);
+  });
+
+  it('uses fill and remaining counts to produce truthful audit statuses', () => {
+    expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '0.00', remaining_count: '50.00' })).toBe('OPEN');
+    expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '12.00', remaining_count: '38.00' })).toBe('PARTIALLY_FILLED');
+    expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '0.00', remaining_count: '0.00' })).toBe('CANCELED');
+    expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '50.00', remaining_count: '0.00' })).toBe('EXECUTED');
   });
 });
