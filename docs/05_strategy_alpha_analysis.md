@@ -160,6 +160,165 @@ flowchart LR
 
 ---
 
+## 🤖 用于探索 Alpha 的 Agent 提示词 (Prompts)
+
+以下是用于指导 AI Agent (如基于 MCP 工具的 Subagent) 在 Polymarket 和 Kalshi 上挖掘高价值非虚拟币事件市场的实操 Prompt 示例，可以配合前述的各种方向进行扫描。
+
+### 1. Polymarket 宏观广度扫描
+```text
+Your task is to scan Polymarket International for NON-crypto prediction markets that have strong event-driven alpha potential. Use the polytraders-web MCP server tools.
+
+Step 1: Call the MCP tool `get_tags` on server `polytraders-web` to see all available market categories/tags.
+
+Step 2: For each interesting non-crypto category (politics, economics, legal, geopolitics, sports, science, etc.), call `get_markets_by_tag` or `search_markets` to find active markets.
+
+Step 3: For the most promising markets, call `get_market` to get detailed data including current prices, liquidity, and volume.
+
+Focus on finding markets where:
+- The outcome has strong deducible evidence (polls, data, legal precedents)
+- Prices seem mispriced relative to observable evidence
+- Liquidity is reasonable (volume > $10k)
+- The market is NOT about crypto/bitcoin/ethereum price predictions
+
+Search terms to try: 'election', 'president', 'fed', 'interest rate', 'supreme court', 'war', 'ceasefire', 'gdp', 'inflation', 'tariff', 'trade deal', 'nato', 'china', 'trump', 'congress', 'bill', 'legislation'
+
+Report back with:
+1. All available tags/categories
+2. Top 15-20 most interesting non-crypto event markets with their current prices, volumes, and why they might be mispriced
+3. Any markets where you see potential edge based on publicly available information
+```
+
+### 2. Polymarket 特定关键词精准搜索 (按阶段)
+```text
+You are a Polymarket International market researcher. Use the polytraders-web MCP server to execute the following market scans.
+
+IMPORTANT: You have MCP tools available. Call them using the mcp tool with serverName 'polytraders-web'.
+
+Phase 1: Get available categories
+- Call `get_tags` on polytraders-web to see all market categories
+
+Phase 2: Search for high-alpha non-crypto markets using `search_markets` on polytraders-web. Do these searches ONE BY ONE (not in parallel, since they're on the same MCP server):
+1. search_markets with query 'Iran' 
+2. search_markets with query 'interest rate'
+3. search_markets with query 'World Cup'
+4. search_markets with query 'tariff'
+5. search_markets with query 'president'
+6. search_markets with query 'inflation'
+7. search_markets with query 'supreme court'
+8. search_markets with query 'NATO'
+9. search_markets with query 'GDP'
+10. search_markets with query 'election'
+11. search_markets with query 'congress'
+12. search_markets with query 'ceasefire'
+
+Phase 3: For the most interesting markets found (top 5-10 by volume/liquidity), call `get_market` with the slug to get detailed pricing.
+
+Report back ALL results in a structured format with: market question, slug, current prices, volume, liquidity, category, and end date.
+```
+
+### 3. Kalshi 重大经济与政治事件扫描
+```text
+You are a Kalshi market researcher with MCP access to the kalshi-paper-trader server. Execute the following market scans SEQUENTIALLY (one at a time).
+
+You MUST use the mcp tool to call kalshi-paper-trader tools.
+
+Phase 1: Execute these search_markets calls one by one:
+1. search_markets with search='CPI'
+2. search_markets with search='fed rate'
+3. search_markets with search='GDP'
+4. search_markets with search='recession'
+5. search_markets with search='unemployment'
+6. search_markets with search='tariff'
+7. search_markets with search='hurricane'
+8. search_markets with search='House congress'
+9. search_markets with search='Senate'
+10. search_markets with search='temperature'
+11. search_markets with search='Iran'
+12. search_markets with search='ceasefire'
+13. search_markets with search='World Cup'
+14. search_markets with search='election'
+
+Phase 2: For the most promising markets (especially CPI and FOMC since CPI releases July 14 - 2 DAYS AWAY), call get_market and get_orderbook to check detailed pricing and liquidity.
+
+Phase 3: Report ALL results in structured format with: title, ticker, yes_price, no_price, volume, open_interest, close_date.
+
+Focus especially on:
+- June 2026 CPI brackets (releasing July 14!)
+- July FOMC rate decision (July 28-29)
+- Q2 GDP
+- Hurricane season markets
+- 2026 midterm election markets
+```
+
+### 4. Polymarket 全局检索与聚合
+```text
+You are researching Polymarket International markets. Execute the following phases sequentially:
+
+## Phase 1: Get Categories
+Call MCP tool `get_tags` on server `polytraders-web` with no arguments. Record all categories.
+
+## Phase 2: Search Markets
+Do these searches ONE BY ONE (wait for each result before starting the next). Use MCP tool `search_markets` on server `polytraders-web`.
+
+1. search_markets with query='Iran'
+2. search_markets with query='interest rate'
+3. search_markets with query='World Cup'
+4. search_markets with query='tariff'
+5. search_markets with query='president'
+6. search_markets with query='inflation'
+7. search_markets with query='supreme court'
+8. search_markets with query='NATO'
+9. search_markets with query='GDP'
+10. search_markets with query='election'
+11. search_markets with query='congress'
+12. search_markets with query='ceasefire'
+
+For EACH search result, record: market question, slug, any price info, volume, liquidity, category, and end date if available.
+
+## Phase 3: Top Markets Detail
+From ALL the search results, identify the top 5-10 most interesting markets by volume/liquidity. For each, call `get_market` on `polytraders-web` with the market's slug to get detailed pricing data.
+
+After completing all phases, send ALL results back to me in a structured format. Include:
+- Full list of categories from get_tags
+- Summary of ALL markets found across all 12 searches (deduplicated)
+- Detailed data for the top 5-10 markets
+
+IMPORTANT: Make sure to actually call the MCP tools. The server name is 'polytraders-web'.
+```
+
+### 5. Kalshi 事件与市场深度解析
+```text
+You are a Kalshi market researcher. Use the kalshi-paper-trader MCP server to execute the following market scans.
+
+IMPORTANT: You have MCP tools available. Call them using the mcp tool with serverName 'kalshi-paper-trader'.
+
+Phase 1: Search for high-alpha non-crypto event markets using `search_events` on kalshi-paper-trader. Do these searches ONE BY ONE:
+1. search_events with query 'interest rate'
+2. search_events with query 'inflation'
+3. search_events with query 'GDP'
+4. search_events with query 'president'
+5. search_events with query 'tariff'
+6. search_events with query 'Iran'
+7. search_events with query 'unemployment'
+8. search_events with query 'Fed'
+9. search_events with query 'congress'
+10. search_events with query 'supreme court'
+
+Also try:
+11. search_markets with query 'election'
+12. search_markets with query 'World Cup'
+13. search_markets with query 'ceasefire'
+14. search_markets with query 'oil price'
+
+Phase 2: For each interesting event found, call `get_event` with the event ticker to get all nested markets and pricing.
+
+Phase 3: For the top 5-10 most promising markets, call `get_market` with the ticker and `get_orderbook` with the ticker to check liquidity.
+
+Report back ALL results in a structured format with: market question/title, ticker, current prices (yes/no), volume, open interest, category, and close date.
+```
+
+---
+
 ## ⚡ TL;DR
 
 | 问题 | 答案 |
