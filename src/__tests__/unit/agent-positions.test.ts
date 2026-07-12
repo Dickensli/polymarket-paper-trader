@@ -4,6 +4,7 @@ import {
   matchingReportStrategyIds,
   matchesStrategyLifecycle,
   snapshotIsStale,
+  selectCurrentPortfolioSnapshot,
   parseStrategyLifecycleFilter,
 } from '@/lib/agent-dashboard-filters';
 
@@ -51,6 +52,13 @@ describe('agent dashboard filters', () => {
     const now = new Date('2026-07-12T17:00:00.000Z');
     expect(snapshotIsStale('2026-07-12T16:45:00.000Z', now)).toBe(false);
     expect(snapshotIsStale('2026-07-12T16:29:59.000Z', now)).toBe(true);
+  });
+
+  it('prefers authoritative official snapshots for real strategies', () => {
+    const local = { source: 'local', capturedAt: new Date('2026-07-12T20:50:36Z') };
+    const official = { source: 'official', capturedAt: new Date('2026-07-12T20:50:33Z') };
+    expect(selectCurrentPortfolioSnapshot([local, official], 'real')).toBe(official);
+    expect(selectCurrentPortfolioSnapshot([local, official], 'paper')).toBe(local);
   });
 });
 

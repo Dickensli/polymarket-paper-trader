@@ -92,6 +92,7 @@ export function resolveOfficialOrderQuantity(intent: Pick<OfficialTradeIntent, '
 export function normalizeKalshiOrderStatus(order: Record<string, unknown>): string {
   const fillCount = Number(order.fill_count_fp ?? order.fill_count ?? 0);
   const remainingCount = Number(order.remaining_count_fp ?? order.remaining_count ?? 0);
+  const initialCount = Number(order.initial_count_fp ?? order.initial_count ?? order.count ?? 0);
   const officialStatus = typeof order.status === 'string' ? order.status.toUpperCase() : '';
 
   // Counts are more useful than the lifecycle label for audit reporting. In
@@ -99,11 +100,38 @@ export function normalizeKalshiOrderStatus(order: Record<string, unknown>): stri
   // over even though no contracts filled.
   if (remainingCount > 0 && fillCount > 0) return 'PARTIALLY_FILLED';
   if (remainingCount > 0) return officialStatus === 'RESTING' ? 'RESTING' : 'OPEN';
+  if (
+    fillCount > 0 && initialCount > fillCount
+    && (officialStatus === 'CANCELED' || officialStatus === 'CANCELLED')
+  ) return 'PARTIALLY_FILLED_CANCELED';
   if (fillCount > 0) return 'EXECUTED';
   if (officialStatus === 'CANCELED' || officialStatus === 'CANCELLED' || officialStatus === 'EXECUTED') {
     return 'CANCELED';
   }
   return officialStatus || 'SUBMITTED';
+}
+
+export function summarizeKalshiPositions(
+  positionRows: Record<string, unknown>[],
+): { positionsValue: number; pnl: number } {
+  let positionsValue = 0;
+  let pnl = 0;
+  for (const position of positionRows) {
+    const hasDollarMarketValue = position.market_exposure_dollars != null || position.market_value_dollars != null;
+    const marketValue = Number(
+      position.market_exposure_dollars ?? position.market_value_dollars ?? position.market_value ?? position.value ?? 0,
+    ) / (hasDollarMarketValue ? 1 : 100);
+    const hasDollarPnl = position.realized_pnl_dollars != null;
+    const realizedPnl = Number(position.realized_pnl_dollars ?? position.realized_pnl ?? 0) / (hasDollarPnl ? 1 : 100);
+    const hasDollarCost = position.position_cost_dollars != null;
+    const positionCost = Number(position.position_cost_dollars ?? position.position_cost ?? 0) / (hasDollarCost ? 1 : 100);
+    if (Number.isFinite(marketValue)) positionsValue += marketValue;
+    if (Number.isFinite(realizedPnl)) pnl += realizedPnl;
+    if (!hasDollarPnl && Number.isFinite(marketValue - positionCost)) {
+      pnl += marketValue - positionCost;
+    }
+  }
+  return { positionsValue, pnl };
 }
 
 export function kalshiOrderQuantity(order: Record<string, unknown>): number | null {
@@ -302,19 +330,7 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
   const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
 
-  let positionsValueCents = 0;
-  let pnlCents = 0;
-  for (const pos of positionRows) {
-    const p = pos as Record<string, unknown>;
-    const marketVal = Number(p.market_value || p.value || 0);
-    const cost = Number(p.position_cost || 0);
-    const realized = Number(p.realized_pnl || 0);
-    positionsValueCents += marketVal;
-    pnlCents += (realized + (marketVal - cost));
-  }
-
-  const positionsValue = positionsValueCents / 100;
-  const pnl = pnlCents / 100;
+  const { positionsValue, pnl } = summarizeKalshiPositions(positionRows);
   const totalValue = cash + positionsValue;
 
   return {

@@ -3,6 +3,7 @@ import {
   buildKalshiOrderRequest,
   normalizeKalshiOrderStatus,
   resolveOfficialOrderQuantity,
+  summarizeKalshiPositions,
   validateOfficialPortfolioSnapshot,
 } from '@/lib/official-trading';
 
@@ -73,6 +74,14 @@ describe('official trading helpers', () => {
     expect(normalizeKalshiOrderStatus({ status: 'executed', fill_count: '50.00', remaining_count: '0.00' })).toBe('EXECUTED');
     expect(normalizeKalshiOrderStatus({ status: 'resting', fill_count_fp: '71.00', remaining_count_fp: '419.19' })).toBe('PARTIALLY_FILLED');
     expect(normalizeKalshiOrderStatus({ status: 'resting', fill_count_fp: '0.00', remaining_count_fp: '490.19' })).toBe('RESTING');
+    expect(normalizeKalshiOrderStatus({ status: 'canceled', initial_count_fp: '126.92', fill_count_fp: '23.00', remaining_count_fp: '0.00' })).toBe('PARTIALLY_FILLED_CANCELED');
+  });
+
+  it('reads current Kalshi fixed-point dollar position fields', () => {
+    expect(summarizeKalshiPositions([
+      { market_exposure_dollars: '58.195200', realized_pnl_dollars: '-8.680000' },
+      { market_exposure_dollars: '63.144700', realized_pnl_dollars: '-3.000000' },
+    ])).toEqual({ positionsValue: 121.3399, pnl: -11.68 });
   });
 
   it('rejects an official snapshot when a critical Kalshi request failed', () => {

@@ -3,9 +3,8 @@ import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { portfolioSnapshots, realTradeOrders, strategies } from '@/lib/db/schema';
+import { realTradeOrders, strategies } from '@/lib/db/schema';
 import { resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
-import { executeTrade, getPortfolio } from '@/lib/trading-engine';
 
 const realTradeSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -56,19 +55,6 @@ export async function POST(request: NextRequest) {
       error: o.error,
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,
-    });
-
-    const sanitizePortfolioSnapshot = (s: any) => ({
-      platform: s.platform,
-      agentMode: s.agentMode,
-      source: s.source,
-      cash: Number(s.cash),
-      positionsValue: Number(s.positionsValue),
-      totalValue: Number(s.totalValue),
-      pnl: Number(s.pnl),
-      positions: s.positions,
-      orders: s.orders,
-      capturedAt: s.capturedAt,
     });
 
     const parsed = realTradeSchema.safeParse(await request.json());
@@ -207,79 +193,21 @@ export async function POST(request: NextRequest) {
           officialOrderId: official.officialOrderId,
           clientOrderId: official.clientOrderId,
           status: official.status,
-          request: official.request,
-          officialResponse: official.response,
+          request: order,
+          officialResponse: {
+            ...official.response,
+            submitted_request: official.request,
+          },
           error: {},
           updatedAt: new Date(),
         })
         .where(eq(realTradeOrders.id, audit.id))
         .returning();
 
-      // Mirror the trade locally (like paper trading) so that
-      // portfolios.balance and positions stay in sync without
-      // calling the expensive official portfolio API.
-      let filledShares = 0;
-      if (strategy.platform === 'kalshi') {
-        const rawResponse = official.response;
-        const fillCountVal = rawResponse.fill_count ?? (rawResponse.order as any)?.fill_count;
-        if (fillCountVal != null) {
-          filledShares = Number(fillCountVal);
-        }
-      } else if (strategy.platform === 'polymarket_us') {
-        const rawResponse = official.response;
-        const fillCountVal = rawResponse.filledQuantity ?? rawResponse.fill_count;
-        if (fillCountVal != null) {
-          filledShares = Number(fillCountVal);
-        }
-      } else {
-        // Fallback / default
-        filledShares = order.shares ?? (order.amount && order.price ? order.amount / order.price : 0);
-      }
-
-      if (filledShares > 0 && order.price) {
-        try {
-          await executeTrade(session.user.id, {
-            marketId: order.slug,
-            marketQuestion: order.slug,
-            tokenId: order.slug,
-            outcome: order.outcome,
-            side: order.side,
-            shares: filledShares,
-            price: order.price,
-            platform: strategy.platform as 'polymarket' | 'kalshi' | 'polymarket_us',
-            idempotencyKey: official.clientOrderId,
-          });
-        } catch (localErr) {
-          console.error('[real-trades] Failed to mirror trade locally:', localErr);
-        }
-      }
-
-      // Save local portfolio snapshot (cheap — no authenticated API calls).
-      // Current prices for positions can be refreshed later via public API.
-      const localPortfolio = await getPortfolio(session.user.id);
-      const positionsValue = localPortfolio.totalValue - localPortfolio.balance;
-      const [snapshot] = await db
-        .insert(portfolioSnapshots)
-        .values({
-          strategyId: strategy.id,
-          userId: session.user.id,
-          runId: order.run_id ?? null,
-          platform: strategy.platform,
-          agentMode: strategy.agentMode,
-          source: 'local',
-          cash: localPortfolio.balance.toFixed(2),
-          positionsValue: positionsValue.toFixed(2),
-          totalValue: localPortfolio.totalValue.toFixed(2),
-          pnl: localPortfolio.totalPnL.toFixed(6),
-          positions: localPortfolio.positions,
-          orders: [],
-        })
-        .returning();
-
       return NextResponse.json({
         data: sanitizeRealOrder(updatedAudit),
         official_order: official,
-        local_snapshot: sanitizePortfolioSnapshot(snapshot),
+        portfolio_sync: 'pending_next_context_refresh',
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
