@@ -1,9 +1,14 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
+import fs from "fs";
 function log(msg) {
     const timestamp = new Date().toISOString();
     console.error(`[${timestamp}] ${msg}`);
+    try {
+        fs.appendFileSync('/tmp/kalshi-mcp-debug.log', `[${timestamp}] ${msg}\n`);
+    }
+    catch (e) { }
 }
 const STRATEGY_WHITELIST_RAW = process.env.STRATEGY_WHITELIST;
 if (!STRATEGY_WHITELIST_RAW) {

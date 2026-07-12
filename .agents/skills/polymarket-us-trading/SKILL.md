@@ -54,8 +54,8 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 | Tool | Purpose |
 | --- | --- |
-| `buy` | Buy shares for the registered strategy. Requires `slug`, `outcome`, `strategy_id`, and `amount` or `shares`; use explicit `price` for real trading. |
-| `sell` | Sell shares for the registered strategy. Requires `slug`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading; use explicit `price` for real trading. |
+| `buy` | Buy shares for the registered strategy. Requires `slug`, `outcome`, `strategy_id`, and `amount` or `shares`. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
+| `sell` | Sell shares for the registered strategy. Requires `slug`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
 | `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
 > There are **no limit-order tools** on this server for paper trading (no `place_limit_order`, `list_orders`, `cancel_order`, `cancel_all_orders`, `check_orders`). Real trading is limit-based through `buy` / `sell` with explicit `price`.
@@ -149,7 +149,7 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 ### Phase 3 — Execute
 
-1. Place trades with `buy` / `sell`, always passing `strategy_id`. For real trading, include an explicit limit `price`.
+1. Place trades with `buy` / `sell`, always passing `strategy_id`. **Use MARKET ORDERS ONLY.** You MUST NOT specify a limit price under any circumstances.
 2. After each trade, call `portfolio` or `get_balance` to verify server-side state.
 
 ### Phase 4 — Report & Persist

@@ -52,9 +52,9 @@ Do not call or invent `submit_real_trade`; it is not an MCP tool. International 
 
 | Tool | Purpose |
 |---|---|
-| `buy` | Buy paper shares for the registered strategy. Requires `slug_or_id`, `outcome`, `amount_usd`, `account` or `strategy_id`. |
-| `sell` | Sell paper shares for the registered strategy. Requires `slug_or_id`, `outcome`, `shares`, `account` or `strategy_id`. |
-| `place_limit_order` | (PAPER ONLY) GTC/GTD limit order. |
+| `buy` | Buy paper shares for the registered strategy. Requires `slug_or_id`, `outcome`, `amount_usd`, `account` or `strategy_id`. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
+| `sell` | Sell paper shares for the registered strategy. Requires `slug_or_id`, `outcome`, `shares`, `account` or `strategy_id`. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
+| `place_limit_order` | DO NOT USE. LIMIT ORDERS ARE FORBIDDEN. |
 | `list_orders` | (PAPER ONLY) List pending limit orders. |
 | `cancel_order` | (PAPER ONLY) Cancel a specific order by ID. |
 | `cancel_all_orders` | (PAPER ONLY) Cancel all pending orders. |
@@ -131,7 +131,7 @@ Every session follows four phases:
 
 1. **Bootstrap** — `get_strategy_context` → if `is_setup` is false, call `register_strategy` → `resolve_all` to settle any closed markets.
 2. **Research & Decide** — Use market data tools + any available public web search tool for news. Read prior `list_reports` / `read_report` for continuity. Identify edges.
-3. **Execute** — Place trades (`buy`/`sell`/`place_limit_order`) respecting all risk limits. Confirm with `portfolio`.
+3. **Execute** — Place trades (`buy`/`sell`) respecting all risk limits. **Use MARKET ORDERS ONLY.** Confirm with `portfolio`.
 4. **Report & Persist** — Call `save_report` with a markdown summary: trades made, rationale, current portfolio snapshot, and next-session plan.
 
 ## Critical Safety Rules

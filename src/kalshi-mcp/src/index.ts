@@ -9,6 +9,9 @@ import fs from "fs";
 function log(msg: string) {
   const timestamp = new Date().toISOString();
   console.error(`[${timestamp}] ${msg}`);
+  try {
+    fs.appendFileSync('/tmp/kalshi-mcp-debug.log', `[${timestamp}] ${msg}\n`);
+  } catch (e) {}
 }
 
 const STRATEGY_WHITELIST_RAW = process.env.STRATEGY_WHITELIST;

@@ -55,8 +55,8 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 | Tool | Purpose |
 | --- | --- |
-| `buy` | Buy contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and `amount` or `shares`; use explicit `price` for real trading. |
-| `sell` | Sell contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading; use explicit `price` for real trading. |
+| `buy` | Buy contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and `amount` or `shares`. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
+| `sell` | Sell contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
 | `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
 ### Portfolio & History
@@ -153,7 +153,7 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 ### Phase 3 — Execute
 
-1. **Place trades**: Use `buy` / `sell` with your `strategy_id` parameter. For real trading, include an explicit limit `price`.
+1. **Place trades**: Use `buy` / `sell` with your `strategy_id` parameter. **Use MARKET ORDERS ONLY.** You MUST NOT specify a limit price under any circumstances.
 2. **Verify**: After each trade, call `portfolio` or `get_balance` to confirm the server-side state matches expectations.
 
 ### Phase 4 — Report & Persist
