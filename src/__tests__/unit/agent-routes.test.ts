@@ -33,6 +33,7 @@ vi.mock('@/lib/polymarket', () => ({
 }));
 
 vi.mock('@/lib/kalshi', () => ({
+  getKalshiMarket: vi.fn(),
   getKalshiOutcomePrice: vi.fn(),
 }));
 
@@ -250,6 +251,7 @@ describe('agent route handlers', () => {
 
   it('persists an empty official snapshot when real strategy context refreshes after settlement', async () => {
     const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { getKalshiMarket } = await import('@/lib/kalshi');
     const { GET } = await import('@/app/api/agent/context/route');
 
     db.query.strategies.findFirst.mockResolvedValue({
@@ -273,6 +275,7 @@ describe('agent route handlers', () => {
       positions: [],
       orders: [{
         order_id: 'official-order-1',
+        ticker: 'KXBTC15M-TEST',
         status: 'resting',
         initial_count_fp: '490.19',
         fill_count_fp: '71.00',
@@ -281,6 +284,12 @@ describe('agent route handlers', () => {
       fills: [],
       activity: [],
       raw: {},
+    });
+    vi.mocked(getKalshiMarket).mockResolvedValue({
+      title: 'Bitcoin price up from 4:15 PM to 4:30 PM?',
+      status: 'open',
+      close_time: '2026-07-12T20:30:00.000Z',
+      result: '',
     });
 
     const response = await GET(makeRequest({
@@ -307,6 +316,10 @@ describe('agent route handlers', () => {
         initial_quantity: 490.19,
         filled_quantity: 71,
         remaining_quantity: 419.19,
+        ticker: 'KXBTC15M-TEST',
+        market_title: 'Bitcoin price up from 4:15 PM to 4:30 PM?',
+        market_status: 'open',
+        close_time: '2026-07-12T20:30:00.000Z',
       }],
     });
   });

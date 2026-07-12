@@ -12,6 +12,7 @@ import {
 } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { kalshiOrderQuantity, normalizeKalshiOrderStatus } from '@/lib/official-trading';
+import { enrichOpenOrdersWithMarkets } from '@/lib/agent-market-context';
 
 // ---------------------------------------------------------------------------
 // GET /api/agent/context?strategy_name=...
@@ -217,7 +218,35 @@ export async function GET(request: NextRequest) {
             };
           })
           .filter((order) => Number(order.remaining_quantity) > 0);
+      } else {
+        openOrders = realPortfolio.orders
+          .filter((order): order is Record<string, unknown> => Boolean(order && typeof order === 'object'))
+          .map((order) => {
+            const remainingQuantity = Number(order.leavesQuantity ?? order.remainingQuantity ?? 0);
+            const filledQuantity = Number(order.cumQuantity ?? order.filledQuantity ?? 0);
+            const initialQuantity = Number(order.quantity ?? (remainingQuantity + filledQuantity));
+            const price = order.price && typeof order.price === 'object'
+              ? (order.price as Record<string, unknown>).value
+              : order.price;
+            return {
+              platform,
+              order_id: String(order.id ?? order.orderId ?? ''),
+              client_order_id: order.clientOrderId ?? null,
+              market_slug: order.marketSlug ?? null,
+              status: order.state ?? order.status ?? null,
+              side: order.side ?? order.outcomeSide ?? null,
+              action: order.intent ?? order.action ?? null,
+              price: price ?? null,
+              initial_quantity: Number.isFinite(initialQuantity) ? initialQuantity : null,
+              filled_quantity: Number.isFinite(filledQuantity) ? filledQuantity : 0,
+              remaining_quantity: Number.isFinite(remainingQuantity) ? remainingQuantity : 0,
+              last_updated_at: order.updateTime ?? order.createTime ?? order.insertTime ?? null,
+            };
+          })
+          .filter((order) => Number(order.remaining_quantity) > 0);
       }
+
+      openOrders = await enrichOpenOrdersWithMarkets(strategy.platform, openOrders);
       
       portfolioState = {
         balance: realPortfolio.cash,
