@@ -713,7 +713,7 @@ export default function AgentsDashboardClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [platform, setPlatform] = useState<Platform>('all');
   const [agentMode, setAgentMode] = useState<AgentMode>('all');
-  const [strategyStatus, setStrategyStatus] = useState<StrategyLifecycleFilter>('active');
+  const [strategyStatus, setStrategyStatus] = useState<StrategyLifecycleFilter>('all');
   const [strategyId, setStrategyId] = useState('all');
 
   const query = useMemo(() => {

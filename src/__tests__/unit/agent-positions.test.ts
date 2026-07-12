@@ -6,9 +6,10 @@ import {
 } from '@/lib/agent-dashboard-filters';
 
 describe('agent dashboard filters', () => {
-  it('defaults to active and separates archived strategies', () => {
-    expect(parseStrategyLifecycleFilter(null)).toBe('active');
-    expect(parseStrategyLifecycleFilter('unexpected')).toBe('active');
+  it('defaults to all and separates archived strategies', () => {
+    expect(parseStrategyLifecycleFilter(null)).toBe('all');
+    expect(parseStrategyLifecycleFilter('unexpected')).toBe('all');
+    expect(parseStrategyLifecycleFilter('active')).toBe('active');
     expect(parseStrategyLifecycleFilter('archived')).toBe('archived');
     expect(parseStrategyLifecycleFilter('all')).toBe('all');
 
