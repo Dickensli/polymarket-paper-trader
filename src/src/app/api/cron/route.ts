@@ -3,6 +3,7 @@ import { runPriceRefresh } from '@/worker/jobs/price-refresh';
 import { runResolutionCheck } from '@/worker/jobs/resolution-handler';
 import { runLeaderboardCalculation } from '@/worker/jobs/leaderboard';
 import { runOrderCheck } from '@/worker/jobs/order-checker';
+import { runRealAccountSync } from '@/worker/jobs/real-account-sync';
 
 export const maxDuration = 60; // 60 seconds (Pro plan limit)
 
@@ -31,9 +32,13 @@ export async function GET(req: Request) {
     } else if (task === 'order-check') {
       const result = await runOrderCheck();
       return NextResponse.json({ success: true, result });
+    } else if (task === 'real-account-sync') {
+      const result = await runRealAccountSync();
+      return NextResponse.json({ success: result.errors.length === 0, result });
     } else if (task === 'daily') {
       const summary: Record<string, any> = {};
       summary.pricesUpdated = await runPriceRefresh();
+      summary.realAccounts = await runRealAccountSync();
       summary.orderCheck = await runOrderCheck();
       summary.positionsSettled = await runResolutionCheck();
       summary.usersRanked = await runLeaderboardCalculation();
@@ -57,14 +62,18 @@ export async function GET(req: Request) {
       
       // 1. Price Refresh (Every 5m trigger)
       summary.pricesUpdated = await runPriceRefresh();
+
+      // 2. Private account reconciliation for active real strategies. Calls
+      // each environment-bound platform account only once per cron run.
+      summary.realAccounts = await runRealAccountSync();
       
-      // 2. Limit Order Checker (Every 5m trigger)
+      // 3. Limit Order Checker (Every 5m trigger)
       summary.orderCheck = await runOrderCheck();
       
-      // 3. Resolution Check (Every 5m trigger)
+      // 4. Resolution Check (Every 5m trigger)
       summary.positionsSettled = await runResolutionCheck();
       
-      // 4. Leaderboard Calculation (Every trigger, since GitHub Actions cron is irregular)
+      // 5. Leaderboard Calculation (Every trigger, since GitHub Actions cron is irregular)
       summary.usersRanked = await runLeaderboardCalculation();
       
       return NextResponse.json({
