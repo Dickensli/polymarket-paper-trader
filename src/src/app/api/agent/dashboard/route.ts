@@ -7,6 +7,7 @@ import {
   matchesStrategyLifecycle,
   parseStrategyLifecycleFilter,
   snapshotIsStale,
+  selectCurrentPortfolioSnapshot,
 } from '@/lib/agent-dashboard-filters';
 import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 import {
@@ -205,9 +206,16 @@ export async function GET(request: NextRequest) {
     });
 
     const latestSnapshotByStrategy = new Map<string, typeof filteredSnapshots[number]>();
+    const snapshotsByStrategy = new Map<string, typeof filteredSnapshots>();
     for (const snapshot of filteredSnapshots) {
       if (!snapshot.strategyId || latestSnapshotByStrategy.has(snapshot.strategyId)) continue;
       latestSnapshotByStrategy.set(snapshot.strategyId, snapshot);
+    }
+    for (const snapshot of filteredSnapshots) {
+      if (!snapshot.strategyId) continue;
+      const rows = snapshotsByStrategy.get(snapshot.strategyId) ?? [];
+      rows.push(snapshot);
+      snapshotsByStrategy.set(snapshot.strategyId, rows);
     }
 
     const openOrderStatuses = new Set(['PENDING', 'SUBMITTING', 'SUBMITTED', 'OPEN', 'LIVE']);
@@ -220,7 +228,10 @@ export async function GET(request: NextRequest) {
     }
 
     const currentPortfolios = filteredStrategies.flatMap((strategy) => {
-      const latestSnapshot = latestSnapshotByStrategy.get(strategy.id);
+      const latestSnapshot = selectCurrentPortfolioSnapshot(
+        snapshotsByStrategy.get(strategy.id) ?? [],
+        strategy.agentMode,
+      );
       if (!latestSnapshot) return [];
       if (strategy.agentMode !== 'paper') {
         return [{

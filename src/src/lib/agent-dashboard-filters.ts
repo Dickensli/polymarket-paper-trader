@@ -50,3 +50,11 @@ export function snapshotIsStale(
   if (!Number.isFinite(capturedTime)) return true;
   return now.getTime() - capturedTime > maxAgeMinutes * 60_000;
 }
+
+export function selectCurrentPortfolioSnapshot<T extends { source: string }>(
+  snapshots: T[],
+  agentMode: string,
+): T | undefined {
+  if (agentMode === 'real') return snapshots.find((snapshot) => snapshot.source === 'official');
+  return snapshots[0];
+}

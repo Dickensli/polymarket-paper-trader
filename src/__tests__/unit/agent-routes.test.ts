@@ -464,11 +464,9 @@ describe('agent route handlers', () => {
     });
   });
 
-  it.skip('submits enabled real trades through the official client and writes official snapshot', async () => {
-    const {
-      getOfficialPortfolioSnapshot,
-      submitOfficialRealTrade,
-    } = await import('@/lib/official-trading');
+  it('submits enabled real trades without creating a local mirror position', async () => {
+    const { submitOfficialRealTrade } = await import('@/lib/official-trading');
+    const { executeTrade } = await import('@/lib/trading-engine');
     const { POST } = await import('@/app/api/agent/real-trades/route');
 
     db.query.strategies.findFirst.mockResolvedValue({
@@ -479,11 +477,8 @@ describe('agent route handlers', () => {
       status: 'active',
       metadata: { real_trading_enabled: true },
     });
-    db.insertResults.push(
-      { id: 'audit-1', status: 'SUBMITTING' },
-      { id: 'snapshot-1', source: 'official' },
-    );
-    db.updateResults.push({ id: 'audit-1', status: 'SUBMITTED' });
+    db.insertResults.push({ id: 'audit-1', status: 'SUBMITTING' });
+    db.updateResults.push({ id: 'audit-1', status: 'SUBMITTED', request: {}, officialResponse: {} });
     vi.mocked(submitOfficialRealTrade).mockResolvedValue({
       officialOrderId: 'official-1',
       clientOrderId: 'client-1',
@@ -491,18 +486,6 @@ describe('agent route handlers', () => {
       request: { ticker: 'KXTEST' },
       response: { order_id: 'official-1' },
     });
-    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
-      cash: 1000,
-      positionsValue: 25,
-      totalValue: 1025,
-      pnl: 25,
-      positions: [],
-      orders: [],
-      fills: [],
-      activity: [],
-      raw: {},
-    });
-
     const response = await POST(makeRequest({
       body: {
         strategy_id: 'real-arb',
@@ -521,10 +504,18 @@ describe('agent route handlers', () => {
       shares: 10,
       price: 0.25,
     }));
-    expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi');
+    expect(executeTrade).not.toHaveBeenCalled();
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ outcome: 'YES', side: 'BUY', price: 0.25 }),
+      officialResponse: expect.objectContaining({
+        order_id: 'official-1',
+        submitted_request: { ticker: 'KXTEST' },
+      }),
+    }));
     await expect(response.json()).resolves.toMatchObject({
       data: { status: 'SUBMITTED' },
-      official_snapshot: { source: 'official' },
+      portfolio_sync: 'pending_next_context_refresh',
     });
   });
 
