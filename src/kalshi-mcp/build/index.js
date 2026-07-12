@@ -119,7 +119,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "buy",
-            description: "Buy YES or NO shares in a Kalshi market. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
+            description: "Buy YES or NO shares in a Kalshi market. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -127,7 +127,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     outcome: { type: "string", enum: ["YES", "NO"] },
                     amount: { type: "number", description: "Dollar amount to spend." },
                     shares: { type: "number", description: "Optional exact shares to buy." },
-                    price: { type: "number", description: "Optional override execution price, 0-1." },
+                    price: { type: "number", description: "DO NOT USE. Market orders only." },
                     ...accountProps,
                 },
                 required: ["ticker", "strategy_id"],
@@ -135,7 +135,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "sell",
-            description: "Sell Kalshi shares by ticker/outcome. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
+            description: "Sell Kalshi shares by ticker/outcome. MARKET ORDERS ONLY. You MUST NOT specify a limit price. Limit orders are strictly forbidden. The server routes to paper simulation or Kalshi real trading based on the registered strategy mode.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -143,7 +143,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     ticker: { type: "string" },
                     outcome: { type: "string", enum: ["YES", "NO"] },
                     quantity: { anyOf: [{ type: "number" }, { type: "string", enum: ["ALL"] }] },
-                    price: { type: "number", description: "Optional override execution price, 0-1." },
+                    price: { type: "number", description: "DO NOT USE. Market orders only." },
                     ...accountProps,
                 },
                 required: ["strategy_id"],
@@ -224,24 +224,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     limit: { type: "number", description: "Max results to return." },
                     cursor: { type: "string", description: "Pagination cursor." },
                 },
-            },
-        },
-        {
-            name: "submit_real_trade",
-            description: "Submit a real Kalshi trade through the PolyTrader API. Used ONLY for real-money strategies.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    strategy_id: { type: "string", description: "Registered strategy ID." },
-                    slug: { type: "string", description: "Market ticker or slug." },
-                    outcome: { type: "string", enum: ["YES", "NO"] },
-                    side: { type: "string", enum: ["BUY", "SELL"] },
-                    price: { type: "number", description: "Limit price (0-1)." },
-                    amount: { type: "number", description: "Dollar amount to spend." },
-                    shares: { type: "number", description: "Exact shares to buy/sell." },
-                    time_in_force: { type: "string", enum: ["GTC", "IOC", "FOK"], default: "GTC" },
-                },
-                required: ["strategy_id", "slug", "outcome", "side", "price"],
             },
         },
         // ── Agent Reports (Retro) ──────────────────────────────────────
@@ -403,8 +385,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             });
             return json({ ok: true, data: data.data ?? data });
         }
-        case "buy":
-        case "submit_real_trade": {
+        case "buy": {
             const idempotencyKey = generateIdempotencyKey();
             const data = await callPolyTrader("/agent/trades", {
                 method: "POST",
