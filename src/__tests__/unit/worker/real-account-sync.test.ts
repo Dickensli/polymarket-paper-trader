@@ -42,6 +42,7 @@ describe('real account sync job', () => {
           ? syncInsertValues
         : ledgerInsertValues,
     })),
+    execute: vi.fn(async () => undefined),
     update: vi.fn(() => ({ set: updateSet })),
   };
 
@@ -85,9 +86,7 @@ describe('real account sync job', () => {
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi', expect.any(Object));
     expect(insertValues).toHaveBeenCalledTimes(2);
     expect(ledgerOnConflictDoUpdate).toHaveBeenCalledTimes(2);
-    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
-      realTradeOrderId: 'audit-1', strategyId: 'strategy-1', userId: 'user-1',
-    }));
+    expect(db.execute).toHaveBeenCalledTimes(2);
     expect(onConflictDoUpdate).toHaveBeenCalledTimes(3);
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
       status: 'PARTIALLY_FILLED',

@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   officialOrderEvents,
@@ -93,26 +93,26 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           .filter((audit) => audit.officialOrderId)
           .map((audit) => [audit.officialOrderId!, audit]));
 
-        // A venue fill can arrive before the local submit route has committed
-        // its audit row. Repair those initially-unattributed immutable facts
-        // whenever the official order id later becomes known locally.
-        for (const audit of auditByOrderId.values()) {
-          await db.update(officialTradeFills).set({
-            realTradeOrderId: audit.id,
-            strategyId: audit.strategyId,
-            userId: audit.userId,
-          }).where(and(
-            eq(officialTradeFills.officialOrderId, audit.officialOrderId!),
-            isNull(officialTradeFills.strategyId),
-          ));
-          await db.update(officialOrderEvents).set({
-            realTradeOrderId: audit.id,
-            strategyId: audit.strategyId,
-            userId: audit.userId,
-          }).where(and(
-            eq(officialOrderEvents.officialOrderId, audit.officialOrderId!),
-            isNull(officialOrderEvents.strategyId),
-          ));
+        // A fill can arrive before the submit route commits its audit row.
+        // Repair all missing attribution in two set-based statements instead
+        // of two remote database round trips per historical order.
+        if (auditByOrderId.size > 0) {
+          await db.execute(sql`
+            update official_trade_fills as fact
+            set real_trade_order_id = audit.id, strategy_id = audit.strategy_id, user_id = audit.user_id
+            from real_trade_orders as audit
+            where fact.platform = 'kalshi'
+              and fact.official_order_id = audit.official_order_id
+              and fact.strategy_id is null
+          `);
+          await db.execute(sql`
+            update official_order_events as fact
+            set real_trade_order_id = audit.id, strategy_id = audit.strategy_id, user_id = audit.user_id
+            from real_trade_orders as audit
+            where fact.platform = 'kalshi'
+              and fact.official_order_id = audit.official_order_id
+              and fact.strategy_id is null
+          `);
         }
 
         for (const row of snapshot.orders) {
