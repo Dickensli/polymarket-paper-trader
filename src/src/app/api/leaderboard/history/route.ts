@@ -5,6 +5,7 @@ import { eq, and, asc, inArray } from 'drizzle-orm';
 
 import { auth } from '@/lib/auth';
 import { getUserPlatform, normalizePlatform, type TradingPlatform } from '@/lib/platform';
+import { parseLeaderboardStrategyStatus } from '@/lib/leaderboard-filters';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -55,27 +56,14 @@ async function buildHistoryFromTrades(
   db: ReturnType<typeof getDb>,
   granularity: Granularity,
   platform: TradingPlatform,
-  targetUserIds?: string[],
-  isRealTab?: boolean
+  targetUserIds?: string[]
 ) {
   // Fetch all relevant users
   const allUsers = await db.query.users.findMany();
-  let filteredUsers = allUsers.filter(u => (
+  const filteredUsers = allUsers.filter(u => (
     getUserPlatform(u.settings) === platform &&
     (!targetUserIds || targetUserIds.includes(u.id))
   ));
-
-  if (platform === 'kalshi' || platform === 'polymarket_us') {
-    const realStrats = await db.query.strategies.findMany({
-      where: and(eq(strategies.platform, platform), eq(strategies.agentMode, 'real'))
-    });
-    const realUserIds = new Set(realStrats.map((s: any) => s.userId));
-    if (isRealTab) {
-      filteredUsers = filteredUsers.filter(u => realUserIds.has(u.id));
-    } else {
-      filteredUsers = filteredUsers.filter(u => !realUserIds.has(u.id));
-    }
-  }
 
   if (filteredUsers.length === 0) {
     return { strategies: [], history: [] };
@@ -240,10 +228,22 @@ export async function GET(request: NextRequest) {
     const requestedPlatform = searchParams.get('platform') || 'polymarket';
     const isRealTab = requestedPlatform.endsWith('_real');
     const platform = normalizePlatform(requestedPlatform.replace('_real', ''));
+    const strategyStatus = parseLeaderboardStrategyStatus(searchParams.get('strategy_status'));
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '8', 10) || 8));
 
     const db = getDb();
+    const eligibleStrategyRows = await db
+      .select({ userId: strategies.userId })
+      .from(strategies)
+      .where(and(
+        eq(strategies.platform, platform),
+        eq(strategies.agentMode, isRealTab ? 'real' : 'paper'),
+        strategyStatus === 'all' ? undefined : eq(strategies.status, strategyStatus),
+      ));
+    const eligibleUserIds = Array.from(new Set(eligibleStrategyRows.map((strategy) => strategy.userId)))
+      .filter((eligibleUserId) => isAdmin || eligibleUserId === userId);
+    const eligibleUserIdSet = new Set(eligibleUserIds);
 
     // 1. Check for pre-computed snapshots (HOURLY or DAILY)
     const targetPeriod = granularity === 'hourly' ? 'HOURLY' : 'DAILY';
@@ -279,19 +279,8 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 2. Filter real vs paper
-    if (platform === 'kalshi' || platform === 'polymarket_us') {
-      const realStrats = await db.query.strategies.findMany({
-        where: and(eq(strategies.platform, platform), eq(strategies.agentMode, 'real'))
-      });
-      const realUserIds = new Set(realStrats.map(s => s.userId));
-      
-      if (isRealTab) {
-        snaps = snaps.filter(s => realUserIds.has(s.userId));
-      } else {
-        snaps = snaps.filter(s => !realUserIds.has(s.userId));
-      }
-    }
+    // 2. Apply the requested current strategy lifecycle and execution mode.
+    snaps = snaps.filter((snapshot) => eligibleUserIdSet.has(snapshot.userId));
 
     // 3. If snapshots are found, map them to the timeseries layout and return immediately
     if (snaps.length > 0) {
@@ -337,6 +326,7 @@ export async function GET(request: NextRequest) {
         granularity,
         meta: {
           platform,
+          strategyStatus,
           granularity,
           page: paged.page,
           pageSize,
@@ -347,8 +337,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Fallback: No snapshots found — compute from real trade records
-    const targetUserIds = isAdmin ? undefined : [userId];
-    const { strategies: resultStrategies, history } = await buildHistoryFromTrades(db, granularity, platform, targetUserIds, isRealTab);
+    const { strategies: resultStrategies, history } = await buildHistoryFromTrades(db, granularity, platform, eligibleUserIds);
     const paged = pageHistoryStrategies(resultStrategies, history, page, pageSize);
 
     // Fetch user colors for stable chart coloring
@@ -371,6 +360,7 @@ export async function GET(request: NextRequest) {
       granularity,
       meta: {
         platform,
+        strategyStatus,
         granularity,
         page: paged.page,
         pageSize,

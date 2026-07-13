@@ -791,7 +791,7 @@ describe('agent route handlers', () => {
           side: 'BUY',
           quantity: '10.000000',
           price: '0.250000',
-          status: 'SUBMITTED',
+          status: 'RESTING',
           request: {},
           officialResponse: {},
           error: {},
@@ -839,7 +839,7 @@ describe('agent route handlers', () => {
         },
       ],
       reports: [{ filename: 'run.md', strategy_name: 'real-arb', agent_name: 'Agent One' }],
-      real_orders: [{ id: 'order-1', status: 'SUBMITTED' }],
+      real_orders: [{ id: 'order-1', status: 'RESTING' }],
       reconciliation_logs: [{ id: 'log-1', severity: 'warning' }],
     });
   });

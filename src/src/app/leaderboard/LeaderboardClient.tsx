@@ -14,17 +14,19 @@ type LeaderboardUser = {
 };
 
 type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
+type StrategyStatus = 'active' | 'paused' | 'disabled' | 'all';
 
 export default function LeaderboardClient() {
   const [data, setData] = useState<LeaderboardUser[]>([]);
   const [platform, setPlatform] = useState<Platform>('polymarket');
+  const [strategyStatus, setStrategyStatus] = useState<StrategyStatus>('active');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/leaderboard?platform=${platform}&page=${page}&pageSize=25`)
+    fetch(`/api/leaderboard?platform=${platform}&strategy_status=${strategyStatus}&page=${page}&pageSize=25`)
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch leaderboard');
         return res.json();
@@ -41,17 +43,32 @@ export default function LeaderboardClient() {
       .finally(() => {
         setLoading(false);
       });
-  }, [platform, page]);
+  }, [platform, strategyStatus, page]);
 
   const selectPlatform = (nextPlatform: Platform) => {
+    setLoading(true);
+    setError(null);
     setPlatform(nextPlatform);
     setPage(1);
+  };
+
+  const selectStrategyStatus = (nextStatus: StrategyStatus) => {
+    setLoading(true);
+    setError(null);
+    setStrategyStatus(nextStatus);
+    setPage(1);
+  };
+
+  const selectPage = (nextPage: number) => {
+    setLoading(true);
+    setError(null);
+    setPage(nextPage);
   };
 
   if (loading) {
     return (
       <div className="space-y-4">
-        <PlatformTabs platform={platform} onSelect={selectPlatform} />
+        <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
         <div className="flex justify-center py-12">
           <LoadingSpinner size="md" />
         </div>
@@ -70,9 +87,9 @@ export default function LeaderboardClient() {
   if (data.length === 0) {
     return (
       <div className="space-y-4">
-        <PlatformTabs platform={platform} onSelect={selectPlatform} />
+        <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
         <div className="p-12 text-center text-foreground-muted bg-surface rounded-xl border border-border/50">
-          No active {platform === 'kalshi' ? 'Kalshi' : platform === 'kalshi_real' ? 'Kalshi Real' : platform === 'polymarket_us' ? 'Polymarket US' : platform === 'polymarket_us_real' ? 'Poly US Real' : 'Polymarket'} traders yet.
+          No {strategyStatus === 'all' ? '' : `${strategyStatus} `}{platform === 'kalshi' ? 'Kalshi' : platform === 'kalshi_real' ? 'Kalshi Real' : platform === 'polymarket_us' ? 'Polymarket US' : platform === 'polymarket_us_real' ? 'Poly US Real' : 'Polymarket'} traders yet.
         </div>
       </div>
     );
@@ -80,7 +97,7 @@ export default function LeaderboardClient() {
 
   return (
     <div className="space-y-4">
-      <PlatformTabs platform={platform} onSelect={selectPlatform} />
+      <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
       <div className="bg-surface rounded-xl border border-border/50 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
@@ -136,7 +153,39 @@ export default function LeaderboardClient() {
           </table>
         </div>
       </div>
-      <Pagination page={page} totalPages={totalPages} onPage={setPage} />
+      <Pagination page={page} totalPages={totalPages} onPage={selectPage} />
+    </div>
+  );
+}
+
+function LeaderboardFilters({
+  platform,
+  strategyStatus,
+  onSelectPlatform,
+  onSelectStatus,
+}: {
+  platform: Platform;
+  strategyStatus: StrategyStatus;
+  onSelectPlatform: (platform: Platform) => void;
+  onSelectStatus: (status: StrategyStatus) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <PlatformTabs platform={platform} onSelect={onSelectPlatform} />
+      <label className="block">
+        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Strategy status</span>
+        <select
+          aria-label="Strategy status"
+          value={strategyStatus}
+          onChange={(event) => onSelectStatus(event.target.value as StrategyStatus)}
+          className="rounded-lg border border-border/50 bg-background-secondary px-3 py-2 text-xs font-semibold text-foreground outline-none focus:border-primary/50"
+        >
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="disabled">Disabled</option>
+          <option value="all">All statuses</option>
+        </select>
+      </label>
     </div>
   );
 }

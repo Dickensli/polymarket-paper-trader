@@ -10,6 +10,7 @@ import {
   matchesStrategyLifecycle,
   type StrategyLifecycleFilter,
 } from '@/lib/agent-dashboard-filters';
+import { isOpenRealOrderStatus } from '@/lib/real-orders';
 
 type Platform = 'all' | 'polymarket' | 'kalshi' | 'polymarket_us';
 type AgentMode = 'all' | 'paper' | 'real';
@@ -214,7 +215,7 @@ function statusClass(status: string) {
   if (normalized === 'active' || normalized === 'submitted' || normalized === 'open' || normalized === 'filled' || normalized === 'executed') {
     return 'bg-profit/10 text-profit-light border-profit/25';
   }
-  if (normalized === 'paused' || normalized === 'warning' || normalized === 'pending' || normalized === 'cancelled' || normalized === 'canceled' || normalized.includes('partially_filled')) {
+  if (normalized === 'paused' || normalized === 'warning' || normalized === 'pending' || normalized === 'resting' || normalized === 'cancelled' || normalized === 'canceled' || normalized.includes('partially_filled')) {
     return 'bg-primary/10 text-primary-light border-primary/25';
   }
   if (normalized === 'disabled' || normalized === 'critical' || normalized.includes('error') || normalized === 'rejected') {
@@ -642,6 +643,7 @@ function OrderEntry({ order }: { order: RealOrder }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-white/[0.02]"
       >
         <ChevronIcon open={open} />
@@ -768,6 +770,31 @@ function OrderEntry({ order }: { order: RealOrder }) {
   );
 }
 
+function OpenOrdersPanel({ orders }: { orders: RealOrder[] }) {
+  return (
+    <section aria-labelledby="open-orders-heading">
+      <div className="mb-3 flex items-end justify-between gap-4">
+        <div>
+          <h2 id="open-orders-heading" className="text-lg font-semibold text-foreground">Open Orders</h2>
+          <p className="mt-1 text-xs text-foreground-muted">
+            Resting and partially filled orders are waiting for execution and are not positions yet.
+          </p>
+        </div>
+        <span className="shrink-0 text-xs text-foreground-muted">{orders.length} open</span>
+      </div>
+      {orders.length === 0 ? (
+        <EmptyRow label="No open real orders match these filters." />
+      ) : (
+        <div className="space-y-3">
+          {orders.slice(0, 12).map((order) => (
+            <OrderEntry key={order.id} order={order} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 
 export default function AgentsDashboardClient() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -829,6 +856,10 @@ export default function AgentsDashboardClient() {
       ? []
       : (data?.current_portfolios ?? []).filter((snapshot) => snapshot.strategy_id && activeStrategyIds.has(snapshot.strategy_id)),
   ), [activeStrategyIds, data?.current_portfolios, strategyStatus]);
+  const openRealOrders = useMemo(
+    () => (data?.real_orders ?? []).filter((order) => isOpenRealOrderStatus(order.status)),
+    [data?.real_orders],
+  );
 
   return (
     <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto w-full">
@@ -928,6 +959,8 @@ export default function AgentsDashboardClient() {
           <AgentPositionsPanel
             summaries={positionSummaries}
           />
+
+          <OpenOrdersPanel orders={openRealOrders} />
 
           <SyncHealthPanel rows={data.sync_health ?? []} />
 
