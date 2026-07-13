@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { runPriceRefresh } from '@/worker/jobs/price-refresh';
 import { runResolutionCheck } from '@/worker/jobs/resolution-handler';
 import { runLeaderboardCalculation } from '@/worker/jobs/leaderboard';
+import { runStrategyPerformanceCalculation } from '@/worker/jobs/strategy-performance';
 import { runOrderCheck } from '@/worker/jobs/order-checker';
 import { runRealAccountSync } from '@/worker/jobs/real-account-sync';
 
@@ -27,8 +28,11 @@ export async function GET(req: Request) {
       const count = await runResolutionCheck();
       return NextResponse.json({ success: true, message: `Resolution check complete: ${count} positions settled` });
     } else if (task === 'leaderboard') {
-      const count = await runLeaderboardCalculation();
-      return NextResponse.json({ success: true, message: `Leaderboard calculation complete: ${count} users ranked` });
+      const [count, strategyCount] = await Promise.all([
+        runLeaderboardCalculation(),
+        runStrategyPerformanceCalculation(),
+      ]);
+      return NextResponse.json({ success: true, message: `Leaderboard calculation complete: ${count} users ranked, ${strategyCount} strategies checkpointed` });
     } else if (task === 'order-check') {
       const result = await runOrderCheck();
       return NextResponse.json({ success: true, result });
@@ -42,6 +46,7 @@ export async function GET(req: Request) {
       summary.orderCheck = await runOrderCheck();
       summary.positionsSettled = await runResolutionCheck();
       summary.usersRanked = await runLeaderboardCalculation();
+      summary.strategiesCheckpointed = await runStrategyPerformanceCalculation();
 
       // Run daily active markets sync
       try {
@@ -75,6 +80,7 @@ export async function GET(req: Request) {
       
       // 5. Leaderboard Calculation (Every trigger, since GitHub Actions cron is irregular)
       summary.usersRanked = await runLeaderboardCalculation();
+      summary.strategiesCheckpointed = await runStrategyPerformanceCalculation();
       
       return NextResponse.json({
         success: true,

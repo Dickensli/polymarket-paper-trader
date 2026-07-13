@@ -1,8 +1,9 @@
 import cron from 'node-cron';
 import { getDb } from '@/lib/db';
 import { portfolios, positions, users, leaderboardSnapshots, strategies } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, lt } from 'drizzle-orm';
 import { getUserPlatform } from '@/lib/platform';
+import { runStrategyPerformanceCalculation } from '@/worker/jobs/strategy-performance';
 
 /**
  * Calculates portfolio values and creates snapshots for the leaderboard.
@@ -164,16 +165,12 @@ export async function runLeaderboardCalculation() {
         });
       }
 
-      // 4. Maintain legacy HISTORY snapshots (runs every 15m) for backwards compatibility if needed
-      await tx.insert(leaderboardSnapshots).values(
-        snapshots.map(s => ({
-          ...s,
-          period: 'HISTORY',
-          totalPnl: s.totalPnl.toFixed(6),
-          returnPct: s.returnPct.toFixed(4),
-          portfolioValue: s.portfolioValue.toFixed(6)
-        }))
-      );
+      // Legacy 15-minute HISTORY rows are no longer written. Compact strategy
+      // checkpoints provide the chart history without unbounded event-like growth.
+      await tx.delete(leaderboardSnapshots).where(and(
+        eq(leaderboardSnapshots.period, 'HISTORY'),
+        lt(leaderboardSnapshots.snapshotDate, new Date(now.getTime() - 30 * 86400000)),
+      ));
     });
   }
 
@@ -184,11 +181,13 @@ export function startLeaderboardJob() {
   // Run every 15 minutes
   cron.schedule('*/15 * * * *', async () => {
     try {
-      const count = await runLeaderboardCalculation();
-      console.log(`[Worker] Leaderboard calculation complete: ${count} users ranked`);
+      const [count, strategyCount] = await Promise.all([
+        runLeaderboardCalculation(),
+        runStrategyPerformanceCalculation(),
+      ]);
+      console.log(`[Worker] Leaderboard calculation complete: ${count} users ranked, ${strategyCount} strategies checkpointed`);
     } catch (err) {
       console.error('[Worker] Leaderboard calculation failed:', err);
     }
   });
 }
-
