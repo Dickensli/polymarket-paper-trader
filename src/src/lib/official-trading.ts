@@ -272,6 +272,11 @@ async function getKalshiCollection(path: string, key: string): Promise<Record<st
   return { [key]: rows };
 }
 
+export async function getOfficialKalshiHistoricalFills(): Promise<Record<string, unknown>[]> {
+  const response = await getKalshiCollection('/historical/fills', 'fills');
+  return response.fills as Record<string, unknown>[];
+}
+
 async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialTradeResult> {
   const { request, clientOrderId } = buildKalshiOrderRequest(intent);
 

@@ -17,8 +17,9 @@ function timestamp(value: unknown, field: string): Date {
 }
 
 export function normalizeKalshiFill(row: Record<string, unknown>) {
-  const outcome = String(row.outcome_side ?? row.side ?? 'yes').toUpperCase() === 'NO' ? 'NO' : 'YES';
-  const price = outcome === 'YES'
+  const rawOutcome = row.outcome_side ?? row.side;
+  const outcome = rawOutcome == null ? null : String(rawOutcome).toUpperCase() === 'NO' ? 'NO' : 'YES';
+  const price = outcome !== 'NO'
     ? number(row.yes_price_dollars ?? row.yes_price) / (row.yes_price_dollars == null ? 100 : 1)
     : number(row.no_price_dollars ?? row.no_price) / (row.no_price_dollars == null ? 100 : 1);
   return {
@@ -27,8 +28,8 @@ export function normalizeKalshiFill(row: Record<string, unknown>) {
     officialTradeId: typeof row.trade_id === 'string' ? row.trade_id : null,
     officialOrderId: typeof row.order_id === 'string' ? row.order_id : null,
     marketId: requiredText(row.ticker ?? row.market_ticker, 'ticker'),
-    outcome: outcome as 'YES' | 'NO',
-    side: String(row.action ?? 'buy').toUpperCase() === 'SELL' ? 'SELL' as const : 'BUY' as const,
+    outcome: outcome as 'YES' | 'NO' | null,
+    side: row.action == null ? null : String(row.action).toUpperCase() === 'SELL' ? 'SELL' as const : 'BUY' as const,
     quantity: number(row.count_fp ?? row.count),
     price,
     fee: number(row.fee_cost_dollars ?? row.fee_cost),

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/db', () => ({ getDb: vi.fn() }));
 vi.mock('@/lib/official-trading', () => ({
   getOfficialPortfolioSnapshot: vi.fn(),
+  getOfficialKalshiHistoricalFills: vi.fn().mockResolvedValue([]),
   kalshiOrderQuantity: vi.fn(() => 10),
   normalizeKalshiOrderStatus: vi.fn(() => 'PARTIALLY_FILLED'),
 }));
@@ -27,6 +28,9 @@ describe('real account sync job', () => {
       realTradeOrders: {
         findMany: vi.fn(),
       },
+      officialSyncState: {
+        findFirst: vi.fn(),
+      },
     },
     insert: vi.fn((table: unknown) => ({
       values: table && typeof table === 'object' && 'cash' in table
@@ -42,6 +46,7 @@ describe('real account sync job', () => {
     vi.clearAllMocks();
     vi.mocked(getDb).mockReturnValue(db as never);
     db.query.realTradeOrders.findMany.mockResolvedValue([]);
+    db.query.officialSyncState.findFirst.mockResolvedValue({ lastSuccessAt: new Date() });
   });
 
   it('fetches one private snapshot for two strategies sharing a Kalshi key', async () => {

@@ -10,6 +10,7 @@ import {
   selectCurrentPortfolioSnapshot,
 } from '@/lib/agent-dashboard-filters';
 import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
+import { buildOfficialOrderHistory } from '@/lib/agent-order-history';
 import {
   enrichPositionRowsWithMarkets,
   enrichSettledRowsWithMarkets,
@@ -18,6 +19,8 @@ import {
   agentReports,
   portfolioSnapshots,
   paperTradeOrders,
+  officialOrderEvents,
+  officialTradeFills,
   positions,
   realTradeOrders,
   strategies,
@@ -127,6 +130,8 @@ export async function GET(request: NextRequest) {
       openPositions,
       closedPositions,
       paperOrders,
+      officialFills,
+      officialEvents,
     ] = await Promise.all([
       canViewAllAgents
         ? db.select().from(users).limit(1000)
@@ -147,7 +152,15 @@ export async function GET(request: NextRequest) {
       canViewAllAgents
         ? db.select().from(paperTradeOrders).orderBy(desc(paperTradeOrders.createdAt)).limit(5000)
         : db.select().from(paperTradeOrders).where(eq(paperTradeOrders.userId, session.user.id)).orderBy(desc(paperTradeOrders.createdAt)).limit(2000),
+      canViewAllAgents
+        ? db.select().from(officialTradeFills).orderBy(desc(officialTradeFills.filledAt)).limit(5000)
+        : db.select().from(officialTradeFills).where(eq(officialTradeFills.userId, session.user.id)).orderBy(desc(officialTradeFills.filledAt)).limit(2000),
+      canViewAllAgents
+        ? db.select().from(officialOrderEvents).orderBy(desc(officialOrderEvents.occurredAt)).limit(5000)
+        : db.select().from(officialOrderEvents).where(eq(officialOrderEvents.userId, session.user.id)).orderBy(desc(officialOrderEvents.occurredAt)).limit(2000),
     ]);
+
+    const officialOrderHistory = buildOfficialOrderHistory(officialFills, officialEvents);
 
     const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
     const missingStrategyIds = new Set<string>();
@@ -416,6 +429,7 @@ export async function GET(request: NextRequest) {
         error: order.error,
         created_at: order.createdAt,
         updated_at: order.updatedAt,
+        ...(order.officialOrderId ? officialOrderHistory.get(order.officialOrderId) : null),
       })),
       filter_options: {
         strategies: allStrategies.map(strategyPayload),

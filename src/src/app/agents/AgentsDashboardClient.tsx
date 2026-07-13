@@ -105,6 +105,15 @@ type RealOrder = {
   run_id?: string | null;
   created_at: string;
   updated_at?: string | null;
+  requested_quantity?: number;
+  filled_quantity?: number;
+  remaining_quantity?: number;
+  average_fill_price?: number;
+  fees?: number;
+  fill_count?: number;
+  first_fill_at?: string | null;
+  last_fill_at?: string | null;
+  venue_updated_at?: string | null;
 };
 
 type SettledPosition = {
@@ -635,6 +644,8 @@ function OrderEntry({ order }: { order: RealOrder }) {
             <span className="truncate max-w-[260px]">{order.market_slug_or_ticker ?? order.official_order_id ?? order.client_order_id ?? order.id}</span>
             <span>Qty: {order.quantity || '--'}</span>
             <span>Price: {formatOrderPrice(order)}</span>
+            {order.filled_quantity != null && <span>Filled: {order.filled_quantity}/{order.requested_quantity ?? order.quantity}</span>}
+            {order.remaining_quantity != null && <span>Remaining: {order.remaining_quantity}</span>}
             <span>{formatDate(order.created_at)}</span>
           </div>
         </div>
@@ -678,6 +689,18 @@ function OrderEntry({ order }: { order: RealOrder }) {
                 <div>
                   <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Updated At</div>
                   <div className="text-sm text-foreground-muted">{formatDate(order.updated_at)}</div>
+                </div>
+              )}
+              {order.average_fill_price != null && order.filled_quantity != null && order.filled_quantity > 0 && (
+                <div>
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Execution Summary</div>
+                  <div className="text-sm text-foreground">
+                    {order.fill_count ?? 0} fill{order.fill_count === 1 ? '' : 's'} · VWAP {(order.average_fill_price * 100).toFixed(2)}c · Fees {formatMoney(order.fees ?? 0)}
+                  </div>
+                  <div className="mt-1 text-xs text-foreground-muted">
+                    {order.first_fill_at ? `First ${formatDate(order.first_fill_at)}` : ''}
+                    {order.last_fill_at ? ` · Last ${formatDate(order.last_fill_at)}` : ''}
+                  </div>
                 </div>
               )}
             </div>

@@ -11,6 +11,7 @@ import {
 } from '@/lib/db/schema';
 import {
   getOfficialPortfolioSnapshot,
+  getOfficialKalshiHistoricalFills,
   kalshiOrderQuantity,
   normalizeKalshiOrderStatus,
 } from '@/lib/official-trading';
@@ -56,6 +57,15 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
       result.accounts_synced += 1;
 
       if (platform === 'kalshi') {
+        const historicalState = await db.query.officialSyncState.findFirst({
+          where: and(
+            eq(officialSyncState.platform, 'kalshi'),
+            eq(officialSyncState.resource, 'historical_fills'),
+          ),
+        });
+        const historicalFills = historicalState?.lastSuccessAt
+          ? []
+          : await getOfficialKalshiHistoricalFills();
         const audits = await db.query.realTradeOrders.findMany();
         const auditByOrderId = new Map(audits
           .filter((audit) => audit.officialOrderId)
@@ -76,7 +86,7 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           }).onConflictDoNothing();
         }
 
-        for (const row of snapshot.fills) {
+        for (const row of [...historicalFills, ...snapshot.fills]) {
           if (!row || typeof row !== 'object') continue;
           const fill = normalizeKalshiFill(row as Record<string, unknown>);
           const audit = fill.officialOrderId ? auditByOrderId.get(fill.officialOrderId) : undefined;
@@ -113,6 +123,15 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             lastSuccessAt: new Date(),
             lastError: null,
             updatedAt: new Date(),
+          }).onConflictDoUpdate({
+            target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource],
+            set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },
+          });
+        }
+        if (!historicalState?.lastSuccessAt) {
+          await db.insert(officialSyncState).values({
+            platform, accountScope: 'default', resource: 'historical_fills',
+            lastSuccessAt: new Date(), lastError: null, updatedAt: new Date(),
           }).onConflictDoUpdate({
             target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource],
             set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },

@@ -18,6 +18,11 @@ describe('official trading ledger normalization', () => {
     });
   });
 
+  it('does not invent outcome or action for historical fills that omit them', () => {
+    expect(normalizeKalshiFill({ fill_id: 'old', ticker: 'KXOLD', count_fp: '1', yes_price_dollars: '0.5', created_time: '2026-01-01T00:00:00Z' }))
+      .toMatchObject({ outcome: null, side: null, price: 0.5 });
+  });
+
   it('creates a stable order event key from lifecycle quantities and venue time', () => {
     expect(normalizeKalshiOrderEvent({
       order_id: 'order-1', status: 'resting', initial_count_fp: '10', fill_count_fp: '4',
