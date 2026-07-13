@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   officialOrderEvents,
@@ -249,20 +249,23 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
         persistedFills,
         platformStrategies.map((strategy) => ({ id: strategy.id, userId: strategy.userId, name: strategy.strategyId, platform: strategy.platform })),
       );
-      for (const allocation of allocations) {
+      const allocationRows = allocations.map((allocation) => {
         const settlementId = allocation.id.split(':')[0];
-        await db.insert(officialSettlementAllocations).values({
+        return {
           settlementId, strategyId: allocation.strategy_id, userId: allocation.agent_id,
           outcome: allocation.outcome as 'YES' | 'NO', quantity: allocation.shares.toFixed(6),
           costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
           settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
           allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
-        }).onConflictDoUpdate({
+        } as typeof officialSettlementAllocations.$inferInsert;
+      });
+      for (let index = 0; index < allocationRows.length; index += 500) {
+        await db.insert(officialSettlementAllocations).values(allocationRows.slice(index, index + 500)).onConflictDoUpdate({
           target: [officialSettlementAllocations.settlementId, officialSettlementAllocations.strategyId, officialSettlementAllocations.outcome],
           set: {
-            quantity: allocation.shares.toFixed(6), costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
-            settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
-            allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
+            quantity: sql`excluded.quantity`, costBasis: sql`excluded.cost_basis`, proceeds: sql`excluded.proceeds`,
+            settlementFee: sql`excluded.settlement_fee`, realizedPnl: sql`excluded.realized_pnl`,
+            allocationMethod: sql`excluded.allocation_method`, allocationVersion: sql`excluded.allocation_version`, updatedAt: new Date(),
           },
         });
       }
