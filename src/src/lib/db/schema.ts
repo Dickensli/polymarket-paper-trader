@@ -373,6 +373,108 @@ export const realTradeOrders = pgTable(
   ],
 );
 
+// ─── Official Trading Ledger ───────────────────────────────
+
+/** Append-only lifecycle observations for official orders. */
+export const officialOrderEvents = pgTable(
+  'official_order_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    realTradeOrderId: uuid('real_trade_order_id').references(() => realTradeOrders.id, { onDelete: 'set null' }),
+    strategyId: uuid('strategy_id').references(() => strategies.id, { onDelete: 'set null' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform').notNull(),
+    officialOrderId: varchar('official_order_id', { length: 255 }).notNull(),
+    eventKey: varchar('event_key', { length: 512 }).notNull(),
+    status: varchar('status', { length: 50 }).notNull(),
+    requestedQuantity: decimal('requested_quantity', { precision: 18, scale: 6 }),
+    filledQuantity: decimal('filled_quantity', { precision: 18, scale: 6 }),
+    remainingQuantity: decimal('remaining_quantity', { precision: 18, scale: 6 }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }),
+    payload: jsonb('payload').notNull().default({}),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('official_order_events_key_idx').on(table.eventKey),
+    index('official_order_events_order_idx').on(table.officialOrderId),
+    index('official_order_events_strategy_idx').on(table.strategyId),
+  ],
+);
+
+/** Immutable venue executions; one row per official fill id. */
+export const officialTradeFills = pgTable(
+  'official_trade_fills',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    realTradeOrderId: uuid('real_trade_order_id').references(() => realTradeOrders.id, { onDelete: 'set null' }),
+    strategyId: uuid('strategy_id').references(() => strategies.id, { onDelete: 'set null' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform').notNull(),
+    officialFillId: varchar('official_fill_id', { length: 255 }).notNull(),
+    officialTradeId: varchar('official_trade_id', { length: 255 }),
+    officialOrderId: varchar('official_order_id', { length: 255 }),
+    marketId: varchar('market_id', { length: 255 }).notNull(),
+    outcome: outcomeEnum('outcome').notNull(),
+    side: tradeActionEnum('side').notNull(),
+    quantity: decimal('quantity', { precision: 18, scale: 6 }).notNull(),
+    price: decimal('price', { precision: 18, scale: 6 }).notNull(),
+    fee: decimal('fee', { precision: 18, scale: 6 }).notNull().default('0'),
+    isTaker: boolean('is_taker'),
+    filledAt: timestamp('filled_at', { withTimezone: true }).notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('official_trade_fills_venue_idx').on(table.platform, table.officialFillId),
+    index('official_trade_fills_order_idx').on(table.officialOrderId),
+    index('official_trade_fills_strategy_idx').on(table.strategyId),
+    index('official_trade_fills_market_idx').on(table.marketId),
+  ],
+);
+
+/** Account-level settlement facts. Strategy allocation is intentionally separate. */
+export const officialSettlements = pgTable(
+  'official_settlements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    platform: platformEnum('platform').notNull(),
+    settlementKey: varchar('settlement_key', { length: 512 }).notNull(),
+    marketId: varchar('market_id', { length: 255 }).notNull(),
+    eventId: varchar('event_id', { length: 255 }),
+    marketResult: varchar('market_result', { length: 50 }).notNull(),
+    yesQuantity: decimal('yes_quantity', { precision: 18, scale: 6 }).notNull().default('0'),
+    noQuantity: decimal('no_quantity', { precision: 18, scale: 6 }).notNull().default('0'),
+    yesCost: decimal('yes_cost', { precision: 18, scale: 6 }).notNull().default('0'),
+    noCost: decimal('no_cost', { precision: 18, scale: 6 }).notNull().default('0'),
+    revenue: decimal('revenue', { precision: 18, scale: 6 }).notNull().default('0'),
+    fee: decimal('fee', { precision: 18, scale: 6 }).notNull().default('0'),
+    settledAt: timestamp('settled_at', { withTimezone: true }).notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('official_settlements_key_idx').on(table.settlementKey),
+    index('official_settlements_market_idx').on(table.marketId),
+    index('official_settlements_time_idx').on(table.settledAt),
+  ],
+);
+
+/** Per-resource checkpoint and health state for official reconciliation. */
+export const officialSyncState = pgTable(
+  'official_sync_state',
+  {
+    platform: platformEnum('platform').notNull(),
+    accountScope: varchar('account_scope', { length: 100 }).notNull().default('default'),
+    resource: varchar('resource', { length: 50 }).notNull(),
+    cursor: text('cursor'),
+    lastVenueTime: timestamp('last_venue_time', { withTimezone: true }),
+    lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.platform, table.accountScope, table.resource] })],
+);
+
 // ─── Reconciliation Logs ───────────────────────────────────
 
 /** Official-vs-local mismatch log for real agents */

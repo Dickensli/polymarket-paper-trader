@@ -41,6 +41,7 @@ export type OfficialPortfolioSnapshot = {
   positions: unknown[];
   orders: unknown[];
   fills: unknown[];
+  settlements?: unknown[];
   activity: unknown[];
   raw: Record<string, unknown>;
 };
@@ -49,7 +50,9 @@ export function validateOfficialPortfolioSnapshot(
   platform: Platform,
   raw: Record<string, unknown>,
 ): void {
-  const criticalKeys = platform === 'kalshi' ? ['balance', 'positions'] : ['portfolio', 'positions'];
+  const criticalKeys = platform === 'kalshi'
+    ? ['balance', 'positions', 'orders', 'fills', 'settlements']
+    : ['portfolio', 'positions', 'orders', 'fills', 'activity'];
   for (const key of criticalKeys) {
     const value = raw[key];
     if (value && typeof value === 'object' && 'error' in value) {
@@ -302,22 +305,25 @@ async function cancelKalshiOrder(orderId: string): Promise<OfficialCancelResult>
 }
 
 async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
-  const [balance, positions, orders, fills] = await Promise.all([
+  const [balance, positions, orders, fills, settlements] = await Promise.all([
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/balance').catch((error) => ({ error: String(error) })),
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/positions').catch((error) => ({ error: String(error) })),
-    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/orders').catch((error) => ({ error: String(error) })),
-    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/fills').catch((error) => ({ error: String(error) })),
+    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/orders?limit=1000').catch((error) => ({ error: String(error) })),
+    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/fills?limit=1000').catch((error) => ({ error: String(error) })),
+    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/settlements?limit=1000').catch((error) => ({ error: String(error) })),
   ]);
   const balanceRecord = balance as Record<string, unknown>;
   const positionsRecord = positions as Record<string, unknown>;
   const ordersRecord = orders as Record<string, unknown>;
   const fillsRecord = fills as Record<string, unknown>;
+  const settlementsRecord = settlements as Record<string, unknown>;
 
   validateOfficialPortfolioSnapshot('kalshi', {
     balance: balanceRecord,
     positions: positionsRecord,
     orders: ordersRecord,
     fills: fillsRecord,
+    settlements: settlementsRecord,
   });
 
   const cash =
@@ -329,6 +335,7 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
                        (Array.isArray(positionsRecord.positions) ? positionsRecord.positions : []);
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
   const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
+  const settlementRows = Array.isArray(settlementsRecord.settlements) ? settlementsRecord.settlements : [];
 
   const { positionsValue, pnl } = summarizeKalshiPositions(positionRows);
   const totalValue = cash + positionsValue;
@@ -341,8 +348,9 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
     positions: positionRows,
     orders: orderRows,
     fills: fillRows,
+    settlements: settlementRows,
     activity: [],
-    raw: { balance: balanceRecord, positions: positionsRecord, orders: ordersRecord, fills: fillsRecord },
+    raw: { balance: balanceRecord, positions: positionsRecord, orders: ordersRecord, fills: fillsRecord, settlements: settlementsRecord },
   };
 }
 

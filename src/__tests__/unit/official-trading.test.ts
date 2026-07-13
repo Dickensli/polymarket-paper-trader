@@ -90,6 +90,11 @@ describe('official trading helpers', () => {
       positions: { error: 'authentication failed' },
       orders: { orders: [] },
       fills: { fills: [] },
+      settlements: { settlements: [] },
     })).toThrow('Kalshi official portfolio sync failed: positions: authentication failed');
+
+    expect(() => validateOfficialPortfolioSnapshot('kalshi', {
+      balance: {}, positions: {}, orders: {}, fills: {}, settlements: { error: 'rate limited' },
+    })).toThrow('Kalshi official portfolio sync failed: settlements: rate limited');
   });
 });

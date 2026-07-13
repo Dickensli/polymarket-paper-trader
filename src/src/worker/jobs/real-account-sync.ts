@@ -1,11 +1,24 @@
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import { portfolioSnapshots, realTradeOrders, strategies } from '@/lib/db/schema';
+import {
+  officialOrderEvents,
+  officialSettlements,
+  officialSyncState,
+  officialTradeFills,
+  portfolioSnapshots,
+  realTradeOrders,
+  strategies,
+} from '@/lib/db/schema';
 import {
   getOfficialPortfolioSnapshot,
   kalshiOrderQuantity,
   normalizeKalshiOrderStatus,
 } from '@/lib/official-trading';
+import {
+  normalizeKalshiFill,
+  normalizeKalshiOrderEvent,
+  normalizeKalshiSettlement,
+} from '@/lib/official-ledger';
 
 type SupportedRealPlatform = 'kalshi' | 'polymarket_us';
 
@@ -41,6 +54,71 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
       // this group share one official account and one private snapshot call.
       const snapshot = await getOfficialPortfolioSnapshot(platform);
       result.accounts_synced += 1;
+
+      if (platform === 'kalshi') {
+        const audits = await db.query.realTradeOrders.findMany();
+        const auditByOrderId = new Map(audits
+          .filter((audit) => audit.officialOrderId)
+          .map((audit) => [audit.officialOrderId!, audit]));
+
+        for (const row of snapshot.orders) {
+          if (!row || typeof row !== 'object') continue;
+          const event = normalizeKalshiOrderEvent(row as Record<string, unknown>);
+          const audit = auditByOrderId.get(event.officialOrderId);
+          await db.insert(officialOrderEvents).values({
+            ...event,
+            realTradeOrderId: audit?.id ?? null,
+            strategyId: audit?.strategyId ?? null,
+            userId: audit?.userId ?? null,
+            requestedQuantity: event.requestedQuantity.toFixed(6),
+            filledQuantity: event.filledQuantity.toFixed(6),
+            remainingQuantity: event.remainingQuantity.toFixed(6),
+          }).onConflictDoNothing();
+        }
+
+        for (const row of snapshot.fills) {
+          if (!row || typeof row !== 'object') continue;
+          const fill = normalizeKalshiFill(row as Record<string, unknown>);
+          const audit = fill.officialOrderId ? auditByOrderId.get(fill.officialOrderId) : undefined;
+          await db.insert(officialTradeFills).values({
+            ...fill,
+            realTradeOrderId: audit?.id ?? null,
+            strategyId: audit?.strategyId ?? null,
+            userId: audit?.userId ?? null,
+            quantity: fill.quantity.toFixed(6),
+            price: fill.price.toFixed(6),
+            fee: fill.fee.toFixed(6),
+          }).onConflictDoNothing();
+        }
+
+        for (const row of snapshot.settlements ?? []) {
+          if (!row || typeof row !== 'object') continue;
+          const settlement = normalizeKalshiSettlement(row as Record<string, unknown>);
+          await db.insert(officialSettlements).values({
+            ...settlement,
+            yesQuantity: settlement.yesQuantity.toFixed(6),
+            noQuantity: settlement.noQuantity.toFixed(6),
+            yesCost: settlement.yesCost.toFixed(6),
+            noCost: settlement.noCost.toFixed(6),
+            revenue: settlement.revenue.toFixed(6),
+            fee: settlement.fee.toFixed(6),
+          }).onConflictDoNothing();
+        }
+
+        for (const resource of ['orders', 'fills', 'settlements']) {
+          await db.insert(officialSyncState).values({
+            platform,
+            accountScope: 'default',
+            resource,
+            lastSuccessAt: new Date(),
+            lastError: null,
+            updatedAt: new Date(),
+          }).onConflictDoUpdate({
+            target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource],
+            set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },
+          });
+        }
+      }
 
       for (const strategy of platformStrategies) {
         await db.insert(portfolioSnapshots).values({

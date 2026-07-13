@@ -1,0 +1,43 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  normalizeKalshiFill,
+  normalizeKalshiOrderEvent,
+  normalizeKalshiSettlement,
+} from '@/lib/official-ledger';
+
+describe('official trading ledger normalization', () => {
+  it('normalizes a fill into immutable dollar-denominated execution data', () => {
+    expect(normalizeKalshiFill({
+      fill_id: 'fill-1', trade_id: 'trade-1', order_id: 'order-1', ticker: 'KXBTC-1',
+      outcome_side: 'no', action: 'buy', count_fp: '2.50', no_price_dollars: '0.4200',
+      fee_cost: '0.0300', is_taker: true, created_time: '2026-07-13T01:00:00Z',
+    })).toMatchObject({
+      officialFillId: 'fill-1', officialOrderId: 'order-1', marketId: 'KXBTC-1',
+      outcome: 'NO', side: 'BUY', quantity: 2.5, price: 0.42, fee: 0.03,
+    });
+  });
+
+  it('creates a stable order event key from lifecycle quantities and venue time', () => {
+    expect(normalizeKalshiOrderEvent({
+      order_id: 'order-1', status: 'resting', initial_count_fp: '10', fill_count_fp: '4',
+      remaining_count_fp: '6', last_update_time: '2026-07-13T01:01:00Z',
+    })).toMatchObject({
+      officialOrderId: 'order-1', status: 'PARTIALLY_FILLED', requestedQuantity: 10,
+      filledQuantity: 4, remainingQuantity: 6,
+      eventKey: 'kalshi:order-1:PARTIALLY_FILLED:4:6:2026-07-13T01:01:00Z',
+    });
+  });
+
+  it('normalizes account settlements without inventing strategy attribution', () => {
+    expect(normalizeKalshiSettlement({
+      ticker: 'KXBTC-1', event_ticker: 'KXBTC', market_result: 'yes',
+      yes_count_fp: '3', yes_total_cost_dollars: '1.20', no_count_fp: '0',
+      no_total_cost_dollars: '0', revenue: 300, fee_cost: '0',
+      settled_time: '2026-07-13T02:00:00Z',
+    })).toMatchObject({
+      settlementKey: 'kalshi:KXBTC-1:2026-07-13T02:00:00Z', marketId: 'KXBTC-1',
+      marketResult: 'YES', yesQuantity: 3, yesCost: 1.2, revenue: 3,
+    });
+  });
+});
