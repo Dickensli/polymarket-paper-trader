@@ -14,6 +14,7 @@ import {
   chainTwrPct,
   type CapitalFlow,
 } from '@/lib/performance-returns';
+import { positionBelongsToPlatform } from '@/lib/position-platform';
 
 const HOURLY_RETENTION_DAYS = 30;
 const DAILY_RETENTION_DAYS = 365 * 3;
@@ -151,7 +152,11 @@ export async function runStrategyPerformanceCalculation(now = new Date()) {
     if (strategy.agentMode === 'paper' && dedicated) {
       const portfolio = allPortfolios.find((row) => row.userId === strategy.userId);
       if (portfolio) {
-        const relevantPositions = allPositions.filter((row) => row.userId === strategy.userId && row.platform === strategy.platform && row.isOpen);
+        const relevantPositions = allPositions.filter((row) => (
+          row.userId === strategy.userId
+          && row.isOpen
+          && positionBelongsToPlatform(row, strategy.platform)
+        ));
         const positionsValue = relevantPositions.reduce((sum, row) => sum + Number(row.shares) * Number(row.currentPrice), 0);
         const pricingUpdatedAt = relevantPositions.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
         point = { strategyId: strategy.id, cash: Number(portfolio.balance), positionsValue, nav: Number(portfolio.balance) + positionsValue, capturedAt: now, pricingUpdatedAt };

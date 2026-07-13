@@ -6,8 +6,8 @@ import { getMarket } from '@/lib/polymarket';
 import { getKalshiMarket } from '@/lib/kalshi';
 import { getPolymarketUsMarketSettlement } from '@/lib/polymarket-us';
 import { cancelAllOrders } from '@/lib/limit-orders';
+import { inferPositionPlatform, type PositionPlatform } from '@/lib/position-platform';
 
-type PositionPlatform = 'polymarket' | 'kalshi' | 'polymarket_us';
 type OpenPosition = {
   id: string; userId: string; portfolioId: string; platform?: PositionPlatform;
   marketId: string; marketQuestion: string | null; tokenId: string; outcome: string;
@@ -111,14 +111,10 @@ async function settlePosition(
       pricePerShare: exitPrice.toFixed(6),
       totalCost: proceeds.toFixed(2),
       status: 'FILLED',
-      platform: pos.platform ?? (pos.marketId.startsWith('KX') ? 'kalshi' : 'polymarket'),
+      platform: inferPositionPlatform(pos),
       idempotencyKey: `resolve_${pos.id}_${Date.now()}`,
     });
   });
-}
-
-function positionPlatform(position: OpenPosition): PositionPlatform {
-  return position.platform ?? (position.marketId.startsWith('KX') ? 'kalshi' : 'polymarket');
 }
 
 async function readResolution(platform: PositionPlatform, marketId: string): Promise<Resolution> {
@@ -145,7 +141,7 @@ async function readResolution(platform: PositionPlatform, marketId: string): Pro
 async function settleOpenPositions(openPositions: OpenPosition[]): Promise<number> {
   const groups = new Map<string, OpenPosition[]>();
   for (const position of openPositions) {
-    const key = `${positionPlatform(position)}\u0000${position.marketId}`;
+    const key = `${inferPositionPlatform(position)}\u0000${position.marketId}`;
     groups.set(key, [...(groups.get(key) ?? []), position]);
   }
   let resolvedCount = 0;
