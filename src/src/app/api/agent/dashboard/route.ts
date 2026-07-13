@@ -9,7 +9,7 @@ import {
   snapshotIsStale,
   selectCurrentPortfolioSnapshot,
 } from '@/lib/agent-dashboard-filters';
-import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
+import { buildClosedStrategyPositions, buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 import { buildOfficialOrderHistory } from '@/lib/agent-order-history';
 import { buildOfficialSettledStrategyPositions } from '@/lib/agent-official-settled';
 import {
@@ -324,9 +324,15 @@ export async function GET(request: NextRequest) {
       const strategy = filteredRealStrategyById.get(allocation.strategyId); const settlement = officialSettlementById.get(allocation.settlementId);
       if (!strategy || !settlement) return [];
       const shares = numeric(allocation.quantity); const proceeds = numeric(allocation.proceeds);
-      return [{ id: allocation.id, strategy_id: strategy.id, strategy_name: strategyName(strategy), agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome: allocation.outcome, shares, avg_price: shares ? numeric(allocation.costBasis) / shares : 0, settlement_price: shares ? proceeds / shares : 0, cost_basis: numeric(allocation.costBasis), proceeds, settlement_fee: numeric(allocation.settlementFee), realized_pnl: numeric(allocation.realizedPnl), settled_at: settlement.settledAt.toISOString() }];
+      return [{ id: allocation.id, strategy_id: strategy.id, strategy_name: strategyName(strategy), agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome: allocation.outcome, shares, avg_price: shares ? numeric(allocation.costBasis) / shares : 0, settlement_price: shares ? proceeds / shares : 0, cost_basis: numeric(allocation.costBasis), proceeds, settlement_fee: numeric(allocation.settlementFee), realized_pnl: numeric(allocation.realizedPnl), closure_type: 'SETTLED' as const, settled_at: settlement.settledAt.toISOString() }];
     });
     const settledPositions = [
+      ...buildClosedStrategyPositions(
+        paperOrders,
+        filteredStrategies.filter((strategy) => strategy.agentMode === 'paper').map((strategy) => ({
+          id: strategy.id, userId: strategy.userId, name: strategyName(strategy), platform: strategy.platform,
+        })),
+      ),
       ...buildSettledStrategyPositions(
       closedPositions,
       paperOrders,

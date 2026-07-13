@@ -44,12 +44,24 @@ export type AgentSettledPosition = {
   proceeds: number;
   realized_pnl: number;
   settlement_fee?: number;
+  closure_type: 'CLOSED' | 'SETTLED';
   settled_at: string;
+};
+
+export type ClosedOrderSource = SettledOrderSource & {
+  id: string;
+  marketQuestion?: string | null;
+  price: unknown;
+  createdAt: Date | string;
 };
 
 function numeric(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rounded(value: number) {
+  return Number(value.toFixed(6));
 }
 
 export function buildSettledStrategyPositions(
@@ -105,8 +117,54 @@ export function buildSettledStrategyPositions(
         cost_basis: costBasis,
         proceeds,
         realized_pnl: proceeds - costBasis,
+        closure_type: 'SETTLED' as const,
         settled_at: settledAt,
       };
     });
   }).sort((a, b) => b.settled_at.localeCompare(a.settled_at));
+}
+
+/** Derive immutable, strategy-scoped full-exit cycles from normalized paper orders. */
+export function buildClosedStrategyPositions(
+  orders: ClosedOrderSource[],
+  strategies: SettledStrategy[],
+): AgentSettledPosition[] {
+  const strategyById = new Map(strategies.map((strategy) => [strategy.id, strategy]));
+  const lots = new Map<string, { quantity: number; cost: number; closedQuantity: number; closedCost: number; proceeds: number; marketQuestion: string | null }>();
+  const result: AgentSettledPosition[] = [];
+  const sorted = [...orders].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  for (const order of sorted) {
+    const strategy = strategyById.get(order.strategyId);
+    if (!strategy) continue;
+    const key = `${order.platform}:${order.marketId}:${order.outcome}:${order.strategyId}`;
+    const lot = lots.get(key) ?? { quantity: 0, cost: 0, closedQuantity: 0, closedCost: 0, proceeds: 0, marketQuestion: order.marketQuestion ?? null };
+    const quantity = numeric(order.quantity);
+    const price = numeric(order.price);
+    if (order.side === 'BUY') {
+      lot.quantity += quantity;
+      lot.cost += quantity * price;
+    } else if (order.side === 'SELL' && lot.quantity > 0) {
+      const removed = Math.min(quantity, lot.quantity);
+      const removedCost = lot.quantity > 0 ? lot.cost * (removed / lot.quantity) : 0;
+      lot.quantity -= removed;
+      lot.cost -= removedCost;
+      lot.closedQuantity += removed;
+      lot.closedCost += removedCost;
+      lot.proceeds += removed * price;
+      if (lot.quantity <= 0.000001 && lot.closedQuantity > 0) {
+        const closedAt = order.createdAt instanceof Date ? order.createdAt.toISOString() : new Date(order.createdAt).toISOString();
+        result.push({
+          id: `closed:${order.id}`, strategy_id: strategy.id, strategy_name: strategy.name, agent_id: strategy.userId,
+          platform: strategy.platform, market_id: order.marketId, market: lot.marketQuestion || order.marketId, outcome: order.outcome,
+          shares: rounded(lot.closedQuantity), avg_price: rounded(lot.closedCost / lot.closedQuantity),
+          settlement_price: rounded(lot.proceeds / lot.closedQuantity), cost_basis: rounded(lot.closedCost),
+          proceeds: rounded(lot.proceeds), realized_pnl: rounded(lot.proceeds - lot.closedCost),
+          closure_type: 'CLOSED', settled_at: closedAt,
+        });
+        lot.closedQuantity = 0; lot.closedCost = 0; lot.proceeds = 0; lot.cost = 0; lot.quantity = 0;
+      }
+    }
+    lots.set(key, lot);
+  }
+  return result.sort((a, b) => b.settled_at.localeCompare(a.settled_at));
 }

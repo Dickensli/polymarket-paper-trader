@@ -303,6 +303,13 @@ describe('Sell trade execution', () => {
     const portfolio = await getPortfolio(userId);
     expect(portfolio.positions).toHaveLength(0); // closed positions excluded
     expect(portfolio.balance).toBe(10000); // 10000 - 50 + 50
+    const db = getDb();
+    const closed = await db.query.positions.findFirst({
+      where: and(eq(positions.userId, userId), eq(positions.marketId, params.marketId)),
+    });
+    expect(closed).toMatchObject({ isOpen: false, closeReason: 'USER_CLOSED', platform: 'polymarket' });
+    expect(closed?.closedAt).toBeInstanceOf(Date);
+    expect(closed?.resolvedAt).toBeNull();
   });
 });
 

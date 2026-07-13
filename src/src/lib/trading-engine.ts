@@ -329,6 +329,7 @@ export async function executeTrade(
             shares: newShares.toFixed(6),
             avgEntryPrice: newAvgPrice.toFixed(6),
             currentPrice: price.toFixed(6),
+            platform,
             updatedAt: new Date(),
           })
           .where(eq(positions.id, existingPosition.id));
@@ -358,9 +359,14 @@ export async function executeTrade(
               avgEntryPrice: price.toFixed(6),
               currentPrice: price.toFixed(6),
               isOpen: true,
+              platform,
               tokenId,
               marketQuestion,
               portfolioId: userPortfolio.id,
+              realizedPnl: '0.000000',
+              closedAt: null,
+              closeReason: null,
+              resolvedAt: null,
               updatedAt: new Date(),
             })
             .where(eq(positions.id, closedPosition.id));
@@ -371,6 +377,7 @@ export async function executeTrade(
             .values({
               userId,
               portfolioId: userPortfolio.id,
+              platform,
               marketId,
               marketQuestion,
               tokenId,
@@ -403,6 +410,7 @@ export async function executeTrade(
           idempotencyKey: idempotencyKey ?? '',
           slippageApplied: (slippageApplied ?? 0).toFixed(6),
           status: 'FILLED',
+          platform,
         })
         .returning();
 
@@ -494,7 +502,11 @@ export async function executeTrade(
           .set({
             shares: '0.000000',
             isOpen: false,
+            platform,
+            currentPrice: price.toFixed(6),
             realizedPnl: newRealizedPnl.toFixed(6),
+            closedAt: new Date(),
+            closeReason: 'USER_CLOSED',
             updatedAt: new Date(),
           })
           .where(eq(positions.id, existingPosition.id));
@@ -527,6 +539,7 @@ export async function executeTrade(
           idempotencyKey: idempotencyKey ?? '',
           slippageApplied: (slippageApplied ?? 0).toFixed(6),
           status: 'FILLED',
+          platform,
         })
         .returning();
 

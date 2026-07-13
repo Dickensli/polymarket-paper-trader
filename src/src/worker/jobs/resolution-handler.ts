@@ -4,7 +4,20 @@ import { positions, portfolios, paperTrades } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getMarket } from '@/lib/polymarket';
 import { getKalshiMarket } from '@/lib/kalshi';
+import { getPolymarketUsMarketSettlement } from '@/lib/polymarket-us';
 import { cancelAllOrders } from '@/lib/limit-orders';
+
+type PositionPlatform = 'polymarket' | 'kalshi' | 'polymarket_us';
+type OpenPosition = {
+  id: string; userId: string; portfolioId: string; platform?: PositionPlatform;
+  marketId: string; marketQuestion: string | null; tokenId: string; outcome: string;
+  shares: string; avgEntryPrice: string; realizedPnl: string;
+};
+type Resolution =
+  | { type: 'resolved'; winningTokenId: string }
+  | { type: 'priced'; yesPrice: number }
+  | { type: 'voided' }
+  | { type: 'pending' };
 
 /**
  * Determine the resolution outcome for a closed market.
@@ -43,18 +56,7 @@ function determineResolution(
  * Settle a single position based on resolution outcome.
  */
 async function settlePosition(
-  pos: {
-    id: string;
-    userId: string;
-    portfolioId: string;
-    marketId: string;
-    marketQuestion: string | null;
-    tokenId: string;
-    outcome: string;
-    shares: string;
-    avgEntryPrice: string;
-    realizedPnl: string;
-  },
+  pos: OpenPosition,
   exitPrice: number,
   settlementType: 'RESOLVED' | 'VOIDED',
 ) {
@@ -74,6 +76,8 @@ async function settlePosition(
         isOpen: false,
         currentPrice: exitPrice.toFixed(6),
         realizedPnl: totalRealizedPnl.toFixed(6),
+        closedAt: new Date(),
+        closeReason: settlementType === 'VOIDED' ? 'VOIDED' : 'SETTLED',
         resolvedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -95,12 +99,6 @@ async function settlePosition(
       }
     }
 
-    // Record settling trade
-    const description =
-      settlementType === 'VOIDED'
-        ? `Market voided — refund at cost basis`
-        : `Market resolved — settlement`;
-
     await tx.insert(paperTrades).values({
       userId: pos.userId,
       portfolioId: pos.portfolioId,
@@ -113,200 +111,88 @@ async function settlePosition(
       pricePerShare: exitPrice.toFixed(6),
       totalCost: proceeds.toFixed(2),
       status: 'FILLED',
+      platform: pos.platform ?? (pos.marketId.startsWith('KX') ? 'kalshi' : 'polymarket'),
       idempotencyKey: `resolve_${pos.id}_${Date.now()}`,
     });
   });
 }
 
-/**
- * Checks for closed/resolved markets and settles positions for a specific user.
- */
-export async function runResolutionCheckForUser(userId: string): Promise<number> {
-  const db = getDb();
+function positionPlatform(position: OpenPosition): PositionPlatform {
+  return position.platform ?? (position.marketId.startsWith('KX') ? 'kalshi' : 'polymarket');
+}
 
-  // Find all active open positions for this specific user
-  const openPositions = await db.query.positions.findMany({
-    where: and(
-      eq(positions.isOpen, true),
-      eq(positions.userId, userId)
-    )
-  });
+async function readResolution(platform: PositionPlatform, marketId: string): Promise<Resolution> {
+  if (platform === 'kalshi') {
+    const market = await getKalshiMarket(marketId).catch(() => null);
+    await new Promise((resolve) => setTimeout(resolve, market ? 150 : 500));
+    if (!market) return { type: 'pending' };
+    const status = String(market.status).toLowerCase();
+    if (status !== 'finalized' && status !== 'settled') return { type: 'pending' };
+    const result = String(market.result).toUpperCase();
+    return result === 'YES' || result === 'NO' ? { type: 'resolved', winningTokenId: result } : { type: 'voided' };
+  }
+  if (platform === 'polymarket_us') {
+    const settlement = await getPolymarketUsMarketSettlement(marketId);
+    if (!settlement) return { type: 'pending' };
+    const rawPrice = Number(settlement.settlementPrice?.value);
+    if (!Number.isFinite(rawPrice)) return { type: 'pending' };
+    return { type: 'priced', yesPrice: rawPrice > 1 ? rawPrice / 100 : rawPrice };
+  }
+  const market = await getMarket(marketId).catch(() => null);
+  return market?.closed ? determineResolution(market) : { type: 'pending' };
+}
 
-  if (openPositions.length === 0) return 0;
-
-  const uniqueMarketIds = Array.from(new Set(openPositions.map(p => p.marketId)));
+async function settleOpenPositions(openPositions: OpenPosition[]): Promise<number> {
+  const groups = new Map<string, OpenPosition[]>();
+  for (const position of openPositions) {
+    const key = `${positionPlatform(position)}\u0000${position.marketId}`;
+    groups.set(key, [...(groups.get(key) ?? []), position]);
+  }
   let resolvedCount = 0;
-
-  for (const marketId of uniqueMarketIds) {
+  for (const [key, marketPositions] of groups) {
+    const [platform, marketId] = key.split('\u0000') as [PositionPlatform, string];
     try {
-      // Determine platform from open positions
-      const marketPositions = openPositions.filter(p => p.marketId === marketId);
-      const isKalshi = marketId.startsWith('KX');
-
-      let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
-
-      if (isKalshi) {
-        const market = await getKalshiMarket(marketId).catch((err) => {
-          console.error(`[Resolution] Failed to fetch Kalshi market ${marketId}:`, err);
-          return null;
-        });
-        
-        if (!market) {
-          // Delay to respect rate limits even on failure
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          continue;
-        }
-        
-        // Rate limit: 10 requests per second max, delay ~150ms to be safe
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        
-        const status = String(market.status).toLowerCase();
-        if (status === 'finalized' || status === 'settled') {
-          const result = String(market.result).toUpperCase();
-          if (result === 'YES' || result === 'NO') {
-            resolution = { type: 'resolved', winningTokenId: result };
-          } else {
-            resolution = { type: 'voided' };
-          }
-        }
-      } else {
-        const market = await getMarket(marketId).catch(() => null);
-        if (!market || !market.closed) continue;
-        resolution = determineResolution(market);
-      }
-
+      const resolution = await readResolution(platform, marketId);
       if (resolution.type === 'pending') continue;
-
-      for (const pos of marketPositions) {
+      for (const position of marketPositions) {
         try {
-          if (resolution.type === 'resolved') {
-            // Winner gets $1/share, loser gets $0/share
-            let exitPrice = 0;
-            if (isKalshi) {
-              exitPrice = pos.outcome.toUpperCase() === resolution.winningTokenId ? 1 : 0;
-            } else {
-              exitPrice = pos.tokenId === resolution.winningTokenId ? 1 : 0;
-            }
-            await settlePosition(pos, exitPrice, 'RESOLVED');
+          if (resolution.type === 'voided') {
+            await settlePosition(position, Number(position.avgEntryPrice), 'VOIDED');
           } else {
-            // Voided: refund at avg entry price (break-even)
-            const exitPrice = Number(pos.avgEntryPrice);
-            await settlePosition(pos, exitPrice, 'VOIDED');
+            const exitPrice = resolution.type === 'priced'
+              ? (position.outcome.toUpperCase() === 'NO' ? 1 - resolution.yesPrice : resolution.yesPrice)
+              : (platform === 'kalshi'
+                  ? Number(position.outcome.toUpperCase() === resolution.winningTokenId)
+                  : Number(position.tokenId === resolution.winningTokenId));
+            await settlePosition(position, exitPrice, 'RESOLVED');
           }
-          resolvedCount++;
-        } catch (err) {
-          console.error(`[Resolution] Error settling position ${pos.id} for user ${userId}:`, err);
+          resolvedCount += 1;
+        } catch (error) {
+          console.error(`[Resolution] Error settling position ${position.id}:`, error);
         }
       }
-
-      // Cancel any pending limit orders for this resolved market
-      try {
-        const userIds = new Set(marketPositions.map(p => p.userId));
-        for (const uid of userIds) {
-          await cancelAllOrders(uid, marketId);
-        }
-      } catch (err) {
-        console.error(`[Resolution] Error cancelling limit orders for market ${marketId}:`, err);
+      for (const userId of new Set(marketPositions.map((position) => position.userId))) {
+        await cancelAllOrders(userId, marketId);
       }
-    } catch (err) {
-      console.error(`[Resolution] Error resolving market ${marketId} for user ${userId}:`, err);
+    } catch (error) {
+      console.error(`[Resolution] Error resolving ${platform}:${marketId}:`, error);
     }
   }
-  
   return resolvedCount;
 }
 
-/**
- * Checks for closed/resolved markets and settles ALL users' positions.
- */
-export async function runResolutionCheck() {
+export async function runResolutionCheckForUser(userId: string): Promise<number> {
   const db = getDb();
-
-  // Find all active open positions across all users
   const openPositions = await db.query.positions.findMany({
-    where: eq(positions.isOpen, true)
+    where: and(eq(positions.isOpen, true), eq(positions.userId, userId)),
   });
+  return settleOpenPositions(openPositions as OpenPosition[]);
+}
 
-  if (openPositions.length === 0) return 0;
-
-  const uniqueMarketIds = Array.from(new Set(openPositions.map(p => p.marketId)));
-  let resolvedCount = 0;
-
-  for (const marketId of uniqueMarketIds) {
-    try {
-      const marketPositions = openPositions.filter(p => p.marketId === marketId);
-      const isKalshi = marketId.startsWith('KX');
-
-      let resolution: { type: 'resolved'; winningTokenId: string } | { type: 'voided' } | { type: 'pending' } = { type: 'pending' };
-
-      if (isKalshi) {
-        const market = await getKalshiMarket(marketId).catch((err) => {
-          console.error(`[Resolution] Failed to fetch Kalshi market ${marketId}:`, err);
-          return null;
-        });
-        
-        if (!market) {
-          // Delay to respect rate limits even on failure
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          continue;
-        }
-        
-        // Rate limit: 10 requests per second max, delay ~150ms to be safe
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        
-        const status = String(market.status).toLowerCase();
-        if (status === 'finalized' || status === 'settled') {
-          const result = String(market.result).toUpperCase();
-          if (result === 'YES' || result === 'NO') {
-            resolution = { type: 'resolved', winningTokenId: result };
-          } else {
-            resolution = { type: 'voided' };
-          }
-        }
-      } else {
-        const market = await getMarket(marketId).catch(() => null);
-        if (!market || !market.closed) continue;
-        resolution = determineResolution(market);
-      }
-
-      if (resolution.type === 'pending') continue;
-
-      for (const pos of marketPositions) {
-        try {
-          if (resolution.type === 'resolved') {
-            let exitPrice = 0;
-            if (isKalshi) {
-              exitPrice = pos.outcome.toUpperCase() === resolution.winningTokenId ? 1 : 0;
-            } else {
-              exitPrice = pos.tokenId === resolution.winningTokenId ? 1 : 0;
-            }
-            await settlePosition(pos, exitPrice, 'RESOLVED');
-          } else {
-            // Voided: refund at avg entry price
-            const exitPrice = Number(pos.avgEntryPrice);
-            await settlePosition(pos, exitPrice, 'VOIDED');
-          }
-          resolvedCount++;
-        } catch (err) {
-          console.error(`[Worker] Error settling position ${pos.id}:`, err);
-        }
-      }
-
-      // Cancel any pending limit orders for this resolved market
-      try {
-        const userIds = new Set(marketPositions.map(p => p.userId));
-        for (const uid of userIds) {
-          await cancelAllOrders(uid, marketId);
-        }
-      } catch (err) {
-        console.error(`[Resolution] Error cancelling limit orders for market ${marketId}:`, err);
-      }
-    } catch (err) {
-      console.error(`[Worker] Error resolving market ${marketId}:`, err);
-    }
-  }
-  
-  return resolvedCount;
+export async function runResolutionCheck(): Promise<number> {
+  const db = getDb();
+  const openPositions = await db.query.positions.findMany({ where: eq(positions.isOpen, true) });
+  return settleOpenPositions(openPositions as OpenPosition[]);
 }
 
 export function startResolutionJob() {

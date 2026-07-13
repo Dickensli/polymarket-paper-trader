@@ -88,21 +88,22 @@ export function normalizeKalshiSettlement(row: Record<string, unknown>) {
 }
 
 export function normalizePolymarketUsFill(row: Record<string, unknown>) {
-  const outcomeText = firstText(row, ['outcomeSide', 'outcome_side', 'outcome']);
-  const sideText = firstText(row, ['action', 'side']);
+  const trade = row.trade && typeof row.trade === 'object' ? row.trade as Record<string, unknown> : row;
+  const outcomeText = firstText(trade, ['outcomeSide', 'outcome_side', 'outcome']);
+  const sideText = firstText(trade, ['action', 'side']);
   return {
     platform: 'polymarket_us' as const,
-    officialFillId: requiredText(firstText(row, ['id', 'fillId', 'fill_id']), 'fill id'),
-    officialTradeId: firstText(row, ['tradeId', 'trade_id']),
-    officialOrderId: firstText(row, ['orderId', 'order_id']),
-    marketId: requiredText(firstText(row, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'market'),
+    officialFillId: requiredText(firstText(trade, ['id', 'fillId', 'fill_id']), 'fill id'),
+    officialTradeId: firstText(trade, ['tradeId', 'trade_id', 'id']),
+    officialOrderId: firstText(trade, ['orderId', 'order_id']),
+    marketId: requiredText(firstText(trade, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'market'),
     outcome: outcomeText ? (outcomeText.toUpperCase().includes('NO') ? 'NO' : 'YES') as 'YES' | 'NO' : null,
     side: sideText ? (sideText.toUpperCase().includes('SELL') ? 'SELL' : 'BUY') as 'BUY' | 'SELL' : null,
-    quantity: number(row.quantity ?? row.filledQuantity ?? row.filled_quantity),
-    price: objectNumber(row.price ?? row.averagePrice ?? row.average_price),
-    fee: objectNumber(row.fee ?? row.feeAmount ?? row.fee_amount),
-    isTaker: typeof row.isTaker === 'boolean' ? row.isTaker : typeof row.is_taker === 'boolean' ? row.is_taker : null,
-    filledAt: timestamp(row.createdAt ?? row.created_at ?? row.timestamp, 'fill time'), payload: row,
+    quantity: number(trade.quantity ?? trade.qty ?? trade.filledQuantity ?? trade.filled_quantity),
+    price: objectNumber(trade.price ?? trade.averagePrice ?? trade.average_price),
+    fee: objectNumber(trade.fee ?? trade.feeAmount ?? trade.fee_amount),
+    isTaker: typeof trade.isAggressor === 'boolean' ? trade.isAggressor : typeof trade.isTaker === 'boolean' ? trade.isTaker : typeof trade.is_taker === 'boolean' ? trade.is_taker : null,
+    filledAt: timestamp(trade.createTime ?? trade.updateTime ?? trade.createdAt ?? trade.created_at ?? trade.timestamp, 'fill time'), payload: row,
   };
 }
 
@@ -111,19 +112,28 @@ export function normalizePolymarketUsOrderEvent(row: Record<string, unknown>) {
   const requestedQuantity = number(row.quantity ?? row.initialQuantity ?? row.initial_quantity);
   const filledQuantity = number(row.filledQuantity ?? row.filled_quantity ?? row.cumQuantity ?? row.cum_quantity);
   const remainingQuantity = number(row.remainingQuantity ?? row.remaining_quantity) || Math.max(0, requestedQuantity - filledQuantity);
-  const status = String(row.state ?? row.status ?? 'SUBMITTED').toUpperCase();
-  const venueTime = requiredText(row.updatedAt ?? row.updated_at ?? row.createdAt ?? row.created_at, 'order time');
+  const status = String(row.state ?? row.status ?? 'SUBMITTED').toUpperCase().replace(/^ORDER_STATE_/, '');
+  const venueTime = requiredText(row.updateTime ?? row.updatedAt ?? row.updated_at ?? row.insertTime ?? row.createdAt ?? row.created_at, 'order time');
   return { platform: 'polymarket_us' as const, officialOrderId, eventKey: `polymarket_us:${officialOrderId}:${status}:${filledQuantity}:${remainingQuantity}:${venueTime}`, status, requestedQuantity, filledQuantity, remainingQuantity, occurredAt: timestamp(venueTime, 'order time'), payload: row };
 }
 
 export function normalizePolymarketUsSettlement(row: Record<string, unknown>) {
   const type = String(row.type ?? row.activityType ?? row.activity_type ?? '').toUpperCase();
   if (!type.includes('SETTLEMENT') && !type.includes('RESOLUTION') && !type.includes('REDEEM')) return null;
-  const sourceId = requiredText(firstText(row, ['id', 'activityId', 'activity_id']), 'settlement id');
-  const marketId = requiredText(firstText(row, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'settlement market');
-  const settledAt = timestamp(row.createdAt ?? row.created_at ?? row.timestamp, 'settlement time');
-  const outcome = String(row.outcome ?? row.outcomeSide ?? '').toUpperCase(); const quantity = number(row.quantity);
-  return { platform: 'polymarket_us' as const, settlementKey: `polymarket_us:${sourceId}`, marketId, eventId: null, marketResult: outcome, yesQuantity: outcome.includes('YES') ? quantity : 0, noQuantity: outcome.includes('NO') ? quantity : 0, yesCost: 0, noCost: 0, revenue: objectNumber(row.revenue ?? row.amount), fee: objectNumber(row.fee), settledAt, payload: row };
+  const resolution = row.positionResolution && typeof row.positionResolution === 'object' ? row.positionResolution as Record<string, unknown> : row;
+  const before = resolution.beforePosition && typeof resolution.beforePosition === 'object' ? resolution.beforePosition as Record<string, unknown> : {};
+  const after = resolution.afterPosition && typeof resolution.afterPosition === 'object' ? resolution.afterPosition as Record<string, unknown> : {};
+  const metadata = before.marketMetadata && typeof before.marketMetadata === 'object' ? before.marketMetadata as Record<string, unknown> : {};
+  const sourceId = requiredText(firstText(resolution, ['tradeId', 'id', 'activityId', 'activity_id']), 'settlement id');
+  const marketId = requiredText(firstText(resolution, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'settlement market');
+  const settledAt = timestamp(resolution.updateTime ?? resolution.createdAt ?? resolution.created_at ?? resolution.timestamp, 'settlement time');
+  const netPosition = number(before.netPosition ?? row.quantity);
+  const outcome = String(metadata.outcome ?? row.outcome ?? row.outcomeSide ?? (netPosition < 0 ? 'NO' : 'YES')).toUpperCase();
+  const quantity = Math.abs(netPosition || number(row.quantity));
+  const revenue = row.positionResolution
+    ? objectNumber(after.realized) - objectNumber(before.realized)
+    : objectNumber(row.revenue ?? row.amount);
+  return { platform: 'polymarket_us' as const, settlementKey: `polymarket_us:${sourceId}`, marketId, eventId: null, marketResult: outcome, yesQuantity: outcome.includes('YES') ? quantity : 0, noQuantity: outcome.includes('NO') ? quantity : 0, yesCost: 0, noCost: 0, revenue, fee: objectNumber(row.fee), settledAt, payload: row };
 }
 
 type CashLedgerSource = {

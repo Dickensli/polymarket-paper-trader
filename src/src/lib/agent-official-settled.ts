@@ -30,7 +30,7 @@ export function buildOfficialSettledStrategyPositions(settlements: Settlement[],
       const officialTotalQuantity = n(settlement.yesQuantity) + n(settlement.noQuantity);
       const settlementFee = officialTotalQuantity > 0 ? n(settlement.fee) * (shares / officialTotalQuantity) : 0;
       const settledAt = new Date(settlement.settledAt).toISOString();
-      result.push({ id: `${settlement.id}:${strategyId}:${outcome}`, strategy_id: strategyId, strategy_name: strategy.name, agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome, shares: rounded(shares), avg_price: shares ? rounded(cost / shares) : 0, settlement_price: won ? rounded(proceeds / shares) : 0, cost_basis: rounded(cost), proceeds: rounded(proceeds), settlement_fee: rounded(settlementFee), realized_pnl: rounded(proceeds - cost - settlementFee), settled_at: settledAt });
+      result.push({ id: `${settlement.id}:${strategyId}:${outcome}`, strategy_id: strategyId, strategy_name: strategy.name, agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome, shares: rounded(shares), avg_price: shares ? rounded(cost / shares) : 0, settlement_price: won ? rounded(proceeds / shares) : 0, cost_basis: rounded(cost), proceeds: rounded(proceeds), settlement_fee: rounded(settlementFee), realized_pnl: rounded(proceeds - cost - settlementFee), closure_type: 'SETTLED', settled_at: settledAt });
     }
   }
   return result.sort((a, b) => b.settled_at.localeCompare(a.settled_at));

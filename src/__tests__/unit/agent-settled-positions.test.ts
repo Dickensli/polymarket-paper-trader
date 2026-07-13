@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
+import { buildClosedStrategyPositions, buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 
 describe('agent settled positions', () => {
   const strategies = [
@@ -46,5 +46,18 @@ describe('agent settled positions', () => {
     ], strategies);
 
     expect(result).toEqual([]);
+  });
+
+  it('builds a closed lifecycle record when a strategy fully exits a paper position', () => {
+    const result = buildClosedStrategyPositions([
+      { id: 'buy-1', strategyId: 'strategy-a', userId: 'agent-1', marketId: 'usa-market', marketQuestion: 'US market?', outcome: 'YES', side: 'BUY', quantity: 90, price: 0.05, platform: 'polymarket_us', createdAt: '2026-07-11T10:00:00Z' },
+      { id: 'buy-2', strategyId: 'strategy-a', userId: 'agent-1', marketId: 'usa-market', marketQuestion: 'US market?', outcome: 'YES', side: 'BUY', quantity: 10, price: 0.06, platform: 'polymarket_us', createdAt: '2026-07-11T10:01:00Z' },
+      { id: 'sell-1', strategyId: 'strategy-a', userId: 'agent-1', marketId: 'usa-market', marketQuestion: 'US market?', outcome: 'YES', side: 'SELL', quantity: 100, price: 0.07, platform: 'polymarket_us', createdAt: '2026-07-11T11:00:00Z' },
+    ], strategies.map((row) => row.id === 'strategy-a' ? { ...row, platform: 'polymarket_us' } : row));
+
+    expect(result).toEqual([expect.objectContaining({
+      closure_type: 'CLOSED', strategy_id: 'strategy-a', shares: 100,
+      avg_price: 0.051, settlement_price: 0.07, cost_basis: 5.1, proceeds: 7, realized_pnl: 1.9,
+    })]);
   });
 });

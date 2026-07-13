@@ -573,6 +573,7 @@ export const positions = pgTable(
     portfolioId: uuid('portfolio_id')
       .notNull()
       .references(() => portfolios.id, { onDelete: 'cascade' }),
+    platform: platformEnum('platform').notNull().default('polymarket'),
     marketId: varchar('market_id', { length: 255 }).notNull(),
     marketQuestion: text('market_question'),
     tokenId: varchar('token_id', { length: 255 }).notNull(),
@@ -582,6 +583,8 @@ export const positions = pgTable(
     currentPrice: decimal('current_price', { precision: 18, scale: 6 }).notNull().default('0.5'),
     isOpen: boolean('is_open').notNull().default(true),
     realizedPnl: decimal('realized_pnl', { precision: 18, scale: 6 }).notNull().default('0.000000'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closeReason: varchar('close_reason', { length: 30 }),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -589,6 +592,8 @@ export const positions = pgTable(
   (table) => [
     index('positions_user_idx').on(table.userId),
     index('positions_portfolio_idx').on(table.portfolioId),
+    index('positions_platform_idx').on(table.platform),
+    index('positions_closed_idx').on(table.closedAt),
     uniqueIndex('positions_unique_idx').on(table.userId, table.marketId, table.outcome),
   ],
 );

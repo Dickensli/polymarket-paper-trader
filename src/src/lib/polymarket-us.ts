@@ -134,6 +134,33 @@ export async function getPolymarketUsMarketBBO(
   }
 }
 
+/** Fetch the venue's authoritative settlement price for one US market. */
+export type PolymarketUsMarketSettlement = {
+  marketSlug: string;
+  settlementPrice: { value: string; currency: 'USD' };
+  settledAt?: string;
+};
+
+export async function getPolymarketUsMarketSettlement(
+  slug: string,
+): Promise<PolymarketUsMarketSettlement | null> {
+  try {
+    const raw = await getClient().markets.settlement(slug) as unknown as Record<string, unknown>;
+    const amount = raw.settlementPrice && typeof raw.settlementPrice === 'object'
+      ? raw.settlementPrice as Record<string, unknown>
+      : null;
+    const value = amount?.value ?? raw.settlement;
+    if (!Number.isFinite(Number(value))) return null;
+    return {
+      marketSlug: String(raw.marketSlug ?? raw.slug ?? slug),
+      settlementPrice: { value: String(value), currency: 'USD' },
+      ...(typeof raw.settledAt === 'string' ? { settledAt: raw.settledAt } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Event endpoints
 // ---------------------------------------------------------------------------

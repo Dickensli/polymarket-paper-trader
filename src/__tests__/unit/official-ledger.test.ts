@@ -30,6 +30,20 @@ describe('official trading ledger normalization', () => {
     expect(normalizePolymarketUsSettlement({ id: 'x', type: 'DEPOSIT' })).toBeNull();
   });
 
+  it('normalizes the nested activity shape returned by the Polymarket US SDK', () => {
+    expect(normalizePolymarketUsSettlement({
+      type: 'ACTIVITY_TYPE_POSITION_RESOLUTION',
+      positionResolution: {
+        tradeId: 'resolution-1', marketSlug: 'usa-market', updateTime: '2026-07-12T00:00:00Z',
+        beforePosition: { netPosition: '8', realized: { value: '1.25' }, marketMetadata: { outcome: 'YES' } },
+        afterPosition: { netPosition: '0', realized: { value: '5.25' } },
+      },
+    })).toMatchObject({
+      settlementKey: 'polymarket_us:resolution-1', marketId: 'usa-market', marketResult: 'YES',
+      yesQuantity: 8, noQuantity: 0, revenue: 4,
+    });
+  });
+
   it('creates balanced double-entry postings for fills and settlements', () => {
     const fillEntries = buildFillCashLedgerEntries({ platform: 'kalshi', officialFillId: 'f1', side: 'BUY', quantity: 2, price: 0.4, fee: 0.02, filledAt: new Date('2026-01-01'), payload: {} });
     const settlementEntries = buildSettlementCashLedgerEntries({ platform: 'kalshi', settlementKey: 's1', revenue: 2, fee: 0.01, settledAt: new Date('2026-01-02'), payload: {} });

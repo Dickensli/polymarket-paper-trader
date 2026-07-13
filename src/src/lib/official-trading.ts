@@ -53,7 +53,7 @@ export function validateOfficialPortfolioSnapshot(
 ): void {
   const criticalKeys = platform === 'kalshi'
     ? ['balance', 'positions', 'orders', 'fills', 'settlements']
-    : ['portfolio', 'positions', 'orders', 'fills', 'activity'];
+    : ['balances', 'positions', 'orders', 'activity'];
   for (const key of criticalKeys) {
     const value = raw[key];
     if (value && typeof value === 'object' && 'error' in value) {
@@ -74,6 +74,15 @@ function requireEnv(name: string): string {
 
 function fixed(value: number, decimals = 4): string {
   return value.toFixed(decimals);
+}
+
+function objectAmount(value: unknown): number {
+  if (value && typeof value === 'object' && 'value' in value) {
+    const parsed = Number((value as { value: unknown }).value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function clampPrice(price: number): number {
@@ -439,60 +448,56 @@ async function cancelPolymarketUsOrder(orderId: string, marketSlug?: string): Pr
 
 async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const client = getPolymarketUsClient() as unknown as {
-    portfolio?: {
-      retrieve?(): Promise<Record<string, unknown>>;
-      positions?(): Promise<Record<string, unknown>>;
+    account: { balances(): Promise<Record<string, unknown>> };
+    portfolio: {
+      positions(params?: { limit?: number }): Promise<Record<string, unknown>>;
+      activities(params?: { limit?: number }): Promise<Record<string, unknown>>;
     };
     orders?: {
       list?(): Promise<Record<string, unknown>>;
     };
-    fills?: {
-      list?(): Promise<Record<string, unknown>>;
-    };
-    activity?: {
-      list?(): Promise<Record<string, unknown>>;
-    };
   };
-  const [portfolio, positions, orders, fills, activity] = await Promise.all([
-    client.portfolio?.retrieve?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
-    client.portfolio?.positions?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
+  const [balances, positions, orders, activity] = await Promise.all([
+    client.account.balances().catch((error) => ({ error: String(error) })),
+    client.portfolio.positions({ limit: 1000 }).catch((error) => ({ error: String(error) })),
     client.orders?.list?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
-    client.fills?.list?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
-    client.activity?.list?.().catch((error) => ({ error: String(error) })) ?? Promise.resolve({}),
+    client.portfolio.activities({ limit: 1000 }).catch((error) => ({ error: String(error) })),
   ]);
-  const portfolioRecord = portfolio as Record<string, unknown>;
+  const balancesRecord = balances as Record<string, unknown>;
   const positionsRecord = positions as Record<string, unknown>;
   const ordersRecord = orders as Record<string, unknown>;
-  const fillsRecord = fills as Record<string, unknown>;
   const activityRecord = activity as Record<string, unknown>;
 
   validateOfficialPortfolioSnapshot('polymarket_us', {
-    portfolio: portfolioRecord,
+    balances: balancesRecord,
     positions: positionsRecord,
     orders: ordersRecord,
-    fills: fillsRecord,
     activity: activityRecord,
   });
 
-  const cash = Number(portfolioRecord.cash ?? portfolioRecord.availableBalance ?? portfolioRecord.balance ?? 0);
-  const positionRows = Array.isArray(positionsRecord.positions) ? positionsRecord.positions : [];
+  const balanceRows = Array.isArray(balancesRecord.balances) ? balancesRecord.balances as Array<Record<string, unknown>> : [];
+  const usdBalance = balanceRows.find((row) => String(row.currency ?? '').toUpperCase() === 'USD') ?? balanceRows[0] ?? {};
+  const cash = Number(usdBalance.currentBalance ?? usdBalance.buyingPower ?? 0);
+  const positionMap = positionsRecord.positions && typeof positionsRecord.positions === 'object' ? positionsRecord.positions as Record<string, unknown> : {};
+  const positionRows = Object.values(positionMap);
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
-  const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
-  const activityRows = Array.isArray(activityRecord.activity) ? activityRecord.activity : [];
+  const activityRows = Array.isArray(activityRecord.activities) ? activityRecord.activities : [];
+  const fillRows = activityRows.filter((row) => row && typeof row === 'object' && String((row as Record<string, unknown>).type) === 'ACTIVITY_TYPE_TRADE');
+  const positionsValue = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).cashValue), 0);
+  const pnl = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).realized), 0);
   return {
     cash,
-    positionsValue: Number(portfolioRecord.positionsValue ?? 0),
-    totalValue: Number(portfolioRecord.totalValue ?? cash),
-    pnl: Number(portfolioRecord.pnl ?? 0),
+    positionsValue,
+    totalValue: cash + positionsValue,
+    pnl,
     positions: positionRows,
     orders: orderRows,
     fills: fillRows,
     activity: activityRows,
     raw: {
-      portfolio: portfolioRecord,
+      balances: balancesRecord,
       positions: positionsRecord,
       orders: ordersRecord,
-      fills: fillsRecord,
       activity: activityRecord,
     },
   };

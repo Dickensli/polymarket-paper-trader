@@ -2,12 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runResolutionCheck } from '@/worker/jobs/resolution-handler';
 import * as dbLib from '@/lib/db';
 import * as polymarketLib from '@/lib/polymarket';
+import * as polymarketUsLib from '@/lib/polymarket-us';
 
 vi.mock('@/lib/db');
 vi.mock('@/lib/polymarket');
+vi.mock('@/lib/polymarket-us');
 
 describe('Resolution Handler Job', () => {
-  let mockDb: any;
+  let mockDb: {
+    query: { positions: { findMany: ReturnType<typeof vi.fn> } };
+    transaction: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -18,7 +23,7 @@ describe('Resolution Handler Job', () => {
           findMany: vi.fn()
         }
       },
-      transaction: vi.fn(async (cb) => {
+      transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           update: vi.fn().mockReturnThis(),
           set: vi.fn().mockReturnThis(),
@@ -33,7 +38,7 @@ describe('Resolution Handler Job', () => {
       })
     };
 
-    vi.spyOn(dbLib, 'getDb').mockReturnValue(mockDb as any);
+    vi.spyOn(dbLib, 'getDb').mockReturnValue(mockDb as unknown as ReturnType<typeof dbLib.getDb>);
   });
 
   it('skips if no open positions', async () => {
@@ -49,7 +54,7 @@ describe('Resolution Handler Job', () => {
     ]);
     vi.spyOn(polymarketLib, 'getMarket').mockResolvedValue({
       closed: false
-    } as any);
+    } as unknown as Awaited<ReturnType<typeof polymarketLib.getMarket>>);
 
     const count = await runResolutionCheck();
     expect(count).toBe(0);
@@ -66,12 +71,25 @@ describe('Resolution Handler Job', () => {
       closed: true,
       tokenIds: ['tokenYES', 'tokenNO'],
       outcomePrices: [1, 0] // YES won
-    } as any);
+    } as unknown as Awaited<ReturnType<typeof polymarketLib.getMarket>>);
 
     const count = await runResolutionCheck();
     
     // We expect 2 positions to be settled
     expect(count).toBe(2);
     expect(mockDb.transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the Polymarket US settlement price for US positions', async () => {
+    mockDb.query.positions.findMany.mockResolvedValue([
+      { id: 'pos-us', platform: 'polymarket_us', marketId: 'usa-market', outcome: 'YES', tokenId: 'polymarket_us:usa-market:YES', shares: '4', avgEntryPrice: '0.4', realizedPnl: '0', portfolioId: 'port1', userId: 'user1' },
+    ]);
+    vi.spyOn(polymarketUsLib, 'getPolymarketUsMarketSettlement').mockResolvedValue({
+      marketSlug: 'usa-market', settlementPrice: { value: '1', currency: 'USD' }, settledAt: '2026-07-12T00:00:00Z',
+    });
+
+    await expect(runResolutionCheck()).resolves.toBe(1);
+    expect(polymarketUsLib.getPolymarketUsMarketSettlement).toHaveBeenCalledWith('usa-market');
+    expect(polymarketLib.getMarket).not.toHaveBeenCalled();
   });
 });

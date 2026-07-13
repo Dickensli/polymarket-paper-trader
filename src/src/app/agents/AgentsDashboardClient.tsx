@@ -135,6 +135,7 @@ type SettledPosition = {
   cost_basis: number;
   proceeds: number;
   realized_pnl: number;
+  closure_type: 'CLOSED' | 'SETTLED';
   settled_at: string;
 };
 
@@ -442,13 +443,13 @@ function SettledPositionsPanel({ positions }: { positions: SettledPosition[] }) 
         <div className="flex min-w-0 items-center gap-3">
           <ChevronIcon open={open} />
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-foreground">Settled Position History</h2>
-            <p className="mt-1 text-xs text-foreground-muted">Realized results for positions closed at market settlement.</p>
+            <h2 className="text-lg font-semibold text-foreground">Closed / Settled Position History</h2>
+            <p className="mt-1 text-xs text-foreground-muted">Full exits are labeled CLOSED; official market resolutions are labeled SETTLED.</p>
           </div>
         </div>
         <div className="shrink-0 text-right">
           <div className="text-sm font-semibold tabular-nums text-foreground">{positions.length}</div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Settled</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Closed</div>
         </div>
       </button>
 
@@ -460,7 +461,7 @@ function SettledPositionsPanel({ positions }: { positions: SettledPosition[] }) 
               <div className="mt-2 text-xl font-bold tabular-nums text-foreground">{positions.length}</div>
             </div>
             <div className="bg-background-secondary/80 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Settlement Proceeds</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Exit Proceeds</div>
               <div className="mt-2 text-xl font-bold tabular-nums text-foreground">{formatMoney(totalProceeds)}</div>
             </div>
             <div className="bg-background-secondary/80 p-4">
@@ -472,17 +473,17 @@ function SettledPositionsPanel({ positions }: { positions: SettledPosition[] }) 
           </div>
 
           {positions.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-foreground-muted">No settled positions match these filters.</div>
+            <div className="px-4 py-8 text-center text-sm text-foreground-muted">No closed or settled positions match these filters.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1040px] text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.06]">
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Strategy / Market</th>
-                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Outcome</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-foreground-muted">Type / Outcome</th>
                     <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Shares</th>
                     <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Avg</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Settled</th>
+                    <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Exit</th>
                     <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Cost</th>
                     <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Proceeds</th>
                     <th className="px-3 py-3 text-right text-xs font-medium uppercase tracking-wider text-foreground-muted">Realized PnL</th>
@@ -498,7 +499,7 @@ function SettledPositionsPanel({ positions }: { positions: SettledPosition[] }) 
                           {agentLabel(position)} · {position.strategy_name} · {platformLabels[position.platform] ?? position.platform}
                         </div>
                       </td>
-                      <td className="px-3 py-3"><Badge>{position.outcome}</Badge></td>
+                      <td className="px-3 py-3"><div className="flex gap-1"><Badge tone={position.closure_type === 'SETTLED' ? 'bg-profit/10 text-profit-light border-profit/25' : 'bg-primary/10 text-primary-light border-primary/25'}>{position.closure_type}</Badge><Badge>{position.outcome}</Badge></div></td>
                       <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatCompactNumber(position.shares)}</td>
                       <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatPrice(position.avg_price)}</td>
                       <td className="px-3 py-3 text-right tabular-nums text-foreground-muted">{formatPrice(position.settlement_price)}</td>
