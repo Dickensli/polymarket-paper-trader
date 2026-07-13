@@ -712,6 +712,48 @@ export const leaderboardSnapshots = pgTable(
   ]
 );
 
+// ─── Compact Strategy Performance ──────────────────────────
+
+/**
+ * Strategy-level mark-to-market checkpoints for professional performance charts.
+ *
+ * This table is intentionally narrow: it stores only aggregated NAV/return values,
+ * never positions, orders, venue payloads, or other granular trading events.
+ */
+export const strategyPerformanceSnapshots = pgTable(
+  'strategy_performance_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id')
+      .notNull()
+      .references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    platform: platformEnum('platform').notNull(),
+    agentMode: agentModeEnum('agent_mode').notNull(),
+    bucket: varchar('bucket', { length: 10 }).notNull(), // HOURLY | DAILY
+    bucketAt: timestamp('bucket_at', { withTimezone: true }).notNull(),
+    cash: decimal('cash', { precision: 18, scale: 6 }).notNull(),
+    positionsValue: decimal('positions_value', { precision: 18, scale: 6 }).notNull(),
+    nav: decimal('nav', { precision: 18, scale: 6 }).notNull(),
+    pnl: decimal('pnl', { precision: 18, scale: 6 }).notNull(),
+    returnPct: decimal('return_pct', { precision: 14, scale: 6 }).notNull(),
+    periodReturnPct: decimal('period_return_pct', { precision: 14, scale: 6 }).notNull().default('0'),
+    twrPct: decimal('twr_pct', { precision: 14, scale: 6 }).notNull(),
+    mwrPct: decimal('mwr_pct', { precision: 14, scale: 6 }),
+    netExternalFlow: decimal('net_external_flow', { precision: 18, scale: 6 }).notNull().default('0'),
+    unpricedPositionsCount: integer('unpriced_positions_count').notNull().default(0),
+    pricingUpdatedAt: timestamp('pricing_updated_at', { withTimezone: true }),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('strategy_performance_bucket_unique_idx').on(table.strategyId, table.bucket, table.bucketAt),
+    index('strategy_performance_strategy_time_idx').on(table.strategyId, table.bucket, table.bucketAt),
+    index('strategy_performance_segment_time_idx').on(table.platform, table.agentMode, table.bucket, table.bucketAt),
+  ],
+);
+
 // ─── Limit Orders ───────────────────────────────────────────
 
 /** Pending / filled / cancelled limit orders for paper trading */

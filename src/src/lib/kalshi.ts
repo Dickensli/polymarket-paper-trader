@@ -118,10 +118,11 @@ export async function getKalshiMarkets(
   return result;
 }
 
-export async function getKalshiOutcomePrice(ticker: string, outcome: 'YES' | 'NO', side: 'BUY' | 'SELL' = 'BUY'): Promise<number | null> {
-  const market = await getKalshiMarket(ticker);
-  if (!market) return null;
-
+export function getKalshiOutcomePriceFromMarket(
+  market: Record<string, unknown>,
+  outcome: 'YES' | 'NO',
+  side: 'BUY' | 'SELL' = 'BUY',
+): number | null {
   // Handle settled/finalized markets
   if (market.status === 'finalized' || market.status === 'settled') {
     const result = String(market.result).toLowerCase();
@@ -153,6 +154,11 @@ export async function getKalshiOutcomePrice(ticker: string, outcome: 'YES' | 'NO
     if (price !== null && price <= 1) return price;
   }
   return null;
+}
+
+export async function getKalshiOutcomePrice(ticker: string, outcome: 'YES' | 'NO', side: 'BUY' | 'SELL' = 'BUY'): Promise<number | null> {
+  const market = await getKalshiMarket(ticker);
+  return market ? getKalshiOutcomePriceFromMarket(market, outcome, side) : null;
 }
 
 export function kalshiTokenId(ticker: string, outcome: 'YES' | 'NO'): string {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { leaderboardSnapshots, users, portfolios, paperTrades, positions, strategies } from '@/lib/db/schema';
+import { leaderboardSnapshots, users, portfolios, paperTrades, positions, strategies, strategyPerformanceSnapshots } from '@/lib/db/schema';
 import { eq, and, asc, inArray } from 'drizzle-orm';
 
 import { auth } from '@/lib/auth';
@@ -31,6 +31,10 @@ function pageHistoryStrategies(
     allowedKeys.add(strategy);
     allowedKeys.add(`${strategy}_pnl`);
     allowedKeys.add(`${strategy}_rank`);
+    allowedKeys.add(`${strategy}_return_pct`);
+    allowedKeys.add(`${strategy}_period_return_pct`);
+    allowedKeys.add(`${strategy}_twr_pct`);
+    allowedKeys.add(`${strategy}_mwr_pct`);
   }
 
   return {
@@ -234,8 +238,16 @@ export async function GET(request: NextRequest) {
 
     const db = getDb();
     const eligibleStrategyRows = await db
-      .select({ userId: strategies.userId })
+      .select({
+        id: strategies.id,
+        userId: strategies.userId,
+        strategyId: strategies.strategyId,
+        userName: users.name,
+        userEmail: users.email,
+        color: users.color,
+      })
       .from(strategies)
+      .innerJoin(users, eq(users.id, strategies.userId))
       .where(and(
         eq(strategies.platform, platform),
         eq(strategies.agentMode, isRealTab ? 'real' : 'paper'),
@@ -244,9 +256,85 @@ export async function GET(request: NextRequest) {
     const eligibleUserIds = Array.from(new Set(eligibleStrategyRows.map((strategy) => strategy.userId)))
       .filter((eligibleUserId) => isAdmin || eligibleUserId === userId);
     const eligibleUserIdSet = new Set(eligibleUserIds);
+    const eligibleStrategies = eligibleStrategyRows.filter((strategy) => eligibleUserIdSet.has(strategy.userId));
+    const eligibleStrategyIds = new Set(eligibleStrategies.map((strategy) => strategy.id));
+    const strategyMeta = new Map(eligibleStrategies.map((strategy) => [strategy.id, {
+      label: `${strategy.userName || strategy.userEmail} · ${strategy.strategyId}`,
+      color: strategy.color,
+    }]));
 
     // 1. Check for pre-computed snapshots (HOURLY or DAILY)
     const targetPeriod = granularity === 'hourly' ? 'HOURLY' : 'DAILY';
+
+    // Prefer compact strategy-attributed mark-to-market checkpoints. The query is
+    // rollout-safe: deployments without migration 0010 temporarily use legacy data.
+    try {
+      const compactSnapshots = await db.query.strategyPerformanceSnapshots.findMany({
+        where: and(
+          eq(strategyPerformanceSnapshots.bucket, targetPeriod),
+          eq(strategyPerformanceSnapshots.platform, platform),
+          eq(strategyPerformanceSnapshots.agentMode, isRealTab ? 'real' : 'paper'),
+        ),
+        orderBy: (snapshot, { asc }) => [asc(snapshot.bucketAt)],
+      });
+      const filteredCompactSnapshots = compactSnapshots.filter((snapshot) => eligibleStrategyIds.has(snapshot.strategyId));
+
+      if (filteredCompactSnapshots.length > 0) {
+        const periodMap = new Map<string, HistoryPoint>();
+        for (const snapshot of filteredCompactSnapshots) {
+          const meta = strategyMeta.get(snapshot.strategyId);
+          if (!meta) continue;
+          const periodKey = getPeriodKey(snapshot.bucketAt, granularity);
+          const point = periodMap.get(periodKey) ?? { date: periodKey };
+          point[meta.label] = Number(snapshot.nav);
+          point[`${meta.label}_pnl`] = Number(snapshot.pnl);
+          point[`${meta.label}_return_pct`] = Number(snapshot.returnPct);
+          point[`${meta.label}_period_return_pct`] = Number(snapshot.periodReturnPct);
+          point[`${meta.label}_twr_pct`] = Number(snapshot.twrPct);
+          if (snapshot.mwrPct !== null) point[`${meta.label}_mwr_pct`] = Number(snapshot.mwrPct);
+          point[`${meta.label}_rank`] = 1;
+          periodMap.set(periodKey, point);
+        }
+
+        const strategyLabels = eligibleStrategies
+          .filter((strategy) => filteredCompactSnapshots.some((snapshot) => snapshot.strategyId === strategy.id))
+          .map((strategy) => strategyMeta.get(strategy.id)!.label);
+        const historyData = Array.from(periodMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+        const paged = pageHistoryStrategies(strategyLabels, historyData, page, pageSize);
+        const strategyColors = Object.fromEntries(eligibleStrategies.flatMap((strategy) => {
+          const meta = strategyMeta.get(strategy.id)!;
+          return meta.color ? [[meta.label, meta.color]] : [];
+        }));
+        const latestCapturedAt = filteredCompactSnapshots.reduce<Date | null>((latest, snapshot) => (
+          !latest || snapshot.capturedAt > latest ? snapshot.capturedAt : latest
+        ), null);
+        const latestPricingAt = filteredCompactSnapshots.reduce<Date | null>((latest, snapshot) => (
+          snapshot.pricingUpdatedAt && (!latest || snapshot.pricingUpdatedAt > latest) ? snapshot.pricingUpdatedAt : latest
+        ), null);
+        const unpricedPositionsCount = Math.max(...filteredCompactSnapshots.map((snapshot) => snapshot.unpricedPositionsCount));
+
+        return NextResponse.json({
+          success: true,
+          strategies: paged.strategies,
+          strategyColors,
+          history: paged.history,
+          granularity,
+          meta: {
+            platform, strategyStatus, granularity, page: paged.page, pageSize,
+            totalStrategies: paged.total, totalPages: paged.totalPages,
+            source: 'strategy_mark_to_market',
+            returnMethod: 'TWR with aggregated external flows; MWR annualized since inception',
+            externalFlowDetail: 'aggregate_only',
+            latestCapturedAt: latestCapturedAt?.toISOString() ?? null,
+            latestPricingAt: latestPricingAt?.toISOString() ?? null,
+            unpricedPositionsCount,
+            retention: granularity === 'hourly' ? '30 days' : '3 years',
+          },
+        });
+      }
+    } catch (compactError) {
+      console.warn('Compact strategy performance unavailable; using legacy history:', compactError);
+    }
 
     let snaps = await db.query.leaderboardSnapshots.findMany({
       where: isAdmin
@@ -332,6 +420,8 @@ export async function GET(request: NextRequest) {
           pageSize,
           totalStrategies: paged.total,
           totalPages: paged.totalPages,
+          source: 'legacy_user_portfolio',
+          returnMethod: 'simple return; historical marks may be estimated',
         },
       });
     }
@@ -366,6 +456,8 @@ export async function GET(request: NextRequest) {
         pageSize,
         totalStrategies: paged.total,
         totalPages: paged.totalPages,
+        source: 'trade_replay_estimate',
+        returnMethod: 'simple return; historical positions valued at cost basis',
       },
     });
   } catch (err) {

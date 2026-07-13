@@ -15,6 +15,14 @@ type TimeRange = '1H' | '6H' | '1D' | '1W' | 'ALL';
 type ChartMetric = 'value' | 'pnl';
 type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
 type StrategyStatus = 'active' | 'paused' | 'disabled' | 'all';
+type HistoryMeta = {
+  source?: string;
+  returnMethod?: string;
+  latestCapturedAt?: string | null;
+  latestPricingAt?: string | null;
+  unpricedPositionsCount?: number;
+  retention?: string;
+};
 
 /* ─── Constants ─────────────────────────────────────── */
 const STRATEGY_COLORS = [
@@ -170,6 +178,9 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
   const latestPnl = Number(history[history.length - 1]?.[`${stratName}_pnl`] || 0);
   const latestValue = Number(history[history.length - 1]?.[stratName] || 10000);
   const derivedStartVal = latestValue - latestPnl;
+  const latestTwrPct = Number(history[history.length - 1]?.[`${stratName}_twr_pct`] ?? (derivedStartVal > 0 ? (latestPnl / derivedStartVal) * 100 : 0));
+  const rawMwrPct = history[history.length - 1]?.[`${stratName}_mwr_pct`];
+  const latestMwrPct = rawMwrPct === undefined || rawMwrPct === null ? null : Number(rawMwrPct);
   
   const values = history.map(h => {
     const val = h[stratName];
@@ -183,6 +194,7 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
       totalPnl: latestPnl, returnPct: derivedStartVal > 0 ? (latestPnl / derivedStartVal) * 100 : 0, currentValue: latestValue,
       maxDrawdown: 0, volatility: 0, periodReturns: [] as number[],
       hourlyValues: values,
+      latestTwrPct, latestMwrPct,
     };
   }
 
@@ -257,12 +269,14 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
     volatility,
     periodReturns,
     hourlyValues: values,
+    latestTwrPct,
+    latestMwrPct,
   };
 }
 
 export default function AnalyticsClient() {
-  const [dailyData, setDailyData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
-  const [hourlyData, setHourlyData] = useState<{ strategies: string[]; history: HistoryPoint[] } | null>(null);
+  const [dailyData, setDailyData] = useState<{ strategies: string[]; history: HistoryPoint[]; meta?: HistoryMeta } | null>(null);
+  const [hourlyData, setHourlyData] = useState<{ strategies: string[]; history: HistoryPoint[]; meta?: HistoryMeta } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<Platform>('polymarket');
@@ -296,8 +310,8 @@ export default function AnalyticsClient() {
       fetch(`/api/leaderboard/history?granularity=hourly&${query}`).then(r => r.json()),
     ])
       .then(([daily, hourly]) => {
-        if (daily.success) setDailyData({ strategies: daily.strategies, history: daily.history });
-        if (hourly.success) setHourlyData({ strategies: hourly.strategies, history: hourly.history });
+        if (daily.success) setDailyData({ strategies: daily.strategies, history: daily.history, meta: daily.meta });
+        if (hourly.success) setHourlyData({ strategies: hourly.strategies, history: hourly.history, meta: hourly.meta });
         setTotalPages(daily.meta?.totalPages ?? hourly.meta?.totalPages ?? 1);
         // Merge strategy colors from both responses
         setStrategyColors(prev => ({
@@ -761,7 +775,9 @@ export default function AnalyticsClient() {
           <div className="flex items-center gap-2">
             <span className="analytics-live-badge">
               <span className="analytics-live-dot" />
-              Live
+              {data.meta?.source === 'strategy_mark_to_market'
+                ? (data.meta.unpricedPositionsCount ? 'Partial mark estimate' : 'Marked checkpoint')
+                : 'Estimated history'}
             </span>
             <span className="text-[10px] text-foreground-muted/50 font-mono">{displayTime}</span>
           </div>
@@ -881,10 +897,26 @@ export default function AnalyticsClient() {
             <span>Shift+Click twice to select zoom range · Esc to cancel</span>
             <span className="opacity-30">•</span>
             <span>{filteredHistory.length} data points</span>
+            {data.meta?.latestPricingAt && (
+              <>
+                <span className="opacity-30">•</span>
+                <span>Prices as of {new Date(data.meta.latestPricingAt).toLocaleString('en-US', {
+                  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York',
+                })}</span>
+              </>
+            )}
+            {Boolean(data.meta?.unpricedPositionsCount) && (
+              <>
+                <span className="opacity-30">•</span>
+                <span className="text-amber-500/70">{data.meta?.unpricedPositionsCount} cost-basis fallback(s)</span>
+              </>
+            )}
             {granularity === 'hourly' && (
               <>
                 <span className="opacity-30">•</span>
-                <span className="text-amber-500/70">⚡ Hourly data reflects real-time price fluctuations</span>
+                <span className="text-amber-500/70">
+                  ⚡ Hourly mark-to-market checkpoints{data.meta?.retention ? ` · ${data.meta.retention} retained` : ''}
+                </span>
               </>
             )}
           </div>
@@ -1114,6 +1146,30 @@ export default function AnalyticsClient() {
 
         {primaryMetrics && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <MetricCard
+              label="Time-Weighted Return"
+              value={formatPercent(primaryMetrics.latestTwrPct)}
+              subValue="cash-flow neutral"
+              delta={primaryMetrics.latestTwrPct >= 0 ? 'Positive' : 'Negative'}
+              deltaColor={primaryMetrics.latestTwrPct >= 0 ? 'text-profit' : 'text-loss'}
+              icon={
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M3 15.25a.75.75 0 01-.75-.75v-9a.75.75 0 011.5 0v7.19l4.72-4.72a.75.75 0 011.06 0l2.47 2.47 4.47-4.47a.75.75 0 111.06 1.06l-5 5a.75.75 0 01-1.06 0L9 9.56l-4.72 4.72a.75.75 0 01-.53.22H3z"/>
+                </svg>
+              }
+            />
+            <MetricCard
+              label="Money-Weighted Return"
+              value={primaryMetrics.latestMwrPct === null ? '—' : formatPercent(primaryMetrics.latestMwrPct)}
+              subValue="annualized since inception"
+              delta={primaryMetrics.latestMwrPct === null ? 'Needs 30 days' : 'No external flows recorded'}
+              deltaColor="text-foreground-muted"
+              icon={
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-12.25a.75.75 0 00-1.5 0v.55a2.75 2.75 0 00.5 5.454v1.696a1.25 1.25 0 01-1-1.225.75.75 0 00-1.5 0 2.75 2.75 0 002 2.646v.379a.75.75 0 001.5 0v-.38a2.75 2.75 0 00-.5-5.454V7.72a1.25 1.25 0 011 1.225.75.75 0 001.5 0 2.75 2.75 0 00-2-2.646v-.55z" clipRule="evenodd"/>
+                </svg>
+              }
+            />
             <MetricCard
               label="Max Drawdown"
               value={`${primaryMetrics.maxDrawdown.toFixed(2)}%`}
