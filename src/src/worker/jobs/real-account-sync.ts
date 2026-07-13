@@ -276,6 +276,7 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
         ),
       });
       if (!cashBackfillState?.lastSuccessAt) {
+        const cashEntries: Array<typeof officialCashLedgerEntries.$inferInsert> = [];
         for (const fill of persistedFills.filter((row) => row.platform === platform)) {
           for (const entry of buildFillCashLedgerEntries({
             ...fill,
@@ -285,7 +286,7 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             fee: Number(fill.fee),
             payload: fill.payload as Record<string, unknown>,
           })) {
-            await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+            cashEntries.push({ ...entry, amount: entry.amount.toFixed(6) } as typeof officialCashLedgerEntries.$inferInsert);
           }
         }
         for (const settlement of persistedSettlements.filter((row) => row.platform === platform)) {
@@ -296,8 +297,11 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             fee: Number(settlement.fee),
             payload: settlement.payload as Record<string, unknown>,
           })) {
-            await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+            cashEntries.push({ ...entry, amount: entry.amount.toFixed(6) } as typeof officialCashLedgerEntries.$inferInsert);
           }
+        }
+        for (let index = 0; index < cashEntries.length; index += 500) {
+          await db.insert(officialCashLedgerEntries).values(cashEntries.slice(index, index + 500)).onConflictDoNothing();
         }
         await db.insert(officialSyncState).values({
           platform, accountScope: 'default', resource: 'cash_ledger_backfill',

@@ -122,7 +122,11 @@ describe('real account sync job', () => {
     });
 
     await expect(runRealAccountSync()).resolves.toMatchObject({ errors: [] });
-    expect(onConflictDoNothing).toHaveBeenCalledTimes(6);
+    expect(ledgerInsertValues).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ entryGroup: 'kalshi:fill:fill-old', accountType: 'CASH' }),
+      expect.objectContaining({ entryGroup: 'kalshi:settlement:kalshi:KXTEST:2026-07-02', accountType: 'CASH' }),
+    ]));
+    expect(onConflictDoNothing).toHaveBeenCalledTimes(1);
     expect(onConflictDoUpdate).toHaveBeenCalledWith(expect.objectContaining({
       set: expect.objectContaining({ lastSuccessAt: expect.any(Date), lastError: null }),
     }));
