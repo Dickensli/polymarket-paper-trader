@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildAgentPositionSummaries,
   normalizePositionRows,
@@ -165,6 +165,40 @@ type DashboardData = {
     agent_modes: AgentMode[];
   };
 };
+
+const INITIAL_REPORT_COUNT = 4;
+const INITIAL_AUDIT_COUNT = 6;
+const CLIENT_DASHBOARD_CACHE_TTL_MS = 30_000;
+const CLIENT_DASHBOARD_CACHE_MAX_ENTRIES = 12;
+
+const clientDashboardCache = new Map<string, { data: DashboardData; cachedAt: number }>();
+const clientDashboardRequests = new Map<string, Promise<DashboardData>>();
+
+function cacheDashboardData(query: string, data: DashboardData) {
+  clientDashboardCache.delete(query);
+  clientDashboardCache.set(query, { data, cachedAt: Date.now() });
+  if (clientDashboardCache.size <= CLIENT_DASHBOARD_CACHE_MAX_ENTRIES) return;
+  const oldestKey = clientDashboardCache.keys().next().value;
+  if (oldestKey) clientDashboardCache.delete(oldestKey);
+}
+
+function fetchDashboardData(query: string): Promise<DashboardData> {
+  const existingRequest = clientDashboardRequests.get(query);
+  if (existingRequest) return existingRequest;
+
+  const request = fetch(`/api/agent/dashboard?${query}`, { cache: 'no-store' })
+    .then(async (response) => {
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? 'Failed to load agents dashboard');
+      cacheDashboardData(query, json);
+      return json as DashboardData;
+    })
+    .finally(() => {
+      clientDashboardRequests.delete(query);
+    });
+  clientDashboardRequests.set(query, request);
+  return request;
+}
 
 const platformLabels: Record<string, string> = {
   all: 'All platforms',
@@ -800,10 +834,14 @@ export default function AgentsDashboardClient() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [platform, setPlatform] = useState<Platform>('all');
   const [agentMode, setAgentMode] = useState<AgentMode>('all');
-  const [strategyStatus, setStrategyStatus] = useState<StrategyLifecycleFilter>('all');
+  const [strategyStatus, setStrategyStatus] = useState<StrategyLifecycleFilter>('active');
   const [strategyId, setStrategyId] = useState('all');
+  const [reportsExpandedQuery, setReportsExpandedQuery] = useState<string | null>(null);
+  const [auditExpandedQuery, setAuditExpandedQuery] = useState<string | null>(null);
+  const hasDataRef = useRef(false);
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -813,21 +851,43 @@ export default function AgentsDashboardClient() {
     params.set('strategy_id', strategyId);
     return params.toString();
   }, [platform, agentMode, strategyStatus, strategyId]);
+  const reportsExpanded = reportsExpandedQuery === query;
+  const auditExpanded = auditExpandedQuery === query;
 
   useEffect(() => {
     let cancelled = false;
+
     async function loadDashboard() {
-      setIsLoading(true);
+      const cached = clientDashboardCache.get(query);
+      const cacheIsFresh = cached && Date.now() - cached.cachedAt < CLIENT_DASHBOARD_CACHE_TTL_MS;
       setError(null);
+
+      if (cached) {
+        hasDataRef.current = true;
+        setData(cached.data);
+        setIsLoading(false);
+      }
+
+      if (cacheIsFresh) {
+        setIsRefreshing(false);
+        return;
+      }
+
+      setIsLoading(!hasDataRef.current);
+      setIsRefreshing(hasDataRef.current);
       try {
-        const response = await fetch(`/api/agent/dashboard?${query}`, { cache: 'no-store' });
-        const json = await response.json();
-        if (!response.ok) throw new Error(json.error ?? 'Failed to load agents dashboard');
-        if (!cancelled) setData(json);
+        const json = await fetchDashboardData(query);
+        if (!cancelled) {
+          hasDataRef.current = true;
+          setData(json);
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load agents dashboard');
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
       }
     }
     loadDashboard();
@@ -939,6 +999,13 @@ export default function AgentsDashboardClient() {
         </div>
       )}
 
+      {isRefreshing && data && (
+        <div role="status" className="mb-4 flex items-center gap-2 text-xs text-foreground-muted">
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-foreground-muted border-t-transparent" />
+          Refreshing filtered view…
+        </div>
+      )}
+
       {isLoading && (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, index) => (
@@ -970,15 +1037,26 @@ export default function AgentsDashboardClient() {
             <section>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-foreground">Reports</h2>
-                <span className="text-xs text-foreground-muted">{data.reports.length} recent</span>
+                <span className="text-xs text-foreground-muted">
+                  Showing {Math.min(reportsExpanded ? data.reports.length : INITIAL_REPORT_COUNT, data.reports.length)} of {data.reports.length} recent
+                </span>
               </div>
               {data.reports.length === 0 ? (
                 <EmptyRow label="No reports match these filters." />
               ) : (
                 <div className="space-y-3">
-                  {data.reports.slice(0, 8).map((report) => (
+                  {data.reports.slice(0, reportsExpanded ? data.reports.length : INITIAL_REPORT_COUNT).map((report) => (
                     <ReportEntry key={report.id} report={report} />
                   ))}
+                  {data.reports.length > INITIAL_REPORT_COUNT && (
+                    <button
+                      type="button"
+                      onClick={() => setReportsExpandedQuery((current) => current === query ? null : query)}
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-2.5 text-sm font-semibold text-foreground-muted transition-colors hover:bg-white/[0.05] hover:text-foreground"
+                    >
+                      {reportsExpanded ? 'Show fewer reports' : `Show ${data.reports.length - INITIAL_REPORT_COUNT} more reports`}
+                    </button>
+                  )}
                 </div>
               )}
             </section>
@@ -1028,15 +1106,26 @@ export default function AgentsDashboardClient() {
             <section>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-foreground">Real Trade Audit Log</h2>
-                <span className="text-xs text-foreground-muted">{data.real_orders.length} orders</span>
+                <span className="text-xs text-foreground-muted">
+                  Showing {Math.min(auditExpanded ? data.real_orders.length : INITIAL_AUDIT_COUNT, data.real_orders.length)} of {data.real_orders.length} orders
+                </span>
               </div>
               {data.real_orders.length === 0 ? (
                 <EmptyRow label="No real orders match these filters." />
               ) : (
                 <div className="space-y-3">
-                  {data.real_orders.slice(0, 12).map((order) => (
+                  {data.real_orders.slice(0, auditExpanded ? data.real_orders.length : INITIAL_AUDIT_COUNT).map((order) => (
                     <OrderEntry key={order.id} order={order} />
                   ))}
+                  {data.real_orders.length > INITIAL_AUDIT_COUNT && (
+                    <button
+                      type="button"
+                      onClick={() => setAuditExpandedQuery((current) => current === query ? null : query)}
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-2.5 text-sm font-semibold text-foreground-muted transition-colors hover:bg-white/[0.05] hover:text-foreground"
+                    >
+                      {auditExpanded ? 'Show fewer audit entries' : `Show ${data.real_orders.length - INITIAL_AUDIT_COUNT} more audit entries`}
+                    </button>
+                  )}
                 </div>
               )}
             </section>

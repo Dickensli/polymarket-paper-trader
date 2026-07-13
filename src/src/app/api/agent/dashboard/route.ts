@@ -18,6 +18,11 @@ import {
 } from '@/lib/agent-market-context';
 import { isOpenRealOrderStatus } from '@/lib/real-orders';
 import {
+  buildAgentDashboardCacheKey,
+  readAgentDashboardCache,
+  writeAgentDashboardCache,
+} from '@/lib/agent-dashboard-cache';
+import {
   agentReports,
   portfolioSnapshots,
   paperTradeOrders,
@@ -85,6 +90,21 @@ export async function GET(request: NextRequest) {
     const agentMode = parseMode(request.nextUrl.searchParams.get('agent_mode'));
     const strategyStatus = parseStrategyLifecycleFilter(request.nextUrl.searchParams.get('strategy_status'));
     const strategyId = request.nextUrl.searchParams.get('strategy_id') || 'all';
+    const cacheKey = buildAgentDashboardCacheKey(session.user.id, {
+      platform,
+      agentMode,
+      strategyStatus,
+      strategyId,
+    });
+    const cachedDashboard = await readAgentDashboardCache<Record<string, unknown>>(cacheKey);
+    if (cachedDashboard) {
+      return NextResponse.json(cachedDashboard.data, {
+        headers: {
+          'Cache-Control': 'private, max-age=0, must-revalidate',
+          'X-Agent-Dashboard-Cache': `HIT-${cachedDashboard.source.toUpperCase()}`,
+        },
+      });
+    }
     const db = getDb();
     const canViewAllAgents = GLOBAL_AGENT_VIEWER_EMAILS.has(session.user.email ?? '');
 
@@ -126,6 +146,89 @@ export async function GET(request: NextRequest) {
         ? db.select().from(agentReports).orderBy(desc(agentReports.createdAt)).limit(200)
         : db.select().from(agentReports).where(eq(agentReports.userId, session.user.id)).orderBy(desc(agentReports.createdAt)).limit(100);
 
+    const visibleUsersPromise = canViewAllAgents
+      ? db.select().from(users).limit(1000)
+      : db.select().from(users).where(eq(users.id, session.user.id)).limit(1);
+
+    const snapshotsPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof portfolioSnapshots.$inferSelect)[])
+        : canViewAllAgents
+          ? db.select().from(portfolioSnapshots)
+            .where(inArray(portfolioSnapshots.strategyId, matchingReportStrategyIdsList))
+            .orderBy(desc(portfolioSnapshots.capturedAt)).limit(120)
+          : db.select().from(portfolioSnapshots)
+            .where(and(
+              eq(portfolioSnapshots.userId, session.user.id),
+              inArray(portfolioSnapshots.strategyId, matchingReportStrategyIdsList),
+            ))
+            .orderBy(desc(portfolioSnapshots.capturedAt)).limit(80)
+      : canViewAllAgents
+        ? db.select().from(portfolioSnapshots).orderBy(desc(portfolioSnapshots.capturedAt)).limit(240)
+        : db.select().from(portfolioSnapshots).where(eq(portfolioSnapshots.userId, session.user.id)).orderBy(desc(portfolioSnapshots.capturedAt)).limit(120);
+
+    const realOrdersPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof realTradeOrders.$inferSelect)[])
+        : canViewAllAgents
+          ? db.select().from(realTradeOrders)
+            .where(inArray(realTradeOrders.strategyId, matchingReportStrategyIdsList))
+            .orderBy(desc(realTradeOrders.createdAt)).limit(100)
+          : db.select().from(realTradeOrders)
+            .where(and(
+              eq(realTradeOrders.userId, session.user.id),
+              inArray(realTradeOrders.strategyId, matchingReportStrategyIdsList),
+            ))
+            .orderBy(desc(realTradeOrders.createdAt)).limit(80)
+      : canViewAllAgents
+        ? db.select().from(realTradeOrders).orderBy(desc(realTradeOrders.createdAt)).limit(200)
+        : db.select().from(realTradeOrders).where(eq(realTradeOrders.userId, session.user.id)).orderBy(desc(realTradeOrders.createdAt)).limit(100);
+
+    const paperOrdersPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof paperTradeOrders.$inferSelect)[])
+        : canViewAllAgents
+          ? db.select().from(paperTradeOrders)
+            .where(inArray(paperTradeOrders.strategyId, matchingReportStrategyIdsList))
+            .orderBy(desc(paperTradeOrders.createdAt)).limit(3000)
+          : db.select().from(paperTradeOrders)
+            .where(and(
+              eq(paperTradeOrders.userId, session.user.id),
+              inArray(paperTradeOrders.strategyId, matchingReportStrategyIdsList),
+            ))
+            .orderBy(desc(paperTradeOrders.createdAt)).limit(1500)
+      : canViewAllAgents
+        ? db.select().from(paperTradeOrders).orderBy(desc(paperTradeOrders.createdAt)).limit(5000)
+        : db.select().from(paperTradeOrders).where(eq(paperTradeOrders.userId, session.user.id)).orderBy(desc(paperTradeOrders.createdAt)).limit(2000);
+
+    const officialFillsPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof officialTradeFills.$inferSelect)[])
+        : db.select().from(officialTradeFills)
+          .where(inArray(officialTradeFills.strategyId, matchingReportStrategyIdsList))
+          .orderBy(desc(officialTradeFills.filledAt)).limit(canViewAllAgents ? 3000 : 1500)
+      : canViewAllAgents
+        ? db.select().from(officialTradeFills).orderBy(desc(officialTradeFills.filledAt)).limit(5000)
+        : db.select().from(officialTradeFills).where(eq(officialTradeFills.userId, session.user.id)).orderBy(desc(officialTradeFills.filledAt)).limit(2000);
+
+    const officialEventsPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof officialOrderEvents.$inferSelect)[])
+        : db.select().from(officialOrderEvents)
+          .where(inArray(officialOrderEvents.strategyId, matchingReportStrategyIdsList))
+          .orderBy(desc(officialOrderEvents.occurredAt)).limit(canViewAllAgents ? 3000 : 1500)
+      : canViewAllAgents
+        ? db.select().from(officialOrderEvents).orderBy(desc(officialOrderEvents.occurredAt)).limit(5000)
+        : db.select().from(officialOrderEvents).where(eq(officialOrderEvents.userId, session.user.id)).orderBy(desc(officialOrderEvents.occurredAt)).limit(2000);
+
+    const officialAllocationsPromise = reportQueryNeedsStrategyScope
+      ? matchingReportStrategyIdsList.length === 0
+        ? Promise.resolve([] as (typeof officialSettlementAllocations.$inferSelect)[])
+        : db.select().from(officialSettlementAllocations)
+          .where(inArray(officialSettlementAllocations.strategyId, matchingReportStrategyIdsList))
+          .orderBy(desc(officialSettlementAllocations.updatedAt)).limit(3000)
+      : db.select().from(officialSettlementAllocations).orderBy(desc(officialSettlementAllocations.updatedAt)).limit(5000);
+
     const [
       visibleUsers,
       reports,
@@ -139,33 +242,21 @@ export async function GET(request: NextRequest) {
       officialSettlementRows,
       officialAllocationRows,
     ] = await Promise.all([
-      canViewAllAgents
-        ? db.select().from(users).limit(1000)
-        : db.select().from(users).where(eq(users.id, session.user.id)).limit(1),
+      visibleUsersPromise,
       reportsPromise,
-      canViewAllAgents
-        ? db.select().from(portfolioSnapshots).orderBy(desc(portfolioSnapshots.capturedAt)).limit(240)
-        : db.select().from(portfolioSnapshots).where(eq(portfolioSnapshots.userId, session.user.id)).orderBy(desc(portfolioSnapshots.capturedAt)).limit(120),
-      canViewAllAgents
-        ? db.select().from(realTradeOrders).orderBy(desc(realTradeOrders.createdAt)).limit(200)
-        : db.select().from(realTradeOrders).where(eq(realTradeOrders.userId, session.user.id)).orderBy(desc(realTradeOrders.createdAt)).limit(100),
+      snapshotsPromise,
+      realOrdersPromise,
       canViewAllAgents
         ? db.select().from(positions).where(eq(positions.isOpen, true)).limit(2000)
         : db.select().from(positions).where(and(eq(positions.userId, session.user.id), eq(positions.isOpen, true))).limit(500),
       canViewAllAgents
         ? db.select().from(positions).where(eq(positions.isOpen, false)).orderBy(desc(positions.resolvedAt)).limit(1000)
         : db.select().from(positions).where(and(eq(positions.userId, session.user.id), eq(positions.isOpen, false))).orderBy(desc(positions.resolvedAt)).limit(500),
-      canViewAllAgents
-        ? db.select().from(paperTradeOrders).orderBy(desc(paperTradeOrders.createdAt)).limit(5000)
-        : db.select().from(paperTradeOrders).where(eq(paperTradeOrders.userId, session.user.id)).orderBy(desc(paperTradeOrders.createdAt)).limit(2000),
-      canViewAllAgents
-        ? db.select().from(officialTradeFills).orderBy(desc(officialTradeFills.filledAt)).limit(5000)
-        : db.select().from(officialTradeFills).where(eq(officialTradeFills.userId, session.user.id)).orderBy(desc(officialTradeFills.filledAt)).limit(2000),
-      canViewAllAgents
-        ? db.select().from(officialOrderEvents).orderBy(desc(officialOrderEvents.occurredAt)).limit(5000)
-        : db.select().from(officialOrderEvents).where(eq(officialOrderEvents.userId, session.user.id)).orderBy(desc(officialOrderEvents.occurredAt)).limit(2000),
+      paperOrdersPromise,
+      officialFillsPromise,
+      officialEventsPromise,
       db.select().from(officialSettlements).orderBy(desc(officialSettlements.settledAt)).limit(1000),
-      db.select().from(officialSettlementAllocations).orderBy(desc(officialSettlementAllocations.updatedAt)).limit(5000),
+      officialAllocationsPromise,
     ]);
 
     const officialOrderHistory = buildOfficialOrderHistory(officialFills, officialEvents);
@@ -358,9 +449,14 @@ export async function GET(request: NextRequest) {
         portfolio.positions,
       ),
     })));
-    const enrichedSettledPositions = await enrichSettledRowsWithMarkets(settledPositions);
+    // The collapsed history renders at most 50 rows. Avoid blocking the initial
+    // dashboard response on market lookups for records the user cannot see.
+    const enrichedSettledPositions = [
+      ...await enrichSettledRowsWithMarkets(settledPositions.slice(0, 50)),
+      ...settledPositions.slice(50),
+    ];
 
-    return NextResponse.json({
+    const payload = {
       filters: {
         platform,
         agent_mode: agentMode,
@@ -474,6 +570,13 @@ export async function GET(request: NextRequest) {
         strategies: allStrategies.map(strategyPayload),
         platforms: ['all', 'polymarket', 'kalshi', 'polymarket_us'],
         agent_modes: ['all', 'paper', 'real'],
+      },
+    };
+    await writeAgentDashboardCache(cacheKey, payload);
+    return NextResponse.json(payload, {
+      headers: {
+        'Cache-Control': 'private, max-age=0, must-revalidate',
+        'X-Agent-Dashboard-Cache': 'MISS',
       },
     });
   } catch (err) {

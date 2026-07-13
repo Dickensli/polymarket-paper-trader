@@ -38,6 +38,23 @@ export async function withCache<T>(
   return data;
 }
 
+/** Read a cached value without invoking a factory. */
+export function getCachedValue<T>(key: string): T | undefined {
+  const cached = store.get(key);
+  if (!cached) return undefined;
+  if (Date.now() >= cached.expiry) {
+    store.delete(key);
+    return undefined;
+  }
+  return cached.data as T;
+}
+
+/** Write a value directly to the in-memory cache. */
+export function setCachedValue<T>(key: string, data: T, ttlMs: number): void {
+  if (ttlMs <= 0) return;
+  store.set(key, { data, expiry: Date.now() + ttlMs });
+}
+
 /** Invalidate a specific cache key. */
 export function invalidateCache(key: string): void {
   store.delete(key);

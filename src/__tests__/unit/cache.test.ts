@@ -17,6 +17,8 @@ let withCache: typeof import('@/lib/cache').withCache;
 let invalidateCache: typeof import('@/lib/cache').invalidateCache;
 let invalidateCacheByPrefix: typeof import('@/lib/cache').invalidateCacheByPrefix;
 let getCacheStats: typeof import('@/lib/cache').getCacheStats;
+let getCachedValue: typeof import('@/lib/cache').getCachedValue;
+let setCachedValue: typeof import('@/lib/cache').setCachedValue;
 
 beforeEach(async () => {
   // Use fake timers to control TTL behavior precisely
@@ -28,6 +30,8 @@ beforeEach(async () => {
   invalidateCache = mod.invalidateCache;
   invalidateCacheByPrefix = mod.invalidateCacheByPrefix;
   getCacheStats = mod.getCacheStats;
+  getCachedValue = mod.getCachedValue;
+  setCachedValue = mod.setCachedValue;
 });
 
 afterEach(() => {
@@ -119,6 +123,21 @@ describe('withCache', () => {
     // but both results should be consistent types)
     expect(typeof r1).toBe('string');
     expect(typeof r2).toBe('string');
+  });
+});
+
+describe('direct cache access', () => {
+  it('reads a directly written value until its TTL expires', () => {
+    setCachedValue('dashboard:user-1:active', { reports: 4 }, 30_000);
+    expect(getCachedValue('dashboard:user-1:active')).toEqual({ reports: 4 });
+
+    vi.advanceTimersByTime(30_000);
+    expect(getCachedValue('dashboard:user-1:active')).toBeUndefined();
+  });
+
+  it('does not store values with a non-positive TTL', () => {
+    setCachedValue('no-cache', 'value', 0);
+    expect(getCachedValue('no-cache')).toBeUndefined();
   });
 });
 
