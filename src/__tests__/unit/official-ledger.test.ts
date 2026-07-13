@@ -4,6 +4,8 @@ import {
   normalizeKalshiFill,
   normalizeKalshiOrderEvent,
   normalizeKalshiSettlement,
+  buildFillCashLedgerEntries,
+  buildSettlementCashLedgerEntries,
 } from '@/lib/official-ledger';
 
 describe('official trading ledger normalization', () => {
@@ -16,6 +18,14 @@ describe('official trading ledger normalization', () => {
       officialFillId: 'fill-1', officialOrderId: 'order-1', marketId: 'KXBTC-1',
       outcome: 'NO', side: 'BUY', quantity: 2.5, price: 0.42, fee: 0.03,
     });
+  });
+
+  it('creates balanced double-entry postings for fills and settlements', () => {
+    const fillEntries = buildFillCashLedgerEntries({ platform: 'kalshi', officialFillId: 'f1', side: 'BUY', quantity: 2, price: 0.4, fee: 0.02, filledAt: new Date('2026-01-01'), payload: {} });
+    const settlementEntries = buildSettlementCashLedgerEntries({ platform: 'kalshi', settlementKey: 's1', revenue: 2, fee: 0.01, settledAt: new Date('2026-01-02'), payload: {} });
+    expect(fillEntries.reduce((sum, row) => sum + row.amount, 0)).toBeCloseTo(0);
+    expect(settlementEntries.reduce((sum, row) => sum + row.amount, 0)).toBeCloseTo(0);
+    expect(fillEntries).toEqual(expect.arrayContaining([expect.objectContaining({ accountType: 'CASH', amount: -0.82 }), expect.objectContaining({ accountType: 'FEES', amount: 0.02 })]));
   });
 
   it('does not invent outcome or action for historical fills that omit them', () => {

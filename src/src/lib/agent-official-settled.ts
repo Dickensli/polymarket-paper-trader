@@ -3,6 +3,7 @@ import type { AgentSettledPosition, SettledStrategy } from '@/lib/agent-settled-
 type Settlement = { id: string; platform: string; marketId: string; marketResult: string; yesQuantity: unknown; noQuantity: unknown; yesCost: unknown; noCost: unknown; revenue: unknown; fee: unknown; settledAt: Date | string };
 type Fill = { strategyId: string | null; marketId: string; outcome: string | null; side: string | null; quantity: unknown; price: unknown; fee: unknown; filledAt: Date | string };
 const n = (v: unknown) => Number.isFinite(Number(v)) ? Number(v) : 0;
+const rounded = (value: number) => Number(value.toFixed(6));
 
 export function buildOfficialSettledStrategyPositions(settlements: Settlement[], fills: Fill[], strategies: SettledStrategy[]): AgentSettledPosition[] {
   const strategyById = new Map(strategies.map((s) => [s.id, s]));
@@ -24,8 +25,11 @@ export function buildOfficialSettledStrategyPositions(settlements: Settlement[],
     for (const [key, lot] of candidates) {
       const strategyId = key.split(':').at(-1)!; const strategy = strategyById.get(strategyId)!;
       const shares = lot.quantity * scale; const cost = lot.cost * scale; const won = settlement.marketResult.toUpperCase() === outcome;
-      const proceeds = won ? shares : 0; const settledAt = new Date(settlement.settledAt).toISOString();
-      result.push({ id: `${settlement.id}:${strategyId}:${outcome}`, strategy_id: strategyId, strategy_name: strategy.name, agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome, shares, avg_price: shares ? cost / shares : 0, settlement_price: won ? 1 : 0, cost_basis: cost, proceeds, realized_pnl: proceeds - cost, settled_at: settledAt });
+      const proceeds = won && officialQuantity > 0 ? n(settlement.revenue) * (shares / officialQuantity) : 0;
+      const officialTotalQuantity = n(settlement.yesQuantity) + n(settlement.noQuantity);
+      const settlementFee = officialTotalQuantity > 0 ? n(settlement.fee) * (shares / officialTotalQuantity) : 0;
+      const settledAt = new Date(settlement.settledAt).toISOString();
+      result.push({ id: `${settlement.id}:${strategyId}:${outcome}`, strategy_id: strategyId, strategy_name: strategy.name, agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome, shares: rounded(shares), avg_price: shares ? rounded(cost / shares) : 0, settlement_price: won ? rounded(proceeds / shares) : 0, cost_basis: rounded(cost), proceeds: rounded(proceeds), settlement_fee: rounded(settlementFee), realized_pnl: rounded(proceeds - cost - settlementFee), settled_at: settledAt });
     }
   }
   return result.sort((a, b) => b.settled_at.localeCompare(a.settled_at));

@@ -32,6 +32,8 @@ describe('real account sync job', () => {
       officialSyncState: {
         findFirst: vi.fn(),
       },
+      officialTradeFills: { findMany: vi.fn() },
+      officialSettlements: { findMany: vi.fn() },
     },
     insert: vi.fn((table: unknown) => ({
       values: table && typeof table === 'object' && 'cash' in table
@@ -48,6 +50,8 @@ describe('real account sync job', () => {
     vi.mocked(getDb).mockReturnValue(db as never);
     db.query.realTradeOrders.findMany.mockResolvedValue([]);
     db.query.officialSyncState.findFirst.mockResolvedValue({ lastSuccessAt: new Date() });
+    db.query.officialTradeFills.findMany.mockResolvedValue([]);
+    db.query.officialSettlements.findMany.mockResolvedValue([]);
   });
 
   it('fetches one private snapshot for two strategies sharing a Kalshi key', async () => {
@@ -78,7 +82,7 @@ describe('real account sync job', () => {
       errors: [],
     });
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledTimes(1);
-    expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi');
+    expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi', expect.any(Object));
     expect(insertValues).toHaveBeenCalledTimes(2);
     expect(ledgerOnConflictDoUpdate).toHaveBeenCalledTimes(2);
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({

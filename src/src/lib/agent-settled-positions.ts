@@ -43,6 +43,7 @@ export type AgentSettledPosition = {
   cost_basis: number;
   proceeds: number;
   realized_pnl: number;
+  settlement_fee?: number;
   settled_at: string;
 };
 

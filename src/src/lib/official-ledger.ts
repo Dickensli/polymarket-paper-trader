@@ -4,6 +4,7 @@ function number(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+const money = (value: number) => Number(value.toFixed(6));
 
 function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`Missing Kalshi ${field}`);
@@ -77,4 +78,42 @@ export function normalizeKalshiSettlement(row: Record<string, unknown>) {
     settledAt: timestamp(settledTime, 'settled_time'),
     payload: row,
   };
+}
+
+type CashLedgerSource = {
+  platform: 'kalshi' | 'polymarket_us';
+  strategyId?: string | null; userId?: string | null; payload: Record<string, unknown>;
+};
+
+export function buildFillCashLedgerEntries(fill: CashLedgerSource & {
+  officialFillId: string; side: 'BUY' | 'SELL' | null; quantity: number; price: number; fee: number; filledAt: Date;
+}) {
+  const notional = fill.quantity * fill.price;
+  const cash = money(fill.side === 'SELL' ? notional - fill.fee : -(notional + fill.fee));
+  const position = money(fill.side === 'SELL' ? -notional : notional);
+  const group = `${fill.platform}:fill:${fill.officialFillId}`;
+  return [
+    { accountType: 'CASH', amount: cash },
+    { accountType: 'POSITION_CASHFLOW', amount: position },
+    { accountType: 'FEES', amount: money(fill.fee) },
+  ].filter((row) => row.amount !== 0).map((row) => ({
+    ...row, platform: fill.platform, accountScope: 'default', strategyId: fill.strategyId ?? null, userId: fill.userId ?? null,
+    entryKey: `${group}:${row.accountType}`, entryGroup: group, sourceType: 'FILL', sourceId: fill.officialFillId,
+    occurredAt: fill.filledAt, payload: fill.payload,
+  }));
+}
+
+export function buildSettlementCashLedgerEntries(settlement: CashLedgerSource & {
+  settlementKey: string; revenue: number; fee: number; settledAt: Date;
+}) {
+  const group = `${settlement.platform}:settlement:${settlement.settlementKey}`;
+  return [
+    { accountType: 'CASH', amount: money(settlement.revenue - settlement.fee) },
+    { accountType: 'POSITION_SETTLEMENT', amount: money(-settlement.revenue) },
+    { accountType: 'FEES', amount: money(settlement.fee) },
+  ].filter((row) => row.amount !== 0).map((row) => ({
+    ...row, platform: settlement.platform, accountScope: 'default', strategyId: settlement.strategyId ?? null, userId: settlement.userId ?? null,
+    entryKey: `${group}:${row.accountType}`, entryGroup: group, sourceType: 'SETTLEMENT', sourceId: settlement.settlementKey,
+    occurredAt: settlement.settledAt, payload: settlement.payload,
+  }));
 }

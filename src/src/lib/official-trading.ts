@@ -6,6 +6,7 @@ type Platform = 'kalshi' | 'polymarket_us';
 type Outcome = 'YES' | 'NO';
 type Side = 'BUY' | 'SELL';
 type TimeInForce = 'GTC' | 'IOC' | 'FOK';
+export type OfficialSyncWindow = { fillsMinTs?: number; settlementsMinTs?: number };
 
 export type OfficialTradeIntent = {
   platform: Platform;
@@ -259,9 +260,9 @@ export async function collectKalshiCursorPages<T>(
   throw new Error('Kalshi pagination exceeded 50 pages');
 }
 
-async function getKalshiCollection(path: string, key: string): Promise<Record<string, unknown>> {
+async function getKalshiCollection(path: string, key: string, query: Record<string, string> = {}): Promise<Record<string, unknown>> {
   const rows = await collectKalshiCursorPages<Record<string, unknown>>(async (cursor) => {
-    const params = new URLSearchParams({ limit: '1000' });
+    const params = new URLSearchParams({ limit: '1000', ...query });
     if (cursor) params.set('cursor', cursor);
     const response = await kalshiRequest<Record<string, unknown>>('GET', `${path}?${params}`);
     return {
@@ -336,13 +337,13 @@ async function cancelKalshiOrder(orderId: string): Promise<OfficialCancelResult>
   };
 }
 
-async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
+async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<OfficialPortfolioSnapshot> {
   const [balance, positions, orders, fills, settlements] = await Promise.all([
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/balance').catch((error) => ({ error: String(error) })),
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/positions').catch((error) => ({ error: String(error) })),
     getKalshiCollection('/portfolio/orders', 'orders').catch((error) => ({ error: String(error) })),
-    getKalshiCollection('/portfolio/fills', 'fills').catch((error) => ({ error: String(error) })),
-    getKalshiCollection('/portfolio/settlements', 'settlements').catch((error) => ({ error: String(error) })),
+    getKalshiCollection('/portfolio/fills', 'fills', window.fillsMinTs ? { min_ts: String(window.fillsMinTs) } : {}).catch((error) => ({ error: String(error) })),
+    getKalshiCollection('/portfolio/settlements', 'settlements', window.settlementsMinTs ? { min_ts: String(window.settlementsMinTs) } : {}).catch((error) => ({ error: String(error) })),
   ]);
   const balanceRecord = balance as Record<string, unknown>;
   const positionsRecord = positions as Record<string, unknown>;
@@ -511,7 +512,7 @@ export async function cancelOfficialRealOrder(
   return cancelPolymarketUsOrder(orderId, marketSlug);
 }
 
-export async function getOfficialPortfolioSnapshot(platform: Platform): Promise<OfficialPortfolioSnapshot> {
-  if (platform === 'kalshi') return getKalshiSnapshot();
+export async function getOfficialPortfolioSnapshot(platform: Platform, window: OfficialSyncWindow = {}): Promise<OfficialPortfolioSnapshot> {
+  if (platform === 'kalshi') return getKalshiSnapshot(window);
   return getPolymarketUsSnapshot();
 }

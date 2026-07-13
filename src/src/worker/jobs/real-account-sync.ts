@@ -2,7 +2,9 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   officialOrderEvents,
+  officialCashLedgerEntries,
   officialSettlements,
+  officialSettlementAllocations,
   officialSyncState,
   officialTradeFills,
   portfolioSnapshots,
@@ -19,7 +21,10 @@ import {
   normalizeKalshiFill,
   normalizeKalshiOrderEvent,
   normalizeKalshiSettlement,
+  buildFillCashLedgerEntries,
+  buildSettlementCashLedgerEntries,
 } from '@/lib/official-ledger';
+import { buildOfficialSettledStrategyPositions } from '@/lib/agent-official-settled';
 
 type SupportedRealPlatform = 'kalshi' | 'polymarket_us';
 
@@ -53,7 +58,21 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
     try {
       // Credentials are environment-bound per platform, so all strategies in
       // this group share one official account and one private snapshot call.
-      const snapshot = await getOfficialPortfolioSnapshot(platform);
+      const fillsState = platform === 'kalshi' ? await db.query.officialSyncState.findFirst({
+        where: and(eq(officialSyncState.platform, 'kalshi'), eq(officialSyncState.resource, 'fills')),
+      }) : null;
+      const settlementsState = platform === 'kalshi' ? await db.query.officialSyncState.findFirst({
+        where: and(eq(officialSyncState.platform, 'kalshi'), eq(officialSyncState.resource, 'settlements')),
+      }) : null;
+      const overlapMinTs = (value: Date | string | null | undefined) => {
+        if (!value) return undefined;
+        const time = new Date(value).getTime();
+        return Number.isFinite(time) ? Math.max(0, Math.floor((time - 60_000) / 1000)) : undefined;
+      };
+      const snapshot = await getOfficialPortfolioSnapshot(platform, {
+        fillsMinTs: overlapMinTs(fillsState?.lastVenueTime),
+        settlementsMinTs: overlapMinTs(settlementsState?.lastVenueTime),
+      });
       result.accounts_synced += 1;
 
       if (platform === 'kalshi') {
@@ -137,6 +156,9 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           } else {
             await insertFill.onConflictDoNothing();
           }
+          for (const entry of buildFillCashLedgerEntries({ ...fill, strategyId: audit?.strategyId, userId: audit?.userId })) {
+            await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+          }
         }
 
         for (const row of snapshot.settlements ?? []) {
@@ -151,19 +173,53 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             revenue: settlement.revenue.toFixed(6),
             fee: settlement.fee.toFixed(6),
           }).onConflictDoNothing();
+          for (const entry of buildSettlementCashLedgerEntries(settlement)) {
+            await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+          }
+        }
+
+        const persistedFills = await db.query.officialTradeFills.findMany();
+        const persistedSettlements = await db.query.officialSettlements.findMany();
+        const allocations = buildOfficialSettledStrategyPositions(
+          persistedSettlements,
+          persistedFills,
+          platformStrategies.map((strategy) => ({ id: strategy.id, userId: strategy.userId, name: strategy.strategyId, platform: strategy.platform })),
+        );
+        for (const allocation of allocations) {
+          const settlementId = allocation.id.split(':')[0];
+          await db.insert(officialSettlementAllocations).values({
+            settlementId, strategyId: allocation.strategy_id, userId: allocation.agent_id,
+            outcome: allocation.outcome as 'YES' | 'NO', quantity: allocation.shares.toFixed(6),
+            costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
+            settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
+            allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
+          }).onConflictDoUpdate({
+            target: [officialSettlementAllocations.settlementId, officialSettlementAllocations.strategyId, officialSettlementAllocations.outcome],
+            set: {
+              quantity: allocation.shares.toFixed(6), costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
+              settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
+              allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
+            },
+          });
         }
 
         for (const resource of ['orders', 'fills', 'settlements']) {
+          const venueRows = resource === 'fills' ? snapshot.fills : resource === 'settlements' ? (snapshot.settlements ?? []) : snapshot.orders;
+          const venueTimes = venueRows.map((row) => row && typeof row === 'object'
+            ? new Date(String((row as Record<string, unknown>)[resource === 'fills' ? 'created_time' : resource === 'settlements' ? 'settled_time' : 'last_update_time'] ?? 0))
+            : new Date(0)).filter((date) => !Number.isNaN(date.getTime()) && date.getTime() > 0);
+          const lastVenueTime = venueTimes.length > 0 ? new Date(Math.max(...venueTimes.map((date) => date.getTime()))) : undefined;
           await db.insert(officialSyncState).values({
             platform,
             accountScope: 'default',
             resource,
             lastSuccessAt: new Date(),
+            lastVenueTime,
             lastError: null,
             updatedAt: new Date(),
           }).onConflictDoUpdate({
             target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource],
-            set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },
+            set: { lastSuccessAt: new Date(), lastVenueTime, lastError: null, updatedAt: new Date() },
           });
         }
         if (!historicalState?.lastSuccessAt) {

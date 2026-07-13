@@ -459,6 +459,57 @@ export const officialSettlements = pgTable(
   ],
 );
 
+/** Versioned strategy allocation of an account-level official settlement. */
+export const officialSettlementAllocations = pgTable(
+  'official_settlement_allocations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    settlementId: uuid('settlement_id').notNull().references(() => officialSettlements.id, { onDelete: 'cascade' }),
+    strategyId: uuid('strategy_id').notNull().references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    outcome: outcomeEnum('outcome').notNull(),
+    quantity: decimal('quantity', { precision: 18, scale: 6 }).notNull(),
+    costBasis: decimal('cost_basis', { precision: 18, scale: 6 }).notNull(),
+    proceeds: decimal('proceeds', { precision: 18, scale: 6 }).notNull(),
+    settlementFee: decimal('settlement_fee', { precision: 18, scale: 6 }).notNull().default('0'),
+    realizedPnl: decimal('realized_pnl', { precision: 18, scale: 6 }).notNull(),
+    allocationMethod: varchar('allocation_method', { length: 100 }).notNull().default('attributed_lots_v1'),
+    allocationVersion: integer('allocation_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('official_settlement_allocations_unique_idx').on(table.settlementId, table.strategyId, table.outcome),
+    index('official_settlement_allocations_strategy_idx').on(table.strategyId),
+  ],
+);
+
+/** Immutable signed double-entry postings for official cash-affecting events. */
+export const officialCashLedgerEntries = pgTable(
+  'official_cash_ledger_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    platform: platformEnum('platform').notNull(),
+    accountScope: varchar('account_scope', { length: 100 }).notNull().default('default'),
+    strategyId: uuid('strategy_id').references(() => strategies.id, { onDelete: 'set null' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    entryKey: varchar('entry_key', { length: 512 }).notNull(),
+    entryGroup: varchar('entry_group', { length: 512 }).notNull(),
+    sourceType: varchar('source_type', { length: 50 }).notNull(),
+    sourceId: varchar('source_id', { length: 255 }).notNull(),
+    accountType: varchar('account_type', { length: 50 }).notNull(),
+    amount: decimal('amount', { precision: 18, scale: 6 }).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('official_cash_ledger_entries_key_idx').on(table.entryKey),
+    index('official_cash_ledger_entries_group_idx').on(table.entryGroup),
+    index('official_cash_ledger_entries_strategy_idx').on(table.strategyId),
+  ],
+);
+
 /** Per-resource checkpoint and health state for official reconciliation. */
 export const officialSyncState = pgTable(
   'official_sync_state',
