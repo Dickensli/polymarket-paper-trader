@@ -1,13 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildKalshiOrderRequest,
   normalizeKalshiOrderStatus,
   resolveOfficialOrderQuantity,
   summarizeKalshiPositions,
   validateOfficialPortfolioSnapshot,
+  collectKalshiCursorPages,
 } from '@/lib/official-trading';
 
 describe('official trading helpers', () => {
+  it('collects all cursor pages without duplicating the first page', async () => {
+    const fetchPage = vi.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 1 }], cursor: 'next' })
+      .mockResolvedValueOnce({ rows: [{ id: 2 }], cursor: '' });
+    await expect(collectKalshiCursorPages(fetchPage)).resolves.toEqual([{ id: 1 }, { id: 2 }]);
+    expect(fetchPage).toHaveBeenNthCalledWith(1, undefined);
+    expect(fetchPage).toHaveBeenNthCalledWith(2, 'next');
+  });
   it('builds Kalshi V2 orders with fixed-point count and dollar price strings', () => {
     const { request } = buildKalshiOrderRequest({
       platform: 'kalshi',

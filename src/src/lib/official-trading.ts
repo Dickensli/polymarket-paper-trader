@@ -245,6 +245,33 @@ async function kalshiRequest<T>(
   return json as T;
 }
 
+export async function collectKalshiCursorPages<T>(
+  fetchPage: (cursor?: string) => Promise<{ rows: T[]; cursor?: string }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 50; page += 1) {
+    const response = await fetchPage(cursor);
+    rows.push(...response.rows);
+    if (!response.cursor) return rows;
+    cursor = response.cursor;
+  }
+  throw new Error('Kalshi pagination exceeded 50 pages');
+}
+
+async function getKalshiCollection(path: string, key: string): Promise<Record<string, unknown>> {
+  const rows = await collectKalshiCursorPages<Record<string, unknown>>(async (cursor) => {
+    const params = new URLSearchParams({ limit: '1000' });
+    if (cursor) params.set('cursor', cursor);
+    const response = await kalshiRequest<Record<string, unknown>>('GET', `${path}?${params}`);
+    return {
+      rows: Array.isArray(response[key]) ? response[key] as Record<string, unknown>[] : [],
+      cursor: typeof response.cursor === 'string' ? response.cursor : undefined,
+    };
+  });
+  return { [key]: rows };
+}
+
 async function submitKalshiTrade(intent: OfficialTradeIntent): Promise<OfficialTradeResult> {
   const { request, clientOrderId } = buildKalshiOrderRequest(intent);
 
@@ -308,9 +335,9 @@ async function getKalshiSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const [balance, positions, orders, fills, settlements] = await Promise.all([
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/balance').catch((error) => ({ error: String(error) })),
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/positions').catch((error) => ({ error: String(error) })),
-    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/orders?limit=1000').catch((error) => ({ error: String(error) })),
-    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/fills?limit=1000').catch((error) => ({ error: String(error) })),
-    kalshiRequest<Record<string, unknown>>('GET', '/portfolio/settlements?limit=1000').catch((error) => ({ error: String(error) })),
+    getKalshiCollection('/portfolio/orders', 'orders').catch((error) => ({ error: String(error) })),
+    getKalshiCollection('/portfolio/fills', 'fills').catch((error) => ({ error: String(error) })),
+    getKalshiCollection('/portfolio/settlements', 'settlements').catch((error) => ({ error: String(error) })),
   ]);
   const balanceRecord = balance as Record<string, unknown>;
   const positionsRecord = positions as Record<string, unknown>;
