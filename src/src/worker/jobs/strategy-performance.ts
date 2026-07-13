@@ -1,230 +1,213 @@
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
-  marketCache,
-  officialCashLedgerEntries,
-  officialSettlementAllocations,
-  officialSettlements,
-  officialTradeFills,
-  paperTradeOrders,
+  portfolioSnapshots,
+  portfolios,
   positions,
   strategies,
+  strategyCapitalFlows,
   strategyPerformanceSnapshots,
 } from '@/lib/db/schema';
-import { calculateNoFlowMwrPct, calculatePeriodReturnPct, chainTwrPct } from '@/lib/performance-returns';
-import { getKalshiMarkets, getKalshiOutcomePriceFromMarket } from '@/lib/kalshi';
+import {
+  calculateFlowAdjustedPeriodReturnPct,
+  calculateMoneyWeightedReturnPct,
+  chainTwrPct,
+  type CapitalFlow,
+} from '@/lib/performance-returns';
 
 const HOURLY_RETENTION_DAYS = 30;
 const DAILY_RETENTION_DAYS = 365 * 3;
 
-type Holding = { quantity: number; cost: number };
+type Bucket = 'HOURLY' | 'DAILY';
+type StrategyRow = typeof strategies.$inferSelect;
+type SourcePoint = {
+  strategyId: string;
+  cash: number;
+  positionsValue: number;
+  nav: number;
+  capturedAt: Date;
+  pricingUpdatedAt: Date | null;
+};
 
-function holdingKey(userId: string, platform: string, marketId: string, outcome: string) {
-  return `${userId}|${platform}|${marketId}|${outcome}`;
+function bucketDate(date: Date, bucket: Bucket) {
+  const result = new Date(date);
+  if (bucket === 'HOURLY') result.setUTCMinutes(0, 0, 0);
+  else result.setUTCHours(0, 0, 0, 0);
+  return result;
 }
 
-function applyFill(holdings: Map<string, Holding>, key: string, side: string | null, quantity: number, price: number) {
-  const current = holdings.get(key) ?? { quantity: 0, cost: 0 };
-  const direction = side === 'SELL' ? -1 : 1;
-  const nextQuantity = current.quantity + direction * quantity;
-  const nextCost = direction > 0 ? current.cost + quantity * price : Math.max(0, current.cost - quantity * price);
-  holdings.set(key, { quantity: nextQuantity, cost: nextCost });
+function capitalFlow(row: typeof strategyCapitalFlows.$inferSelect): CapitalFlow {
+  return { amount: Number(row.amount), navBeforeFlow: Number(row.navBeforeFlow), occurredAt: row.occurredAt };
 }
 
-function bucketDate(now: Date, bucket: 'HOURLY' | 'DAILY') {
-  const date = new Date(now);
-  if (bucket === 'HOURLY') date.setUTCMinutes(0, 0, 0);
-  else date.setUTCHours(0, 0, 0, 0);
-  return date;
+async function ensureInceptionBaselines(db: ReturnType<typeof getDb>, strategy: StrategyRow) {
+  const startingBalance = Number(strategy.startingBalance).toFixed(6);
+  for (const bucket of ['HOURLY', 'DAILY'] as const) {
+    await db.insert(strategyPerformanceSnapshots).values({
+      strategyId: strategy.id, userId: strategy.userId, platform: strategy.platform, agentMode: strategy.agentMode,
+      bucket, bucketAt: bucketDate(strategy.createdAt, bucket), cash: startingBalance, positionsValue: '0.000000',
+      nav: startingBalance, pnl: '0.000000', returnPct: '0.000000', periodReturnPct: '0.000000', twrPct: '0.000000',
+      mwrPct: null, netExternalFlow: '0.000000', unpricedPositionsCount: 0, pricingUpdatedAt: null, capturedAt: strategy.createdAt,
+    }).onConflictDoNothing();
+  }
 }
 
-/**
- * Writes compact strategy-level mark-to-market checkpoints. Existing order/fill
- * ledgers are read for attribution, but no event payload or position detail is copied.
- */
+async function upsertPerformancePoint(
+  db: ReturnType<typeof getDb>,
+  strategy: StrategyRow,
+  bucket: Bucket,
+  point: SourcePoint,
+  flows: CapitalFlow[],
+) {
+  const bucketAt = bucketDate(point.capturedAt, bucket);
+  const previous = await db.query.strategyPerformanceSnapshots.findFirst({
+    where: and(
+      eq(strategyPerformanceSnapshots.strategyId, strategy.id),
+      eq(strategyPerformanceSnapshots.bucket, bucket),
+      lt(strategyPerformanceSnapshots.bucketAt, bucketAt),
+    ),
+    orderBy: [desc(strategyPerformanceSnapshots.bucketAt)],
+  });
+  const previousCapturedAt = previous?.capturedAt ?? strategy.createdAt;
+  const intervalFlows = flows.filter((flow) => flow.occurredAt > previousCapturedAt && flow.occurredAt <= point.capturedAt);
+  const bucketEnd = new Date(bucketAt.getTime() + (bucket === 'HOURLY' ? 3600000 : 86400000));
+  const bucketFlow = flows
+    .filter((flow) => flow.occurredAt >= bucketAt && flow.occurredAt < bucketEnd)
+    .reduce((sum, flow) => sum + flow.amount, 0);
+  const flowsThroughPoint = flows.filter((flow) => flow.occurredAt <= point.capturedAt);
+  const cumulativeFlow = flowsThroughPoint.reduce((sum, flow) => sum + flow.amount, 0);
+  const startingBalance = Number(strategy.startingBalance);
+  const pnl = point.nav - startingBalance - cumulativeFlow;
+  const investedCapital = startingBalance + cumulativeFlow;
+  const returnPct = investedCapital > 0 ? (pnl / investedCapital) * 100 : 0;
+  const periodReturnPct = calculateFlowAdjustedPeriodReturnPct(
+    previous ? Number(previous.nav) : startingBalance,
+    point.nav,
+    intervalFlows,
+  );
+  const twrPct = chainTwrPct(previous ? Number(previous.twrPct) : 0, periodReturnPct);
+  const mwrPct = calculateMoneyWeightedReturnPct(startingBalance, strategy.createdAt, point.nav, point.capturedAt, flowsThroughPoint);
+
+  const values = {
+    strategyId: strategy.id,
+    userId: strategy.userId,
+    platform: strategy.platform,
+    agentMode: strategy.agentMode,
+    bucket,
+    bucketAt,
+    cash: point.cash.toFixed(6),
+    positionsValue: point.positionsValue.toFixed(6),
+    nav: point.nav.toFixed(6),
+    pnl: pnl.toFixed(6),
+    returnPct: returnPct.toFixed(6),
+    periodReturnPct: periodReturnPct.toFixed(6),
+    twrPct: twrPct.toFixed(6),
+    mwrPct: mwrPct?.toFixed(6) ?? null,
+    netExternalFlow: bucketFlow.toFixed(6),
+    unpricedPositionsCount: 0,
+    pricingUpdatedAt: point.pricingUpdatedAt,
+    capturedAt: point.capturedAt,
+  };
+  await db.insert(strategyPerformanceSnapshots).values(values).onConflictDoUpdate({
+    target: [strategyPerformanceSnapshots.strategyId, strategyPerformanceSnapshots.bucket, strategyPerformanceSnapshots.bucketAt],
+    set: values,
+  });
+}
+
+/** Current compact checkpoints. Dedicated paper portfolios use refreshed local marks. */
 export async function runStrategyPerformanceCalculation(now = new Date()) {
   const db = getDb();
-  const activeStrategies = await db.query.strategies.findMany({
-    where: eq(strategies.status, 'active'),
-  });
-
+  const activeStrategies = await db.query.strategies.findMany({ where: eq(strategies.status, 'active') });
   if (activeStrategies.length === 0) return 0;
-
   const strategyIds = activeStrategies.map((strategy) => strategy.id);
-  const [paperOrders, realFills, cashLedger, settlements, settlementFacts, currentPositions, cachedMarkets] = await Promise.all([
-    db.query.paperTradeOrders.findMany({
-      where: and(inArray(paperTradeOrders.strategyId, strategyIds), eq(paperTradeOrders.status, 'FILLED')),
-    }),
-    db.query.officialTradeFills.findMany({
-      where: inArray(officialTradeFills.strategyId, strategyIds),
-    }),
-    db.query.officialCashLedgerEntries.findMany({
-      where: and(
-        inArray(officialCashLedgerEntries.strategyId, strategyIds),
-        eq(officialCashLedgerEntries.accountType, 'CASH'),
-      ),
-    }),
-    db.query.officialSettlementAllocations.findMany({
-      where: inArray(officialSettlementAllocations.strategyId, strategyIds),
-    }),
-    db.query.officialSettlements.findMany(),
-    // Closed/resolved positions carry the terminal 0/1 mark needed to value a
-    // strategy's attributed lots without storing separate settlement events here.
+  const [allPortfolios, allPositions, flows, recentSnapshots] = await Promise.all([
+    db.query.portfolios.findMany(),
     db.query.positions.findMany(),
-    db.query.marketCache.findMany(),
+    db.query.strategyCapitalFlows.findMany({ where: inArray(strategyCapitalFlows.strategyId, strategyIds) }),
+    db.select({
+      strategyId: portfolioSnapshots.strategyId,
+      cash: portfolioSnapshots.cash,
+      positionsValue: portfolioSnapshots.positionsValue,
+      totalValue: portfolioSnapshots.totalValue,
+      capturedAt: portfolioSnapshots.capturedAt,
+    }).from(portfolioSnapshots)
+      .where(inArray(portfolioSnapshots.strategyId, strategyIds))
+      .orderBy(desc(portfolioSnapshots.capturedAt)),
   ]);
-  const settlementsById = new Map(settlementFacts.map((settlement) => [settlement.id, settlement]));
-  const kalshiMarkets = await getKalshiMarkets([
-    ...paperOrders.filter((order) => order.platform === 'kalshi').map((order) => order.marketId),
-    ...realFills.filter((fill) => fill.platform === 'kalshi').map((fill) => fill.marketId),
-  ]);
-
-  const prices = new Map<string, { price: number; updatedAt: Date }>();
-  for (const position of currentPositions) {
-    prices.set(
-      holdingKey(position.userId, position.platform, position.marketId, position.outcome),
-      { price: Number(position.currentPrice), updatedAt: position.updatedAt },
-    );
+  const bindingCounts = new Map<string, number>();
+  for (const strategy of activeStrategies) {
+    const key = `${strategy.userId}|${strategy.platform}|${strategy.agentMode}`;
+    bindingCounts.set(key, (bindingCounts.get(key) ?? 0) + 1);
   }
-
-  const cachedPrices = new Map<string, number>();
-  for (const market of cachedMarkets) {
-    const outcomes = Array.isArray(market.outcomes) ? market.outcomes : [];
-    const outcomePrices = Array.isArray(market.outcomePrices) ? market.outcomePrices : [];
-    outcomes.forEach((outcome, index) => {
-      cachedPrices.set(`${market.id}|${String(outcome).toUpperCase()}`, Number(outcomePrices[index]));
-      if (market.conditionId) cachedPrices.set(`${market.conditionId}|${String(outcome).toUpperCase()}`, Number(outcomePrices[index]));
-    });
+  const latestSnapshot = new Map<string, (typeof recentSnapshots)[number]>();
+  for (const snapshot of recentSnapshots) {
+    if (snapshot.strategyId && !latestSnapshot.has(snapshot.strategyId)) latestSnapshot.set(snapshot.strategyId, snapshot);
   }
 
   for (const strategy of activeStrategies) {
-    const holdings = new Map<string, Holding>();
-    const startingBalance = Number(strategy.startingBalance);
-    let cash = startingBalance;
-
-    if (strategy.agentMode === 'paper') {
-      for (const order of paperOrders) {
-        if (order.strategyId !== strategy.id) continue;
-        const quantity = Number(order.quantity);
-        const price = Number(order.price);
-        const notional = Number(order.notional);
-        cash += order.side === 'SELL' ? notional : -notional;
-        applyFill(
-          holdings,
-          holdingKey(strategy.userId, strategy.platform, order.marketId, order.outcome),
-          order.side,
-          quantity,
-          price,
-        );
-      }
-    } else {
-      const strategyCashEntries = cashLedger.filter((entry) => entry.strategyId === strategy.id);
-      if (strategyCashEntries.length > 0) {
-        cash += strategyCashEntries.reduce((sum, entry) => sum + Number(entry.amount), 0);
-      }
-      for (const fill of realFills) {
-        if (fill.strategyId !== strategy.id || !fill.outcome) continue;
-        const quantity = Number(fill.quantity);
-        const price = Number(fill.price);
-        if (strategyCashEntries.length === 0) {
-          cash += fill.side === 'SELL' ? quantity * price - Number(fill.fee) : -(quantity * price + Number(fill.fee));
-        }
-        applyFill(
-          holdings,
-          holdingKey(strategy.userId, strategy.platform, fill.marketId, fill.outcome),
-          fill.side,
-          quantity,
-          price,
-        );
-      }
-      for (const allocation of settlements) {
-        if (allocation.strategyId !== strategy.id) continue;
-        const settlement = settlementsById.get(allocation.settlementId);
-        if (!settlement) continue;
-        const key = holdingKey(strategy.userId, strategy.platform, settlement.marketId, allocation.outcome);
-        const current = holdings.get(key);
-        if (current) holdings.set(key, { ...current, quantity: Math.max(0, current.quantity - Number(allocation.quantity)) });
+    await ensureInceptionBaselines(db, strategy);
+    const dedicated = bindingCounts.get(`${strategy.userId}|${strategy.platform}|${strategy.agentMode}`) === 1;
+    let point: SourcePoint | null = null;
+    if (strategy.agentMode === 'paper' && dedicated) {
+      const portfolio = allPortfolios.find((row) => row.userId === strategy.userId);
+      if (portfolio) {
+        const relevantPositions = allPositions.filter((row) => row.userId === strategy.userId && row.platform === strategy.platform && row.isOpen);
+        const positionsValue = relevantPositions.reduce((sum, row) => sum + Number(row.shares) * Number(row.currentPrice), 0);
+        const pricingUpdatedAt = relevantPositions.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
+        point = { strategyId: strategy.id, cash: Number(portfolio.balance), positionsValue, nav: Number(portfolio.balance) + positionsValue, capturedAt: now, pricingUpdatedAt };
       }
     }
-
-    let positionsValue = 0;
-    let unpricedPositionsCount = 0;
-    let pricingUpdatedAt: Date | null = null;
-    for (const [key, holding] of holdings) {
-      if (holding.quantity <= 0) continue;
-      const live = prices.get(key);
-      const [, , marketId, outcome] = key.split('|');
-      const fallback = cachedPrices.get(`${marketId}|${outcome}`);
-      const kalshiMarket = strategy.platform === 'kalshi' ? kalshiMarkets.get(marketId) : undefined;
-      const kalshiMark = kalshiMarket
-        ? getKalshiOutcomePriceFromMarket(kalshiMarket, outcome as 'YES' | 'NO')
-        : null;
-      const hasIndependentMark = kalshiMark !== null || live !== undefined || (fallback !== undefined && Number.isFinite(fallback));
-      if (!hasIndependentMark) unpricedPositionsCount += 1;
-      const mark = kalshiMark
-        ?? live?.price
-        ?? (fallback !== undefined && Number.isFinite(fallback) ? fallback : holding.cost / holding.quantity);
-      positionsValue += holding.quantity * mark;
-      const markUpdatedAt = live?.updatedAt ?? (kalshiMark !== null ? now : null);
-      if (markUpdatedAt && (!pricingUpdatedAt || markUpdatedAt > pricingUpdatedAt)) pricingUpdatedAt = markUpdatedAt;
+    if (!point) {
+      const snapshot = latestSnapshot.get(strategy.id);
+      if (snapshot) point = {
+        strategyId: strategy.id, cash: Number(snapshot.cash), positionsValue: Number(snapshot.positionsValue),
+        nav: Number(snapshot.totalValue), capturedAt: now, pricingUpdatedAt: snapshot.capturedAt,
+      };
     }
-
-    const nav = cash + positionsValue;
-    const pnl = nav - startingBalance;
-    const returnPct = startingBalance > 0 ? (pnl / startingBalance) * 100 : 0;
-    const mwrPct = calculateNoFlowMwrPct(startingBalance, nav, strategy.createdAt, now);
-
-    for (const bucket of ['HOURLY', 'DAILY'] as const) {
-      const bucketAt = bucketDate(now, bucket);
-      const previous = await db.query.strategyPerformanceSnapshots.findFirst({
-        where: and(
-          eq(strategyPerformanceSnapshots.strategyId, strategy.id),
-          eq(strategyPerformanceSnapshots.bucket, bucket),
-          lt(strategyPerformanceSnapshots.bucketAt, bucketAt),
-        ),
-        orderBy: [desc(strategyPerformanceSnapshots.bucketAt)],
-      });
-      const periodReturnPct = calculatePeriodReturnPct(previous ? Number(previous.nav) : null, nav, 0);
-      const twrPct = previous ? chainTwrPct(Number(previous.twrPct), periodReturnPct) : returnPct;
-
-      await db.insert(strategyPerformanceSnapshots).values({
-        strategyId: strategy.id,
-        userId: strategy.userId,
-        platform: strategy.platform,
-        agentMode: strategy.agentMode,
-        bucket,
-        bucketAt,
-        cash: cash.toFixed(6),
-        positionsValue: positionsValue.toFixed(6),
-        nav: nav.toFixed(6),
-        pnl: pnl.toFixed(6),
-        returnPct: returnPct.toFixed(6),
-        periodReturnPct: periodReturnPct.toFixed(6),
-        twrPct: twrPct.toFixed(6),
-        mwrPct: mwrPct?.toFixed(6) ?? null,
-        netExternalFlow: '0.000000',
-        unpricedPositionsCount,
-        pricingUpdatedAt,
-        capturedAt: now,
-      }).onConflictDoUpdate({
-        target: [strategyPerformanceSnapshots.strategyId, strategyPerformanceSnapshots.bucket, strategyPerformanceSnapshots.bucketAt],
-        set: {
-          cash: cash.toFixed(6), positionsValue: positionsValue.toFixed(6), nav: nav.toFixed(6), pnl: pnl.toFixed(6),
-          returnPct: returnPct.toFixed(6), periodReturnPct: periodReturnPct.toFixed(6), twrPct: twrPct.toFixed(6),
-          mwrPct: mwrPct?.toFixed(6) ?? null, unpricedPositionsCount, pricingUpdatedAt, capturedAt: now,
-        },
-      });
-    }
+    if (!point) continue;
+    const strategyFlows = flows.filter((row) => row.strategyId === strategy.id).map(capitalFlow);
+    await upsertPerformancePoint(db, strategy, 'HOURLY', point, strategyFlows);
+    await upsertPerformancePoint(db, strategy, 'DAILY', point, strategyFlows);
   }
 
-  await db.delete(strategyPerformanceSnapshots).where(and(
-    eq(strategyPerformanceSnapshots.bucket, 'HOURLY'),
-    lt(strategyPerformanceSnapshots.bucketAt, new Date(now.getTime() - HOURLY_RETENTION_DAYS * 86400000)),
-  ));
-  await db.delete(strategyPerformanceSnapshots).where(and(
-    eq(strategyPerformanceSnapshots.bucket, 'DAILY'),
-    lt(strategyPerformanceSnapshots.bucketAt, new Date(now.getTime() - DAILY_RETENTION_DAYS * 86400000)),
-  ));
-
+  await db.delete(strategyPerformanceSnapshots).where(and(eq(strategyPerformanceSnapshots.bucket, 'HOURLY'), lt(strategyPerformanceSnapshots.bucketAt, new Date(now.getTime() - HOURLY_RETENTION_DAYS * 86400000))));
+  await db.delete(strategyPerformanceSnapshots).where(and(eq(strategyPerformanceSnapshots.bucket, 'DAILY'), lt(strategyPerformanceSnapshots.bucketAt, new Date(now.getTime() - DAILY_RETENTION_DAYS * 86400000))));
   return activeStrategies.length;
+}
+
+/** One-time/repair backfill from existing immutable portfolio valuations. */
+export async function backfillStrategyPerformanceFromPortfolioSnapshots(since = new Date(Date.now() - HOURLY_RETENTION_DAYS * 86400000)) {
+  const db = getDb();
+  const activeStrategies = await db.query.strategies.findMany({ where: eq(strategies.status, 'active') });
+  if (activeStrategies.length === 0) return 0;
+  const strategyIds = activeStrategies.map((strategy) => strategy.id);
+  const [snapshots, flowRows] = await Promise.all([
+    db.select({
+      strategyId: portfolioSnapshots.strategyId, cash: portfolioSnapshots.cash,
+      positionsValue: portfolioSnapshots.positionsValue, totalValue: portfolioSnapshots.totalValue,
+      capturedAt: portfolioSnapshots.capturedAt,
+    }).from(portfolioSnapshots).where(and(
+      inArray(portfolioSnapshots.strategyId, strategyIds),
+      gte(portfolioSnapshots.capturedAt, since),
+    )).orderBy(asc(portfolioSnapshots.capturedAt)),
+    db.query.strategyCapitalFlows.findMany({ where: inArray(strategyCapitalFlows.strategyId, strategyIds) }),
+  ]);
+  let written = 0;
+  for (const strategy of activeStrategies) {
+    await ensureInceptionBaselines(db, strategy);
+    const source = snapshots.filter((snapshot) => snapshot.strategyId === strategy.id);
+    const flows = flowRows.filter((row) => row.strategyId === strategy.id).map(capitalFlow);
+    for (const bucket of ['HOURLY', 'DAILY'] as const) {
+      const lastByBucket = new Map<number, (typeof source)[number]>();
+      for (const snapshot of source) lastByBucket.set(bucketDate(snapshot.capturedAt, bucket).getTime(), snapshot);
+      for (const snapshot of [...lastByBucket.values()].sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime())) {
+        await upsertPerformancePoint(db, strategy, bucket, {
+          strategyId: strategy.id, cash: Number(snapshot.cash), positionsValue: Number(snapshot.positionsValue),
+          nav: Number(snapshot.totalValue), capturedAt: snapshot.capturedAt, pricingUpdatedAt: snapshot.capturedAt,
+        }, flows);
+        written += 1;
+      }
+    }
+  }
+  return written;
 }
