@@ -13,8 +13,8 @@ type HistoryPoint = {
 type Granularity = 'daily' | 'hourly';
 type TimeRange = '1H' | '6H' | '1D' | '1W' | 'ALL';
 type ChartMetric = 'value' | 'pnl';
-type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
-type StrategyStatus = 'active' | 'paused' | 'disabled' | 'all';
+export type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
+export type StrategyStatus = 'active' | 'paused' | 'disabled' | 'all';
 type HistoryMeta = {
   source?: string;
   returnMethod?: string;
@@ -280,15 +280,30 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
   };
 }
 
-export default function AnalyticsClient() {
+type AnalyticsClientProps = {
+  embedded?: boolean;
+  platform?: Platform;
+  strategyStatus?: StrategyStatus;
+  page?: number;
+};
+
+export default function AnalyticsClient({
+  embedded = false,
+  platform: controlledPlatform,
+  strategyStatus: controlledStrategyStatus,
+  page: controlledPage,
+}: AnalyticsClientProps = {}) {
   const [dailyData, setDailyData] = useState<{ strategies: string[]; history: HistoryPoint[]; meta?: HistoryMeta } | null>(null);
   const [hourlyData, setHourlyData] = useState<{ strategies: string[]; history: HistoryPoint[]; meta?: HistoryMeta } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [platform, setPlatform] = useState<Platform>('polymarket');
-  const [strategyStatus, setStrategyStatus] = useState<StrategyStatus>('active');
-  const [page, setPage] = useState(1);
+  const [internalPlatform, setInternalPlatform] = useState<Platform>('polymarket');
+  const [internalStrategyStatus, setInternalStrategyStatus] = useState<StrategyStatus>('active');
+  const [internalPage, setInternalPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const platform = controlledPlatform ?? internalPlatform;
+  const strategyStatus = controlledStrategyStatus ?? internalStrategyStatus;
+  const page = controlledPage ?? internalPage;
 
   const [chartMetric, setChartMetric] = useState<ChartMetric>('value');
   const [granularity, setGranularity] = useState<Granularity>('hourly');
@@ -308,27 +323,63 @@ export default function AnalyticsClient() {
   const [selectionBox, setSelectionBox] = useState({ left: 0, width: 0 });
   const selectionRef = useRef<{ startX: number; currentX: number; active: boolean }>({ startX: 0, currentX: 0, active: false });
 
-  // Fetch both granularities
+  // Fetch both granularities in parallel. A controlled embedded view shares the
+  // leaderboard filters and page instead of maintaining a second filter state.
   useEffect(() => {
-    const query = `platform=${platform}&strategy_status=${strategyStatus}&page=${page}&pageSize=8`;
-    Promise.all([
-      fetch(`/api/leaderboard/history?granularity=daily&${query}`).then(r => r.json()),
-      fetch(`/api/leaderboard/history?granularity=hourly&${query}`).then(r => r.json()),
+    const controller = new AbortController();
+    const pageSize = embedded ? 25 : 8;
+    const query = `platform=${platform}&strategy_status=${strategyStatus}&page=${page}&pageSize=${pageSize}`;
+    const loadHistory = async (granularity: Granularity) => {
+      const response = await fetch(`/api/leaderboard/history?granularity=${granularity}&${query}`, {
+        signal: controller.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || `Failed to load ${granularity} history`);
+      }
+      return payload;
+    };
+
+    Promise.allSettled([
+      loadHistory('daily'),
+      loadHistory('hourly'),
     ])
-      .then(([daily, hourly]) => {
-        if (daily.success) setDailyData({ strategies: daily.strategies, history: daily.history, meta: daily.meta });
-        if (hourly.success) setHourlyData({ strategies: hourly.strategies, history: hourly.history, meta: hourly.meta });
-        setTotalPages(daily.meta?.totalPages ?? hourly.meta?.totalPages ?? 1);
+      .then(([dailyResult, hourlyResult]) => {
+        const daily = dailyResult.status === 'fulfilled' ? dailyResult.value : null;
+        const hourly = hourlyResult.status === 'fulfilled' ? hourlyResult.value : null;
+
+        if (!daily && !hourly) {
+          const reason = hourlyResult.status === 'rejected'
+            ? hourlyResult.reason
+            : dailyResult.status === 'rejected'
+              ? dailyResult.reason
+              : null;
+          setError(reason instanceof Error ? reason.message : 'Failed to load performance history');
+          return;
+        }
+
+        if (daily) setDailyData({ strategies: daily.strategies, history: daily.history, meta: daily.meta });
+        if (hourly) setHourlyData({ strategies: hourly.strategies, history: hourly.history, meta: hourly.meta });
+        if (!hourly && daily) setGranularity('daily');
+        if (!daily && hourly) setGranularity('hourly');
+        setError(null);
+        setTotalPages(daily?.meta?.totalPages ?? hourly?.meta?.totalPages ?? 1);
         // Merge strategy colors from both responses
         setStrategyColors(prev => ({
           ...prev,
-          ...(daily.strategyColors || {}),
-          ...(hourly.strategyColors || {}),
+          ...(daily?.strategyColors || {}),
+          ...(hourly?.strategyColors || {}),
         }));
       })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [platform, strategyStatus, page]);
+      .catch(err => {
+        if (err.name !== 'AbortError') setError(err.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [embedded, platform, strategyStatus, page]);
 
   // Active dataset
   const data = granularity === 'hourly' ? hourlyData : dailyData;
@@ -356,8 +407,8 @@ export default function AnalyticsClient() {
   const selectPlatform = useCallback((nextPlatform: Platform) => {
     setLoading(true);
     setError(null);
-    setPlatform(nextPlatform);
-    setPage(1);
+    setInternalPlatform(nextPlatform);
+    setInternalPage(1);
     setSelectedStrategies(new Set());
     setHoveredPoint(null);
   }, []);
@@ -365,8 +416,8 @@ export default function AnalyticsClient() {
   const selectStrategyStatus = useCallback((nextStatus: StrategyStatus) => {
     setLoading(true);
     setError(null);
-    setStrategyStatus(nextStatus);
-    setPage(1);
+    setInternalStrategyStatus(nextStatus);
+    setInternalPage(1);
     setSelectedStrategies(new Set());
     setHoveredPoint(null);
   }, []);
@@ -374,7 +425,7 @@ export default function AnalyticsClient() {
   const selectPage = useCallback((nextPage: number) => {
     setLoading(true);
     setError(null);
-    setPage(nextPage);
+    setInternalPage(nextPage);
   }, []);
 
   // Toggle a strategy selection
@@ -712,14 +763,25 @@ export default function AnalyticsClient() {
   /* ─── Render ──────────────────────────────────────── */
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4">
+      <div className={`flex flex-col items-center justify-center gap-4 ${embedded ? 'min-h-[360px] py-16' : 'py-24'}`}>
         <LoadingSpinner size="md" />
-        <span className="text-sm text-foreground-muted animate-pulse">Loading analytics engine...</span>
+        <span className="text-sm text-foreground-muted animate-pulse">Loading performance history...</span>
       </div>
     );
   }
 
   if (error || !data || data.history.length === 0) {
+    if (embedded) {
+      return (
+        <div className="flex min-h-[280px] flex-col items-center justify-center rounded-xl border border-border/50 bg-surface px-6 text-center">
+          <h3 className="text-sm font-bold text-foreground">Performance history unavailable</h3>
+          <p className="mt-2 max-w-md text-xs text-foreground-muted">
+            {error || 'There are no historical checkpoints for the selected platform and strategy status yet.'}
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="p-8 bg-red-950/20 border border-red-900/50 text-red-400 rounded-xl max-w-xl mx-auto text-center">
         <h3 className="font-bold text-lg mb-2">Failed to load analytics</h3>
@@ -757,7 +819,7 @@ export default function AnalyticsClient() {
   return (
     <div className="analytics-dashboard animate-fade-in">
       {/* ═══ Hero Header ═══════════════════════════════ */}
-      <div className="analytics-hero">
+      {!embedded && <div className="analytics-hero">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -805,32 +867,33 @@ export default function AnalyticsClient() {
             </span>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* ═══ Chart Controls ════════════════════════════ */}
       <div className="analytics-chart-wrapper">
         <div className="analytics-chart-controls">
           <div className="flex items-center gap-2 flex-wrap">
-            <PlatformTabs platform={platform} onSelect={selectPlatform} />
-
-            <div className="analytics-divider" />
-
-            <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted/70">
-              Status
-              <select
-                aria-label="Strategy status"
-                value={strategyStatus}
-                onChange={(event) => selectStrategyStatus(event.target.value as StrategyStatus)}
-                className="rounded-lg border border-border/60 bg-background-secondary px-2.5 py-1.5 text-xs font-semibold normal-case tracking-normal text-foreground outline-none focus:border-primary/60"
-              >
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-                <option value="disabled">Disabled</option>
-                <option value="all">All statuses</option>
-              </select>
-            </label>
-
-            <div className="analytics-divider" />
+            {!embedded && (
+              <>
+                <PlatformTabs platform={platform} onSelect={selectPlatform} />
+                <div className="analytics-divider" />
+                <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted/70">
+                  Status
+                  <select
+                    aria-label="Strategy status"
+                    value={strategyStatus}
+                    onChange={(event) => selectStrategyStatus(event.target.value as StrategyStatus)}
+                    className="rounded-lg border border-border/60 bg-background-secondary px-2.5 py-1.5 text-xs font-semibold normal-case tracking-normal text-foreground outline-none focus:border-primary/60"
+                  >
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="disabled">Disabled</option>
+                    <option value="all">All statuses</option>
+                  </select>
+                </label>
+                <div className="analytics-divider" />
+              </>
+            )}
 
             {/* Time Range Selectors */}
             <div className="analytics-pill-group">
@@ -1063,9 +1126,10 @@ export default function AnalyticsClient() {
           )}
         </div>
 
-        <Pagination page={page} totalPages={totalPages} onPageChange={selectPage} />
+        {!embedded && <Pagination page={page} totalPages={totalPages} onPageChange={selectPage} />}
       </div>
 
+      {!embedded && <>
       {/* ═══ Hourly Rate Metrics (Monitoring Panel) ════ */}
       <div className="analytics-section">
         <div className="analytics-section-header">
@@ -1358,6 +1422,7 @@ export default function AnalyticsClient() {
             })}
         </div>
       </div>
+      </>}
     </div>
   );
 }

@@ -1,7 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import type { Platform, StrategyStatus } from './analytics/AnalyticsClient';
+
+const AnalyticsClient = dynamic(() => import('./analytics/AnalyticsClient'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-border/50 bg-surface">
+      <LoadingSpinner size="md" />
+    </div>
+  ),
+});
 
 type LeaderboardUser = {
   rank: number;
@@ -12,9 +23,6 @@ type LeaderboardUser = {
   totalPnL: number;
   returnPct: number;
 };
-
-type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
-type StrategyStatus = 'active' | 'paused' | 'disabled' | 'all';
 
 export default function LeaderboardClient() {
   const [data, setData] = useState<LeaderboardUser[]>([]);
@@ -65,40 +73,23 @@ export default function LeaderboardClient() {
     setPage(nextPage);
   };
 
-  if (loading) {
-    return (
+  return (
+    <div className="space-y-8">
+      <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
       <div className="space-y-4">
-        <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
-        <div className="flex justify-center py-12">
+      {loading ? (
+        <div className="flex min-h-48 justify-center py-12">
           <LoadingSpinner size="md" />
         </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-4 bg-red-900/20 text-red-400 rounded-lg">
-        {error}
-      </div>
-    );
-  }
-
-  if (data.length === 0) {
-    return (
-      <div className="space-y-4">
-        <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
-        <div className="p-12 text-center text-foreground-muted bg-surface rounded-xl border border-border/50">
+      ) : error ? (
+        <div className="rounded-lg bg-red-900/20 p-4 text-red-400">{error}</div>
+      ) : data.length === 0 ? (
+        <div className="rounded-xl border border-border/50 bg-surface p-12 text-center text-foreground-muted">
           No {strategyStatus === 'all' ? '' : `${strategyStatus} `}{platform === 'kalshi' ? 'Kalshi' : platform === 'kalshi_real' ? 'Kalshi Real' : platform === 'polymarket_us' ? 'Polymarket US' : platform === 'polymarket_us_real' ? 'Poly US Real' : 'Polymarket'} traders yet.
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <LeaderboardFilters platform={platform} strategyStatus={strategyStatus} onSelectPlatform={selectPlatform} onSelectStatus={selectStrategyStatus} />
-      <div className="bg-surface rounded-xl border border-border/50 overflow-hidden shadow-sm">
+      ) : (
+        <>
+        <div className="bg-surface rounded-xl border border-border/50 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
           <thead className="text-xs uppercase bg-background/50 text-foreground-muted border-b border-border/50">
@@ -154,6 +145,25 @@ export default function LeaderboardClient() {
         </div>
       </div>
       <Pagination page={page} totalPages={totalPages} onPage={selectPage} />
+        </>
+      )}
+      </div>
+
+      <section aria-labelledby="performance-history-title" className="space-y-3">
+        <div>
+          <h2 id="performance-history-title" className="text-lg font-bold text-foreground">Performance History</h2>
+          <p className="mt-1 text-xs text-foreground-muted">
+            Uses the same platform and strategy status filters as the leaderboard above.
+          </p>
+        </div>
+        <AnalyticsClient
+          key={`${platform}:${strategyStatus}:${page}`}
+          embedded
+          platform={platform}
+          strategyStatus={strategyStatus}
+          page={page}
+        />
+      </section>
     </div>
   );
 }

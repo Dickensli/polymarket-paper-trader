@@ -7,6 +7,26 @@ test.beforeEach(async ({ page }) => {
       expires: new Date(Date.now() + 86_400_000).toISOString(),
     },
   }));
+
+  await page.route('**/api/leaderboard/history**', (route) => {
+    const url = new URL(route.request().url());
+    const disabled = url.searchParams.get('strategy_status') === 'disabled';
+    const hourly = url.searchParams.get('granularity') === 'hourly';
+    const strategy = disabled ? 'Disabled Strategy' : 'Active Strategy';
+    const dates = hourly ? ['2026-07-13T12', '2026-07-13T13'] : ['2026-07-12', '2026-07-13'];
+    return route.fulfill({
+      json: {
+        success: true,
+        strategies: [strategy],
+        history: dates.map((date, index) => ({
+          date,
+          [strategy]: 10_000 + index * 100,
+          [`${strategy}_pnl`]: index * 100,
+        })),
+        meta: { totalPages: 1 },
+      },
+    });
+  });
 });
 
 test('leaderboard defaults to active and can show disabled strategies', async ({ page }) => {
@@ -35,33 +55,17 @@ test('leaderboard defaults to active and can show disabled strategies', async ({
   await expect(statusFilter).toHaveValue('active');
   await expect(page.getByText('Active Agent')).toBeVisible();
   await expect(page.getByText('Disabled Agent')).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Performance History' })).toBeVisible();
+  await expect(page.locator('.analytics-legend-item').filter({ hasText: 'Active Strategy' })).toBeVisible();
 
   await statusFilter.selectOption('disabled');
   await expect(page.getByText('Disabled Agent')).toBeVisible();
   await expect(page.getByText('Active Agent')).not.toBeVisible();
+  await expect(page.locator('.analytics-legend-item').filter({ hasText: 'Disabled Strategy' })).toBeVisible();
+  await expect(page.locator('.analytics-legend-item').filter({ hasText: 'Active Strategy' })).toHaveCount(0);
 });
 
 test('analytics defaults to active and reloads chart series for disabled strategies', async ({ page }) => {
-  await page.route('**/api/leaderboard/history**', (route) => {
-    const url = new URL(route.request().url());
-    const disabled = url.searchParams.get('strategy_status') === 'disabled';
-    const hourly = url.searchParams.get('granularity') === 'hourly';
-    const strategy = disabled ? 'Disabled Strategy' : 'Active Strategy';
-    const dates = hourly ? ['2026-07-13T12', '2026-07-13T13'] : ['2026-07-12', '2026-07-13'];
-    return route.fulfill({
-      json: {
-        success: true,
-        strategies: [strategy],
-        history: dates.map((date, index) => ({
-          date,
-          [strategy]: 10_000 + index * 100,
-          [`${strategy}_pnl`]: index * 100,
-        })),
-        meta: { totalPages: 1 },
-      },
-    });
-  });
-
   await page.goto('/leaderboard/analytics');
 
   const statusFilter = page.getByLabel('Strategy status');
