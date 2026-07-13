@@ -7,7 +7,9 @@ function iso(value: Date | string | null | undefined) { return value ? new Date(
 export function buildOfficialOrderHistory(fills: FillRow[], events: EventRow[]) {
   const result = new Map<string, Record<string, unknown>>();
   const latest = new Map<string, EventRow>();
+  const groupedEvents = new Map<string, EventRow[]>();
   for (const event of events) {
+    groupedEvents.set(event.officialOrderId, [...(groupedEvents.get(event.officialOrderId) ?? []), event]);
     const prior = latest.get(event.officialOrderId);
     if (!prior || (iso(event.occurredAt) ?? '') > (iso(prior.occurredAt) ?? '')) latest.set(event.officialOrderId, event);
   }
@@ -27,6 +29,13 @@ export function buildOfficialOrderHistory(fills: FillRow[], events: EventRow[]) 
       status: event?.status ?? (filled > 0 ? 'EXECUTED' : 'SUBMITTED'),
       first_fill_at: times[0] ?? null, last_fill_at: times.at(-1) ?? null,
       venue_updated_at: iso(event?.occurredAt), fill_count: rows.length,
+      fills: [...rows].sort((a, b) => (iso(a.filledAt) ?? '').localeCompare(iso(b.filledAt) ?? '')).map((row) => ({
+        quantity: numeric(row.quantity), price: numeric(row.price), fee: numeric(row.fee), filled_at: iso(row.filledAt),
+      })),
+      events: (groupedEvents.get(orderId) ?? []).sort((a, b) => (iso(a.occurredAt) ?? '').localeCompare(iso(b.occurredAt) ?? '')).map((row) => ({
+        status: row.status, requested_quantity: numeric(row.requestedQuantity), filled_quantity: numeric(row.filledQuantity),
+        remaining_quantity: numeric(row.remainingQuantity), occurred_at: iso(row.occurredAt),
+      })),
     });
   }
   return result;

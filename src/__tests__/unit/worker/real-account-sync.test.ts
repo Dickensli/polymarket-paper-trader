@@ -16,7 +16,8 @@ describe('real account sync job', () => {
   const insertValues = vi.fn(async () => undefined);
   const onConflictDoNothing = vi.fn(async () => undefined);
   const onConflictDoUpdate = vi.fn(async () => undefined);
-  const ledgerInsertValues = vi.fn(() => ({ onConflictDoNothing }));
+  const ledgerOnConflictDoUpdate = vi.fn(async () => undefined);
+  const ledgerInsertValues = vi.fn(() => ({ onConflictDoNothing, onConflictDoUpdate: ledgerOnConflictDoUpdate }));
   const syncInsertValues = vi.fn(() => ({ onConflictDoUpdate }));
   const updateWhere = vi.fn(async () => undefined);
   const updateSet = vi.fn(() => ({ where: updateWhere }));
@@ -50,6 +51,7 @@ describe('real account sync job', () => {
   });
 
   it('fetches one private snapshot for two strategies sharing a Kalshi key', async () => {
+    db.query.realTradeOrders.findMany.mockResolvedValue([{ id: 'audit-1', officialOrderId: 'official-1', strategyId: 'strategy-1', userId: 'user-1' }]);
     db.query.strategies.findMany.mockResolvedValue([
       { id: 'strategy-1', userId: 'user-1', platform: 'kalshi', agentMode: 'real' },
       { id: 'strategy-2', userId: 'user-2', platform: 'kalshi', agentMode: 'real' },
@@ -64,7 +66,7 @@ describe('real account sync job', () => {
         order_id: 'official-1', status: 'resting', initial_count_fp: '10.00',
         fill_count_fp: '4.00', remaining_count_fp: '6.00', last_update_time: '2026-07-13T01:00:00Z',
       }],
-      fills: [],
+      fills: [{ fill_id: 'fill-1', order_id: 'official-1', ticker: 'KXTEST', outcome_side: 'yes', action: 'buy', count_fp: '4', yes_price_dollars: '0.5', fee_cost: '0.01', created_time: '2026-07-13T01:00:00Z' }],
       settlements: [],
       activity: [],
       raw: {},
@@ -78,7 +80,10 @@ describe('real account sync job', () => {
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledTimes(1);
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi');
     expect(insertValues).toHaveBeenCalledTimes(2);
-    expect(onConflictDoNothing).toHaveBeenCalledTimes(1);
+    expect(ledgerOnConflictDoUpdate).toHaveBeenCalledTimes(2);
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      realTradeOrderId: 'audit-1', strategyId: 'strategy-1', userId: 'user-1',
+    }));
     expect(onConflictDoUpdate).toHaveBeenCalledTimes(3);
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
       status: 'PARTIALLY_FILLED',

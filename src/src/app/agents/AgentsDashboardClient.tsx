@@ -114,6 +114,8 @@ type RealOrder = {
   first_fill_at?: string | null;
   last_fill_at?: string | null;
   venue_updated_at?: string | null;
+  fills?: Array<{ quantity: number; price: number; fee: number; filled_at: string }>;
+  events?: Array<{ status: string; requested_quantity: number; filled_quantity: number; remaining_quantity: number; occurred_at: string }>;
 };
 
 type SettledPosition = {
@@ -207,10 +209,10 @@ function agentLabel(item: { agent_name?: string | null; agent_email?: string | n
 
 function statusClass(status: string) {
   const normalized = status.toLowerCase();
-  if (normalized === 'active' || normalized === 'submitted' || normalized === 'open' || normalized === 'filled') {
+  if (normalized === 'active' || normalized === 'submitted' || normalized === 'open' || normalized === 'filled' || normalized === 'executed') {
     return 'bg-profit/10 text-profit-light border-profit/25';
   }
-  if (normalized === 'paused' || normalized === 'warning' || normalized === 'pending' || normalized === 'cancelled' || normalized === 'canceled') {
+  if (normalized === 'paused' || normalized === 'warning' || normalized === 'pending' || normalized === 'cancelled' || normalized === 'canceled' || normalized.includes('partially_filled')) {
     return 'bg-primary/10 text-primary-light border-primary/25';
   }
   if (normalized === 'disabled' || normalized === 'critical' || normalized.includes('error') || normalized === 'rejected') {
@@ -705,6 +707,32 @@ function OrderEntry({ order }: { order: RealOrder }) {
               )}
             </div>
             <div className="space-y-3">
+              {order.events && order.events.length > 0 && (
+                <div>
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Lifecycle</div>
+                  <div className="space-y-1 rounded-md border border-white/[0.06] bg-white/[0.02] p-2 text-xs">
+                    {order.events.map((event, index) => (
+                      <div key={`${event.occurred_at}-${index}`} className="flex justify-between gap-3">
+                        <span><Badge tone={statusClass(event.status)}>{event.status}</Badge> · {event.filled_quantity}/{event.requested_quantity} filled</span>
+                        <span className="text-foreground-muted">{formatDate(event.occurred_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {order.fills && order.fills.length > 0 && (
+                <div>
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Executions</div>
+                  <div className="space-y-1 rounded-md border border-white/[0.06] bg-white/[0.02] p-2 text-xs">
+                    {order.fills.map((fill, index) => (
+                      <div key={`${fill.filled_at}-${index}`} className="flex justify-between gap-3">
+                        <span>{fill.quantity} @ {(fill.price * 100).toFixed(2)}c · fee {formatMoney(fill.fee)}</span>
+                        <span className="text-foreground-muted">{formatDate(fill.filled_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {order.request != null && (
                 <div>
                   <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Request</div>

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   officialOrderEvents,
@@ -71,11 +71,33 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           .filter((audit) => audit.officialOrderId)
           .map((audit) => [audit.officialOrderId!, audit]));
 
+        // A venue fill can arrive before the local submit route has committed
+        // its audit row. Repair those initially-unattributed immutable facts
+        // whenever the official order id later becomes known locally.
+        for (const audit of auditByOrderId.values()) {
+          await db.update(officialTradeFills).set({
+            realTradeOrderId: audit.id,
+            strategyId: audit.strategyId,
+            userId: audit.userId,
+          }).where(and(
+            eq(officialTradeFills.officialOrderId, audit.officialOrderId!),
+            isNull(officialTradeFills.strategyId),
+          ));
+          await db.update(officialOrderEvents).set({
+            realTradeOrderId: audit.id,
+            strategyId: audit.strategyId,
+            userId: audit.userId,
+          }).where(and(
+            eq(officialOrderEvents.officialOrderId, audit.officialOrderId!),
+            isNull(officialOrderEvents.strategyId),
+          ));
+        }
+
         for (const row of snapshot.orders) {
           if (!row || typeof row !== 'object') continue;
           const event = normalizeKalshiOrderEvent(row as Record<string, unknown>);
           const audit = auditByOrderId.get(event.officialOrderId);
-          await db.insert(officialOrderEvents).values({
+          const insertEvent = db.insert(officialOrderEvents).values({
             ...event,
             realTradeOrderId: audit?.id ?? null,
             strategyId: audit?.strategyId ?? null,
@@ -83,14 +105,22 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             requestedQuantity: event.requestedQuantity.toFixed(6),
             filledQuantity: event.filledQuantity.toFixed(6),
             remainingQuantity: event.remainingQuantity.toFixed(6),
-          }).onConflictDoNothing();
+          });
+          if (audit) {
+            await insertEvent.onConflictDoUpdate({
+              target: officialOrderEvents.eventKey,
+              set: { realTradeOrderId: audit.id, strategyId: audit.strategyId, userId: audit.userId },
+            });
+          } else {
+            await insertEvent.onConflictDoNothing();
+          }
         }
 
         for (const row of [...historicalFills, ...snapshot.fills]) {
           if (!row || typeof row !== 'object') continue;
           const fill = normalizeKalshiFill(row as Record<string, unknown>);
           const audit = fill.officialOrderId ? auditByOrderId.get(fill.officialOrderId) : undefined;
-          await db.insert(officialTradeFills).values({
+          const insertFill = db.insert(officialTradeFills).values({
             ...fill,
             realTradeOrderId: audit?.id ?? null,
             strategyId: audit?.strategyId ?? null,
@@ -98,7 +128,15 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             quantity: fill.quantity.toFixed(6),
             price: fill.price.toFixed(6),
             fee: fill.fee.toFixed(6),
-          }).onConflictDoNothing();
+          });
+          if (audit) {
+            await insertFill.onConflictDoUpdate({
+              target: [officialTradeFills.platform, officialTradeFills.officialFillId],
+              set: { realTradeOrderId: audit.id, strategyId: audit.strategyId, userId: audit.userId },
+            });
+          } else {
+            await insertFill.onConflictDoNothing();
+          }
         }
 
         for (const row of snapshot.settlements ?? []) {

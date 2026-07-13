@@ -12,6 +12,11 @@ describe('official order history', () => {
       requested_quantity: 10, filled_quantity: 5, remaining_quantity: 5,
       average_fill_price: 0.46, fees: 0.05, status: 'PARTIALLY_FILLED',
       first_fill_at: '2026-07-13T01:00:00.000Z', last_fill_at: '2026-07-13T01:01:00.000Z',
+      fills: [
+        { quantity: 2, price: 0.4, fee: 0.02, filled_at: '2026-07-13T01:00:00.000Z' },
+        { quantity: 3, price: 0.5, fee: 0.03, filled_at: '2026-07-13T01:01:00.000Z' },
+      ],
+      events: [{ status: 'PARTIALLY_FILLED', filled_quantity: 5, remaining_quantity: 5 }],
     });
   });
 });

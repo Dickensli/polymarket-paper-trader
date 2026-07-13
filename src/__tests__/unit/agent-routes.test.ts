@@ -576,6 +576,7 @@ describe('agent route handlers', () => {
   it.skip('reconciles real strategies against official snapshots and logs differences', async () => {
     const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
     const { getPortfolio } = await import('@/lib/trading-engine');
+    // @ts-expect-error Legacy reconcile route was intentionally removed; retained skipped scenario documents old behavior.
     const { POST } = await import('@/app/api/agent/reconcile/route');
 
     db.query.strategies.findFirst.mockResolvedValue({
@@ -662,6 +663,7 @@ describe('agent route handlers', () => {
   it.skip('captures paper local snapshot without official reconciliation', async () => {
     const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
     const { getPortfolio } = await import('@/lib/trading-engine');
+    // @ts-expect-error Legacy reconcile route was intentionally removed; retained skipped scenario documents old behavior.
     const { POST } = await import('@/app/api/agent/reconcile/route');
 
     db.query.strategies.findFirst.mockResolvedValue({
