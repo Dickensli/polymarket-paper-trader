@@ -14,6 +14,7 @@ type Granularity = 'daily' | 'hourly';
 type TimeRange = '1H' | '6H' | '1D' | '1W' | 'ALL';
 type ChartMetric = 'value' | 'pnl';
 type Platform = 'polymarket' | 'kalshi' | 'kalshi_real' | 'polymarket_us' | 'polymarket_us_real';
+type StrategyStatus = 'active' | 'paused' | 'disabled' | 'all';
 
 /* ─── Constants ─────────────────────────────────────── */
 const STRATEGY_COLORS = [
@@ -265,6 +266,7 @@ export default function AnalyticsClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<Platform>('polymarket');
+  const [strategyStatus, setStrategyStatus] = useState<StrategyStatus>('active');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -288,9 +290,7 @@ export default function AnalyticsClient() {
 
   // Fetch both granularities
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const query = `platform=${platform}&page=${page}&pageSize=8`;
+    const query = `platform=${platform}&strategy_status=${strategyStatus}&page=${page}&pageSize=8`;
     Promise.all([
       fetch(`/api/leaderboard/history?granularity=daily&${query}`).then(r => r.json()),
       fetch(`/api/leaderboard/history?granularity=hourly&${query}`).then(r => r.json()),
@@ -308,7 +308,7 @@ export default function AnalyticsClient() {
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, [platform, page]);
+  }, [platform, strategyStatus, page]);
 
   // Active dataset
   const data = granularity === 'hourly' ? hourlyData : dailyData;
@@ -334,10 +334,27 @@ export default function AnalyticsClient() {
   const strategies = data?.strategies || [];
 
   const selectPlatform = useCallback((nextPlatform: Platform) => {
+    setLoading(true);
+    setError(null);
     setPlatform(nextPlatform);
     setPage(1);
     setSelectedStrategies(new Set());
     setHoveredPoint(null);
+  }, []);
+
+  const selectStrategyStatus = useCallback((nextStatus: StrategyStatus) => {
+    setLoading(true);
+    setError(null);
+    setStrategyStatus(nextStatus);
+    setPage(1);
+    setSelectedStrategies(new Set());
+    setHoveredPoint(null);
+  }, []);
+
+  const selectPage = useCallback((nextPage: number) => {
+    setLoading(true);
+    setError(null);
+    setPage(nextPage);
   }, []);
 
   // Toggle a strategy selection
@@ -780,6 +797,23 @@ export default function AnalyticsClient() {
 
             <div className="analytics-divider" />
 
+            <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted/70">
+              Status
+              <select
+                aria-label="Strategy status"
+                value={strategyStatus}
+                onChange={(event) => selectStrategyStatus(event.target.value as StrategyStatus)}
+                className="rounded-lg border border-border/60 bg-background-secondary px-2.5 py-1.5 text-xs font-semibold normal-case tracking-normal text-foreground outline-none focus:border-primary/60"
+              >
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+                <option value="disabled">Disabled</option>
+                <option value="all">All statuses</option>
+              </select>
+            </label>
+
+            <div className="analytics-divider" />
+
             {/* Time Range Selectors */}
             <div className="analytics-pill-group">
               {(['1H', '6H', '1D', '1W', 'ALL'] as TimeRange[]).map(range => (
@@ -995,7 +1029,7 @@ export default function AnalyticsClient() {
           )}
         </div>
 
-        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+        <Pagination page={page} totalPages={totalPages} onPageChange={selectPage} />
       </div>
 
       {/* ═══ Hourly Rate Metrics (Monitoring Panel) ════ */}

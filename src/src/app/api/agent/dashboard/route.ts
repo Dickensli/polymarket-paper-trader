@@ -16,6 +16,7 @@ import {
   enrichPositionRowsWithMarkets,
   enrichSettledRowsWithMarkets,
 } from '@/lib/agent-market-context';
+import { isOpenRealOrderStatus } from '@/lib/real-orders';
 import {
   agentReports,
   portfolioSnapshots,
@@ -243,8 +244,7 @@ export async function GET(request: NextRequest) {
       snapshotsByStrategy.set(snapshot.strategyId, rows);
     }
 
-    const openOrderStatuses = new Set(['PENDING', 'SUBMITTING', 'SUBMITTED', 'OPEN', 'LIVE']);
-    const openRealOrderCount = filteredRealOrders.filter((order) => openOrderStatuses.has(order.status)).length;
+    const openRealOrderCount = filteredRealOrders.filter((order) => isOpenRealOrderStatus(order.status)).length;
     const openPositionsByUser = new Map<string, typeof openPositions>();
     for (const position of openPositions) {
       const rows = openPositionsByUser.get(position.userId) ?? [];
