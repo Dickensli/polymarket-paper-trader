@@ -754,6 +754,26 @@ export const strategyPerformanceSnapshots = pgTable(
   ],
 );
 
+/** Rare, aggregated external contributions/withdrawals used for TWR/MWR. */
+export const strategyCapitalFlows = pgTable(
+  'strategy_capital_flows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id').notNull().references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    amount: decimal('amount', { precision: 18, scale: 6 }).notNull(), // contribution +, withdrawal -
+    navBeforeFlow: decimal('nav_before_flow', { precision: 18, scale: 6 }).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    source: varchar('source', { length: 30 }).notNull().default('manual'),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('strategy_capital_flows_idempotency_idx').on(table.strategyId, table.idempotencyKey),
+    index('strategy_capital_flows_strategy_time_idx').on(table.strategyId, table.occurredAt),
+  ],
+);
+
 // ─── Limit Orders ───────────────────────────────────────────
 
 /** Pending / filled / cancelled limit orders for paper trading */

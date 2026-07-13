@@ -107,6 +107,15 @@ function formatTime(unix: number, granularity: Granularity): string {
   });
 }
 
+function forwardFilledStrategyValues(history: HistoryPoint[], valueKey: string) {
+  let lastValue: number | null = null;
+  return history.flatMap((point) => {
+    const rawValue = point[valueKey];
+    if (rawValue !== undefined && rawValue !== null) lastValue = Number(rawValue);
+    return lastValue === null ? [] : [{ point, value: lastValue }];
+  });
+}
+
 /* ─── Sparkline SVG ─────────────────────────────────── */
 function Sparkline({ data, color, height = 32, width = 100 }: {
   data: number[];
@@ -182,16 +191,13 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
   const rawMwrPct = history[history.length - 1]?.[`${stratName}_mwr_pct`];
   const latestMwrPct = rawMwrPct === undefined || rawMwrPct === null ? null : Number(rawMwrPct);
   
-  const values = history.map(h => {
-    const val = h[stratName];
-    return val !== undefined && val !== null ? Number(val) : derivedStartVal;
-  });
+  const values = forwardFilledStrategyValues(history, stratName).map(({ value }) => value);
 
   if (values.length < 2) {
     return {
       hourlyPnlRate: 0, avgHourlyReturn: 0, hourlyWinRate: 0,
       hourlySharpe: 0, maxHourlyGain: 0, maxHourlyLoss: 0,
-      totalPnl: latestPnl, returnPct: derivedStartVal > 0 ? (latestPnl / derivedStartVal) * 100 : 0, currentValue: latestValue,
+      totalPnl: latestPnl, returnPct: latestTwrPct, currentValue: latestValue,
       maxDrawdown: 0, volatility: 0, periodReturns: [] as number[],
       hourlyValues: values,
       latestTwrPct, latestMwrPct,
@@ -201,7 +207,7 @@ function computeHourlyMetrics(history: HistoryPoint[], stratName: string, granul
   const startVal = derivedStartVal;
   const currentValue = values[values.length - 1];
   const totalPnl = currentValue - startVal;
-  const returnPct = startVal > 0 ? (totalPnl / startVal) * 100 : 0;
+  const returnPct = latestTwrPct;
 
   // Period-over-period returns
   const periodReturns: number[] = [];
@@ -667,13 +673,10 @@ export default function AnalyticsClient() {
             });
 
         const seen = new Set<number>();
-        const startVal = allMetrics[strat] ? (allMetrics[strat].currentValue - allMetrics[strat].totalPnl) : 10000;
-        const seriesData = filteredHistory
-          .map(pt => ({
-            time: periodKeyToUnix(pt.date),
-            value: chartMetric === 'value'
-              ? Number(pt[strat] || startVal)
-              : Number(pt[`${strat}_pnl`] || 0),
+        const seriesData = forwardFilledStrategyValues(filteredHistory, chartMetric === 'value' ? strat : `${strat}_pnl`)
+          .map(({ point, value }) => ({
+            time: periodKeyToUnix(point.date),
+            value,
           }))
           .filter(d => { if (seen.has(d.time)) return false; seen.add(d.time); return true; })
           .sort((a, b) => (a.time as number) - (b.time as number));
@@ -733,9 +736,8 @@ export default function AnalyticsClient() {
   const latestHistory = filteredHistory[filteredHistory.length - 1];
   for (const strat of strategies) {
     const startVal = allMetrics[strat] ? (allMetrics[strat].currentValue - allMetrics[strat].totalPnl) : 10000;
-    latestValues[strat] = chartMetric === 'value'
-      ? Number(latestHistory?.[strat] || startVal)
-      : Number(latestHistory?.[`${strat}_pnl`] || 0);
+    const filled = forwardFilledStrategyValues(filteredHistory, chartMetric === 'value' ? strat : `${strat}_pnl`);
+    latestValues[strat] = filled[filled.length - 1]?.value ?? (chartMetric === 'value' ? startVal : 0);
   }
 
   const displayValues = hoveredPoint?.values || latestValues;
