@@ -11,6 +11,7 @@ import {
 } from '@/lib/agent-dashboard-filters';
 import { buildSettledStrategyPositions } from '@/lib/agent-settled-positions';
 import { buildOfficialOrderHistory } from '@/lib/agent-order-history';
+import { buildOfficialSettledStrategyPositions } from '@/lib/agent-official-settled';
 import {
   enrichPositionRowsWithMarkets,
   enrichSettledRowsWithMarkets,
@@ -21,6 +22,7 @@ import {
   paperTradeOrders,
   officialOrderEvents,
   officialTradeFills,
+  officialSettlements,
   positions,
   realTradeOrders,
   strategies,
@@ -132,6 +134,7 @@ export async function GET(request: NextRequest) {
       paperOrders,
       officialFills,
       officialEvents,
+      officialSettlementRows,
     ] = await Promise.all([
       canViewAllAgents
         ? db.select().from(users).limit(1000)
@@ -158,6 +161,7 @@ export async function GET(request: NextRequest) {
       canViewAllAgents
         ? db.select().from(officialOrderEvents).orderBy(desc(officialOrderEvents.occurredAt)).limit(5000)
         : db.select().from(officialOrderEvents).where(eq(officialOrderEvents.userId, session.user.id)).orderBy(desc(officialOrderEvents.occurredAt)).limit(2000),
+      db.select().from(officialSettlements).orderBy(desc(officialSettlements.settledAt)).limit(1000),
     ]);
 
     const officialOrderHistory = buildOfficialOrderHistory(officialFills, officialEvents);
@@ -310,7 +314,8 @@ export async function GET(request: NextRequest) {
         is_stale: snapshotIsStale(latestSnapshot.capturedAt),
       }];
     });
-    const settledPositions = buildSettledStrategyPositions(
+    const settledPositions = [
+      ...buildSettledStrategyPositions(
       closedPositions,
       paperOrders,
       filteredStrategies.map((strategy) => ({
@@ -319,7 +324,15 @@ export async function GET(request: NextRequest) {
         name: strategyName(strategy),
         platform: strategy.platform,
       })),
-    );
+      ),
+      ...buildOfficialSettledStrategyPositions(
+        officialSettlementRows,
+        officialFills,
+        filteredStrategies.filter((strategy) => strategy.agentMode === 'real').map((strategy) => ({
+          id: strategy.id, userId: strategy.userId, name: strategyName(strategy), platform: strategy.platform,
+        })),
+      ),
+    ].sort((a, b) => b.settled_at.localeCompare(a.settled_at));
     const enrichedCurrentPortfolios = await Promise.all(currentPortfolios.map(async (portfolio) => ({
       ...portfolio,
       positions: await enrichPositionRowsWithMarkets(
