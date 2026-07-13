@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { getOfficialPortfolioSnapshot, submitOfficialRealTrade, cancelOfficialRealOrder } from '@/lib/official-trading';
 
-describe('Kalshi Demo API Integration', () => {
+// This suite submits venue orders. It must never run as part of the default
+// test command merely because credentials happen to exist in the environment.
+const describeLiveTrading = process.env.RUN_LIVE_TRADING_TESTS === '1' ? describe : describe.skip;
+
+describeLiveTrading('Kalshi Demo API Integration', () => {
   beforeAll(() => {
     process.env.KALSHI_USE_DEMO = 'true';
   });
@@ -66,7 +70,7 @@ describe('Kalshi Demo API Integration', () => {
   it('buys 6 dollars worth of contracts on an active market without cancelling', async () => {
     const baseUrl = 'https://demo-api.kalshi.co/trade-api/v2';
     const marketsRes = await fetch(`${baseUrl}/markets?limit=10&status=open`);
-    const marketsData = await marketsRes.json() as { markets?: Array<any> };
+    const marketsData = await marketsRes.json() as { markets?: Array<{ ticker: string; yes_ask_dollars?: string | number }> };
     const markets = marketsData.markets || [];
     expect(markets.length).toBeGreaterThan(0);
 

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { getPolymarketUsMarkets, getPolymarketUsMarketBook } from '@/lib/polymarket-us';
-import { getOfficialPortfolioSnapshot, submitOfficialRealTrade } from '@/lib/official-trading';
+import { getPolymarketUsMarkets } from '@/lib/polymarket-us';
+import { getOfficialPortfolioSnapshot } from '@/lib/official-trading';
 
-describe('Polymarket US Demo (Preprod) Integration', () => {
+const describeLiveTrading = process.env.RUN_LIVE_TRADING_TESTS === '1' ? describe : describe.skip;
+
+describeLiveTrading('Polymarket US Demo (Preprod) Integration', () => {
   beforeAll(() => {
     process.env.POLYMARKET_US_USE_DEMO = 'true';
   });
@@ -30,7 +32,8 @@ describe('Polymarket US Demo (Preprod) Integration', () => {
     const snapshot = await getOfficialPortfolioSnapshot('polymarket_us');
     expect(snapshot).toBeDefined();
     expect(snapshot.cash).toBe(0);
-    expect((snapshot.raw.positions as any).error).toContain('AuthenticationError');
+    const positions = snapshot.raw.positions as { error?: unknown };
+    expect(String(positions.error)).toContain('AuthenticationError');
 
     // Restore
     process.env.POLYMARKET_US_DEMO_KEY_ID = prevKey;
