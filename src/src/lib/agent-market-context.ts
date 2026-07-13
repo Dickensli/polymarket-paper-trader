@@ -109,9 +109,25 @@ export async function enrichSettledRowsWithMarkets<T extends {
   market_id: string;
   market: string;
 }>(rows: T[]): Promise<T[]> {
+  const kalshiTickers = [...new Set(rows
+    .filter((row) => row.platform === 'kalshi')
+    .map((row) => row.market_id)
+    .filter(Boolean))];
+  const kalshiMarkets = kalshiTickers.length > 0
+    ? await import('@/lib/kalshi')
+      .then(({ getKalshiMarkets }) => getKalshiMarkets(kalshiTickers))
+      .catch(() => new Map<string, Record<string, unknown>>())
+    : new Map<string, Record<string, unknown>>();
   const cache = new Map<string, Promise<AgentMarketContext>>();
   return Promise.all(rows.map(async (row) => {
     if (row.platform !== 'kalshi' && row.platform !== 'polymarket' && row.platform !== 'polymarket_us') return row;
+    if (row.platform === 'kalshi') {
+      const market = kalshiMarkets.get(row.market_id);
+      return {
+        ...row,
+        market: text(market?.title) ?? text(market?.subtitle) ?? row.market,
+      };
+    }
     const key = `${row.platform}:${row.market_id}`;
     if (!cache.has(key)) {
       cache.set(key, getAgentMarketContext(row.platform, row.market_id));

@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/lib/kalshi', () => ({ getKalshiMarket: vi.fn() }));
+vi.mock('@/lib/kalshi', () => ({
+  getKalshiMarket: vi.fn(),
+  getKalshiMarkets: vi.fn(),
+}));
 vi.mock('@/lib/polymarket-us', () => ({ getPolymarketUsMarket: vi.fn() }));
 vi.mock('@/lib/polymarket', () => ({ getMarket: vi.fn() }));
 
-import { getKalshiMarket } from '@/lib/kalshi';
+import { getKalshiMarket, getKalshiMarkets } from '@/lib/kalshi';
 import { getMarket } from '@/lib/polymarket';
 import { getPolymarketUsMarket } from '@/lib/polymarket-us';
 import {
@@ -31,6 +34,9 @@ describe('agent open-order market context', () => {
 
   it('uses readable Kalshi titles for current and settled position rows', async () => {
     vi.mocked(getKalshiMarket).mockResolvedValue({ title: 'Bitcoin up this interval?', status: 'finalized' });
+    vi.mocked(getKalshiMarkets).mockResolvedValue(new Map([
+      ['KXBTC15M-TEST', { title: 'Bitcoin up this interval?', status: 'finalized' }],
+    ]));
     await expect(enrichPositionRowsWithMarkets('kalshi', [{ ticker: 'KXBTC15M-TEST' }])).resolves.toMatchObject([
       { ticker: 'KXBTC15M-TEST', marketQuestion: 'Bitcoin up this interval?' },
     ]);
@@ -41,6 +47,26 @@ describe('agent open-order market context', () => {
     }])).resolves.toMatchObject([
       { market: 'Bitcoin up this interval?' },
     ]);
+    expect(getKalshiMarkets).toHaveBeenCalledWith(['KXBTC15M-TEST']);
+  });
+
+  it('batch-enriches Kalshi settled rows and safely preserves missing tickers', async () => {
+    vi.mocked(getKalshiMarkets).mockResolvedValue(new Map([
+      ['KXBTC15M-FIRST', { ticker: 'KXBTC15M-FIRST', title: 'BTC price up in next 15 mins?' }],
+      ['KXETH15M-SECOND', { ticker: 'KXETH15M-SECOND', title: 'ETH price up in next 15 mins?' }],
+    ]));
+
+    await expect(enrichSettledRowsWithMarkets([
+      { platform: 'kalshi', market_id: 'KXBTC15M-FIRST', market: 'KXBTC15M-FIRST' },
+      { platform: 'kalshi', market_id: 'KXETH15M-SECOND', market: 'KXETH15M-SECOND' },
+      { platform: 'kalshi', market_id: 'KXSOL15M-MISSING', market: 'KXSOL15M-MISSING' },
+    ])).resolves.toEqual([
+      { platform: 'kalshi', market_id: 'KXBTC15M-FIRST', market: 'BTC price up in next 15 mins?' },
+      { platform: 'kalshi', market_id: 'KXETH15M-SECOND', market: 'ETH price up in next 15 mins?' },
+      { platform: 'kalshi', market_id: 'KXSOL15M-MISSING', market: 'KXSOL15M-MISSING' },
+    ]);
+    expect(getKalshiMarkets).toHaveBeenCalledTimes(1);
+    expect(getKalshiMarket).not.toHaveBeenCalled();
   });
 
   it('enriches Polymarket US slugs', async () => {
