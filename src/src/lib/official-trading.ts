@@ -6,7 +6,7 @@ type Platform = 'kalshi' | 'polymarket_us';
 type Outcome = 'YES' | 'NO';
 type Side = 'BUY' | 'SELL';
 type TimeInForce = 'GTC' | 'IOC' | 'FOK';
-export type OfficialSyncWindow = { fillsMinTs?: number; settlementsMinTs?: number };
+export type OfficialSyncWindow = { ordersMinTs?: number; fillsMinTs?: number; settlementsMinTs?: number };
 
 export type OfficialTradeIntent = {
   platform: Platform;
@@ -341,7 +341,7 @@ async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<Offic
   const [balance, positions, orders, fills, settlements] = await Promise.all([
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/balance').catch((error) => ({ error: String(error) })),
     kalshiRequest<Record<string, unknown>>('GET', '/portfolio/positions').catch((error) => ({ error: String(error) })),
-    getKalshiCollection('/portfolio/orders', 'orders').catch((error) => ({ error: String(error) })),
+    getKalshiCollection('/portfolio/orders', 'orders', window.ordersMinTs ? { min_ts: String(window.ordersMinTs) } : {}).catch((error) => ({ error: String(error) })),
     getKalshiCollection('/portfolio/fills', 'fills', window.fillsMinTs ? { min_ts: String(window.fillsMinTs) } : {}).catch((error) => ({ error: String(error) })),
     getKalshiCollection('/portfolio/settlements', 'settlements', window.settlementsMinTs ? { min_ts: String(window.settlementsMinTs) } : {}).catch((error) => ({ error: String(error) })),
   ]);

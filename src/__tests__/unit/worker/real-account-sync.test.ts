@@ -102,6 +102,7 @@ describe('real account sync job', () => {
       .mockResolvedValueOnce({ lastSuccessAt: new Date() })
       .mockResolvedValueOnce({ lastSuccessAt: new Date() })
       .mockResolvedValueOnce({ lastSuccessAt: new Date() })
+      .mockResolvedValueOnce({ lastSuccessAt: new Date() })
       .mockResolvedValueOnce(undefined);
     db.query.officialTradeFills.findMany.mockResolvedValue([{
       id: 'fill-row', platform: 'kalshi', officialFillId: 'fill-old', officialOrderId: 'order-old',

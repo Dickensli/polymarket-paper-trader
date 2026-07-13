@@ -61,6 +61,9 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
     try {
       // Credentials are environment-bound per platform, so all strategies in
       // this group share one official account and one private snapshot call.
+      const ordersState = platform === 'kalshi' ? await db.query.officialSyncState.findFirst({
+        where: and(eq(officialSyncState.platform, 'kalshi'), eq(officialSyncState.resource, 'orders')),
+      }) : null;
       const fillsState = platform === 'kalshi' ? await db.query.officialSyncState.findFirst({
         where: and(eq(officialSyncState.platform, 'kalshi'), eq(officialSyncState.resource, 'fills')),
       }) : null;
@@ -73,6 +76,7 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
         return Number.isFinite(time) ? Math.max(0, Math.floor((time - 60_000) / 1000)) : undefined;
       };
       const snapshot = await getOfficialPortfolioSnapshot(platform, {
+        ordersMinTs: overlapMinTs(ordersState?.lastVenueTime),
         fillsMinTs: overlapMinTs(fillsState?.lastVenueTime),
         settlementsMinTs: overlapMinTs(settlementsState?.lastVenueTime),
       });
