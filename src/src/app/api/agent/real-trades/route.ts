@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { realTradeOrders, strategies } from '@/lib/db/schema';
+import { officialOrderEvents, realTradeOrders, strategies } from '@/lib/db/schema';
 import { resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
 
 const realTradeSchema = z.object({
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const sanitizeRealOrder = (o: any) => ({
+    const sanitizeRealOrder = (o: Record<string, unknown>) => ({
       platform: o.platform,
       officialOrderId: o.officialOrderId,
       clientOrderId: o.clientOrderId,
@@ -174,6 +174,18 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
+    const writeLifecycleEvent = async (status: string, officialOrderId: string, payload: Record<string, unknown>, filled = 0, remaining = resolvedQuantity) => {
+      const occurredAt = new Date();
+      await db.insert(officialOrderEvents).values({
+        realTradeOrderId: audit.id, strategyId: strategy.id, userId: session.user.id,
+        platform: strategy.platform, officialOrderId,
+        eventKey: `${strategy.platform}:${officialOrderId}:${status}:${occurredAt.toISOString()}`,
+        status, requestedQuantity: resolvedQuantity.toFixed(6), filledQuantity: filled.toFixed(6),
+        remainingQuantity: remaining.toFixed(6), occurredAt, payload,
+      }).returning();
+    };
+    await writeLifecycleEvent('SUBMITTING', `local:${audit.id}`, order);
+
     try {
       const official = await submitOfficialRealTrade({
         platform: strategy.platform as 'kalshi' | 'polymarket_us',
@@ -203,6 +215,11 @@ export async function POST(request: NextRequest) {
         })
         .where(eq(realTradeOrders.id, audit.id))
         .returning();
+      const immediateFilled = Number(official.response.fill_count ?? official.response.fill_count_fp ?? official.response.filledQuantity ?? 0);
+      const immediateRemaining = Number(official.response.remaining_count ?? official.response.remaining_count_fp ?? official.response.remainingQuantity ?? Math.max(0, resolvedQuantity - immediateFilled));
+      await writeLifecycleEvent(official.status, official.officialOrderId ?? `local:${audit.id}`, {
+        ...official.response, submitted_request: official.request,
+      }, Number.isFinite(immediateFilled) ? immediateFilled : 0, Number.isFinite(immediateRemaining) ? immediateRemaining : resolvedQuantity);
 
       return NextResponse.json({
         data: sanitizeRealOrder(updatedAudit),
@@ -220,6 +237,7 @@ export async function POST(request: NextRequest) {
         })
         .where(eq(realTradeOrders.id, audit.id))
         .returning();
+      await writeLifecycleEvent('ERROR', `local:${audit.id}`, { message });
 
       return NextResponse.json(
         {

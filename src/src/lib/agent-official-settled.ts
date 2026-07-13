@@ -1,7 +1,7 @@
 import type { AgentSettledPosition, SettledStrategy } from '@/lib/agent-settled-positions';
 
 type Settlement = { id: string; platform: string; marketId: string; marketResult: string; yesQuantity: unknown; noQuantity: unknown; yesCost: unknown; noCost: unknown; revenue: unknown; fee: unknown; settledAt: Date | string };
-type Fill = { strategyId: string | null; marketId: string; outcome: string | null; side: string | null; quantity: unknown; price: unknown; fee: unknown; filledAt: Date | string };
+type Fill = { strategyId: string | null; platform?: string; marketId: string; outcome: string | null; side: string | null; quantity: unknown; price: unknown; fee: unknown; filledAt: Date | string };
 const n = (v: unknown) => Number.isFinite(Number(v)) ? Number(v) : 0;
 const rounded = (value: number) => Number(value.toFixed(6));
 
@@ -10,7 +10,8 @@ export function buildOfficialSettledStrategyPositions(settlements: Settlement[],
   const lots = new Map<string, { quantity: number; cost: number }>();
   for (const fill of [...fills].sort((a, b) => new Date(a.filledAt).getTime() - new Date(b.filledAt).getTime())) {
     if (!fill.strategyId || !fill.outcome || !strategyById.has(fill.strategyId)) continue;
-    const key = `${fill.marketId}:${fill.outcome}:${fill.strategyId}`; const lot = lots.get(key) ?? { quantity: 0, cost: 0 };
+    const fillPlatform = fill.platform ?? strategyById.get(fill.strategyId)!.platform;
+    const key = `${fillPlatform}:${fill.marketId}:${fill.outcome}:${fill.strategyId}`; const lot = lots.get(key) ?? { quantity: 0, cost: 0 };
     const quantity = n(fill.quantity); const price = n(fill.price); const fee = n(fill.fee);
     if (fill.side === 'BUY') { lot.quantity += quantity; lot.cost += quantity * price + fee; }
     if (fill.side === 'SELL' && lot.quantity > 0) { const removed = Math.min(quantity, lot.quantity); lot.cost -= (lot.cost / lot.quantity) * removed; lot.quantity -= removed; }
@@ -19,7 +20,7 @@ export function buildOfficialSettledStrategyPositions(settlements: Settlement[],
   const result: AgentSettledPosition[] = [];
   for (const settlement of settlements) for (const outcome of ['YES', 'NO'] as const) {
     const officialQuantity = n(outcome === 'YES' ? settlement.yesQuantity : settlement.noQuantity); if (officialQuantity <= 0) continue;
-    const candidates = [...lots.entries()].filter(([key, lot]) => key.startsWith(`${settlement.marketId}:${outcome}:`) && lot.quantity > 0);
+    const candidates = [...lots.entries()].filter(([key, lot]) => key.startsWith(`${settlement.platform}:${settlement.marketId}:${outcome}:`) && lot.quantity > 0);
     const total = candidates.reduce((sum, [, lot]) => sum + lot.quantity, 0); if (total <= 0) continue;
     const scale = Math.min(1, officialQuantity / total);
     for (const [key, lot] of candidates) {

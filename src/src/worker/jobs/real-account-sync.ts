@@ -23,6 +23,9 @@ import {
   normalizeKalshiSettlement,
   buildFillCashLedgerEntries,
   buildSettlementCashLedgerEntries,
+  normalizePolymarketUsFill,
+  normalizePolymarketUsOrderEvent,
+  normalizePolymarketUsSettlement,
 } from '@/lib/official-ledger';
 import { buildOfficialSettledStrategyPositions } from '@/lib/agent-official-settled';
 
@@ -231,6 +234,35 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
             set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },
           });
         }
+      }
+
+      if (platform === 'polymarket_us') {
+        const audits = await db.query.realTradeOrders.findMany();
+        const auditByOrderId = new Map(audits.filter((audit) => audit.officialOrderId).map((audit) => [audit.officialOrderId!, audit]));
+        for (const raw of snapshot.orders) {
+          if (!raw || typeof raw !== 'object') continue;
+          try {
+            const event = normalizePolymarketUsOrderEvent(raw as Record<string, unknown>); const audit = auditByOrderId.get(event.officialOrderId);
+            await db.insert(officialOrderEvents).values({ ...event, realTradeOrderId: audit?.id ?? null, strategyId: audit?.strategyId ?? null, userId: audit?.userId ?? null, requestedQuantity: event.requestedQuantity.toFixed(6), filledQuantity: event.filledQuantity.toFixed(6), remainingQuantity: event.remainingQuantity.toFixed(6) }).onConflictDoUpdate({ target: officialOrderEvents.eventKey, set: { realTradeOrderId: audit?.id ?? null, strategyId: audit?.strategyId ?? null, userId: audit?.userId ?? null } });
+          } catch { /* Unknown venue rows remain in the raw snapshot. */ }
+        }
+        for (const raw of snapshot.fills) {
+          if (!raw || typeof raw !== 'object') continue;
+          try {
+            const fill = normalizePolymarketUsFill(raw as Record<string, unknown>); const audit = fill.officialOrderId ? auditByOrderId.get(fill.officialOrderId) : undefined;
+            await db.insert(officialTradeFills).values({ ...fill, realTradeOrderId: audit?.id ?? null, strategyId: audit?.strategyId ?? null, userId: audit?.userId ?? null, quantity: fill.quantity.toFixed(6), price: fill.price.toFixed(6), fee: fill.fee.toFixed(6) }).onConflictDoUpdate({ target: [officialTradeFills.platform, officialTradeFills.officialFillId], set: { realTradeOrderId: audit?.id ?? null, strategyId: audit?.strategyId ?? null, userId: audit?.userId ?? null } });
+            for (const entry of buildFillCashLedgerEntries({ ...fill, strategyId: audit?.strategyId, userId: audit?.userId })) await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+          } catch { /* Unknown venue rows remain in the raw snapshot. */ }
+        }
+        for (const raw of snapshot.activity) {
+          if (!raw || typeof raw !== 'object') continue;
+          try {
+            const settlement = normalizePolymarketUsSettlement(raw as Record<string, unknown>); if (!settlement) continue;
+            await db.insert(officialSettlements).values({ ...settlement, yesQuantity: settlement.yesQuantity.toFixed(6), noQuantity: settlement.noQuantity.toFixed(6), yesCost: '0.000000', noCost: '0.000000', revenue: settlement.revenue.toFixed(6), fee: settlement.fee.toFixed(6) }).onConflictDoNothing();
+            for (const entry of buildSettlementCashLedgerEntries(settlement)) await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+          } catch { /* Non-settlement activity remains in the raw snapshot. */ }
+        }
+        for (const resource of ['orders', 'fills', 'settlements']) await db.insert(officialSyncState).values({ platform, accountScope: 'default', resource, lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() }).onConflictDoUpdate({ target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource], set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() } });
       }
 
       for (const strategy of platformStrategies) {

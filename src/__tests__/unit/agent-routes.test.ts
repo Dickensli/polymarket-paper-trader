@@ -506,7 +506,9 @@ describe('agent route handlers', () => {
       price: 0.25,
     }));
     expect(executeTrade).not.toHaveBeenCalled();
-    expect(db.insert).toHaveBeenCalledTimes(1);
+    expect(db.insert).toHaveBeenCalledTimes(3);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({ status: 'SUBMITTING', officialOrderId: 'local:audit-1' }));
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({ status: 'SUBMITTED', officialOrderId: 'official-1' }));
     expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({ outcome: 'YES', side: 'BUY', price: 0.25 }),
       officialResponse: expect.objectContaining({
@@ -735,6 +737,7 @@ describe('agent route handlers', () => {
           updatedAt: new Date('2026-07-02T00:00:00.000Z'),
         },
       ],
+      [],
       [
         {
           id: 'user-1',
@@ -864,6 +867,7 @@ describe('agent route handlers', () => {
           updatedAt: new Date('2026-07-04T00:00:00.000Z'),
         },
       ],
+      [],
       [
         {
           id: 'agent-user-1',
@@ -871,6 +875,11 @@ describe('agent route handlers', () => {
           name: 'Global Agent',
         },
       ],
+      [],
+      [],
+      [],
+      [],
+      [],
       [],
       [],
       [],

@@ -6,6 +6,9 @@ import {
   normalizeKalshiSettlement,
   buildFillCashLedgerEntries,
   buildSettlementCashLedgerEntries,
+  normalizePolymarketUsFill,
+  normalizePolymarketUsOrderEvent,
+  normalizePolymarketUsSettlement,
 } from '@/lib/official-ledger';
 
 describe('official trading ledger normalization', () => {
@@ -18,6 +21,13 @@ describe('official trading ledger normalization', () => {
       officialFillId: 'fill-1', officialOrderId: 'order-1', marketId: 'KXBTC-1',
       outcome: 'NO', side: 'BUY', quantity: 2.5, price: 0.42, fee: 0.03,
     });
+  });
+
+  it('normalizes Polymarket US orders, fills, and settlement activity', () => {
+    expect(normalizePolymarketUsOrderEvent({ id: 'o1', state: 'partially_filled', quantity: 10, filledQuantity: 4, updatedAt: '2026-01-01T00:00:00Z' })).toMatchObject({ officialOrderId: 'o1', status: 'PARTIALLY_FILLED', remainingQuantity: 6 });
+    expect(normalizePolymarketUsFill({ id: 'f1', orderId: 'o1', marketSlug: 'btc-up', outcomeSide: 'YES', action: 'BUY', quantity: 4, price: { value: '0.55' }, fee: { value: '0.02' }, createdAt: '2026-01-01T00:01:00Z' })).toMatchObject({ officialFillId: 'f1', quantity: 4, price: 0.55, fee: 0.02 });
+    expect(normalizePolymarketUsSettlement({ id: 's1', type: 'SETTLEMENT', marketSlug: 'btc-up', outcome: 'YES', quantity: 4, revenue: { value: '4' }, fee: { value: '0' }, createdAt: '2026-01-02T00:00:00Z' })).toMatchObject({ settlementKey: 'polymarket_us:s1', marketId: 'btc-up', revenue: 4 });
+    expect(normalizePolymarketUsSettlement({ id: 'x', type: 'DEPOSIT' })).toBeNull();
   });
 
   it('creates balanced double-entry postings for fills and settlements', () => {

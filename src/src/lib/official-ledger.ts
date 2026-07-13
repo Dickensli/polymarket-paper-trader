@@ -16,6 +16,13 @@ function timestamp(value: unknown, field: string): Date {
   if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid Kalshi ${field}`);
   return parsed;
 }
+function objectNumber(value: unknown): number {
+  return value && typeof value === 'object' ? number((value as Record<string, unknown>).value) : number(value);
+}
+function firstText(row: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) if (typeof row[key] === 'string' && row[key]) return String(row[key]);
+  return null;
+}
 
 export function normalizeKalshiFill(row: Record<string, unknown>) {
   const rawOutcome = row.outcome_side ?? row.side;
@@ -78,6 +85,45 @@ export function normalizeKalshiSettlement(row: Record<string, unknown>) {
     settledAt: timestamp(settledTime, 'settled_time'),
     payload: row,
   };
+}
+
+export function normalizePolymarketUsFill(row: Record<string, unknown>) {
+  const outcomeText = firstText(row, ['outcomeSide', 'outcome_side', 'outcome']);
+  const sideText = firstText(row, ['action', 'side']);
+  return {
+    platform: 'polymarket_us' as const,
+    officialFillId: requiredText(firstText(row, ['id', 'fillId', 'fill_id']), 'fill id'),
+    officialTradeId: firstText(row, ['tradeId', 'trade_id']),
+    officialOrderId: firstText(row, ['orderId', 'order_id']),
+    marketId: requiredText(firstText(row, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'market'),
+    outcome: outcomeText ? (outcomeText.toUpperCase().includes('NO') ? 'NO' : 'YES') as 'YES' | 'NO' : null,
+    side: sideText ? (sideText.toUpperCase().includes('SELL') ? 'SELL' : 'BUY') as 'BUY' | 'SELL' : null,
+    quantity: number(row.quantity ?? row.filledQuantity ?? row.filled_quantity),
+    price: objectNumber(row.price ?? row.averagePrice ?? row.average_price),
+    fee: objectNumber(row.fee ?? row.feeAmount ?? row.fee_amount),
+    isTaker: typeof row.isTaker === 'boolean' ? row.isTaker : typeof row.is_taker === 'boolean' ? row.is_taker : null,
+    filledAt: timestamp(row.createdAt ?? row.created_at ?? row.timestamp, 'fill time'), payload: row,
+  };
+}
+
+export function normalizePolymarketUsOrderEvent(row: Record<string, unknown>) {
+  const officialOrderId = requiredText(firstText(row, ['id', 'orderId', 'order_id']), 'order id');
+  const requestedQuantity = number(row.quantity ?? row.initialQuantity ?? row.initial_quantity);
+  const filledQuantity = number(row.filledQuantity ?? row.filled_quantity ?? row.cumQuantity ?? row.cum_quantity);
+  const remainingQuantity = number(row.remainingQuantity ?? row.remaining_quantity) || Math.max(0, requestedQuantity - filledQuantity);
+  const status = String(row.state ?? row.status ?? 'SUBMITTED').toUpperCase();
+  const venueTime = requiredText(row.updatedAt ?? row.updated_at ?? row.createdAt ?? row.created_at, 'order time');
+  return { platform: 'polymarket_us' as const, officialOrderId, eventKey: `polymarket_us:${officialOrderId}:${status}:${filledQuantity}:${remainingQuantity}:${venueTime}`, status, requestedQuantity, filledQuantity, remainingQuantity, occurredAt: timestamp(venueTime, 'order time'), payload: row };
+}
+
+export function normalizePolymarketUsSettlement(row: Record<string, unknown>) {
+  const type = String(row.type ?? row.activityType ?? row.activity_type ?? '').toUpperCase();
+  if (!type.includes('SETTLEMENT') && !type.includes('RESOLUTION') && !type.includes('REDEEM')) return null;
+  const sourceId = requiredText(firstText(row, ['id', 'activityId', 'activity_id']), 'settlement id');
+  const marketId = requiredText(firstText(row, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'settlement market');
+  const settledAt = timestamp(row.createdAt ?? row.created_at ?? row.timestamp, 'settlement time');
+  const outcome = String(row.outcome ?? row.outcomeSide ?? '').toUpperCase(); const quantity = number(row.quantity);
+  return { platform: 'polymarket_us' as const, settlementKey: `polymarket_us:${sourceId}`, marketId, eventId: null, marketResult: outcome, yesQuantity: outcome.includes('YES') ? quantity : 0, noQuantity: outcome.includes('NO') ? quantity : 0, yesCost: 0, noCost: 0, revenue: objectNumber(row.revenue ?? row.amount), fee: objectNumber(row.fee), settledAt, payload: row };
 }
 
 type CashLedgerSource = {
