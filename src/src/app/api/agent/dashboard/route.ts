@@ -23,6 +23,7 @@ import {
   officialOrderEvents,
   officialTradeFills,
   officialSettlements,
+  officialSettlementAllocations,
   positions,
   realTradeOrders,
   strategies,
@@ -135,6 +136,7 @@ export async function GET(request: NextRequest) {
       officialFills,
       officialEvents,
       officialSettlementRows,
+      officialAllocationRows,
     ] = await Promise.all([
       canViewAllAgents
         ? db.select().from(users).limit(1000)
@@ -162,9 +164,11 @@ export async function GET(request: NextRequest) {
         ? db.select().from(officialOrderEvents).orderBy(desc(officialOrderEvents.occurredAt)).limit(5000)
         : db.select().from(officialOrderEvents).where(eq(officialOrderEvents.userId, session.user.id)).orderBy(desc(officialOrderEvents.occurredAt)).limit(2000),
       db.select().from(officialSettlements).orderBy(desc(officialSettlements.settledAt)).limit(1000),
+      db.select().from(officialSettlementAllocations).orderBy(desc(officialSettlementAllocations.updatedAt)).limit(5000),
     ]);
 
     const officialOrderHistory = buildOfficialOrderHistory(officialFills, officialEvents);
+    const syncHealth = await db.query.officialSyncState.findMany();
 
     const strategyById = new Map(allStrategies.map((strategy) => [strategy.id, strategy]));
     const missingStrategyIds = new Set<string>();
@@ -314,6 +318,14 @@ export async function GET(request: NextRequest) {
         is_stale: snapshotIsStale(latestSnapshot.capturedAt),
       }];
     });
+    const filteredRealStrategyById = new Map(filteredStrategies.filter((strategy) => strategy.agentMode === 'real').map((strategy) => [strategy.id, strategy]));
+    const officialSettlementById = new Map(officialSettlementRows.map((row) => [row.id, row]));
+    const persistedOfficialPositions = officialAllocationRows.flatMap((allocation) => {
+      const strategy = filteredRealStrategyById.get(allocation.strategyId); const settlement = officialSettlementById.get(allocation.settlementId);
+      if (!strategy || !settlement) return [];
+      const shares = numeric(allocation.quantity); const proceeds = numeric(allocation.proceeds);
+      return [{ id: allocation.id, strategy_id: strategy.id, strategy_name: strategyName(strategy), agent_id: strategy.userId, platform: settlement.platform, market_id: settlement.marketId, market: settlement.marketId, outcome: allocation.outcome, shares, avg_price: shares ? numeric(allocation.costBasis) / shares : 0, settlement_price: shares ? proceeds / shares : 0, cost_basis: numeric(allocation.costBasis), proceeds, settlement_fee: numeric(allocation.settlementFee), realized_pnl: numeric(allocation.realizedPnl), settled_at: settlement.settledAt.toISOString() }];
+    });
     const settledPositions = [
       ...buildSettledStrategyPositions(
       closedPositions,
@@ -325,13 +337,13 @@ export async function GET(request: NextRequest) {
         platform: strategy.platform,
       })),
       ),
-      ...buildOfficialSettledStrategyPositions(
+      ...(persistedOfficialPositions.length > 0 ? persistedOfficialPositions : buildOfficialSettledStrategyPositions(
         officialSettlementRows,
         officialFills,
         filteredStrategies.filter((strategy) => strategy.agentMode === 'real').map((strategy) => ({
           id: strategy.id, userId: strategy.userId, name: strategyName(strategy), platform: strategy.platform,
         })),
-      ),
+      )),
     ].sort((a, b) => b.settled_at.localeCompare(a.settled_at));
     const enrichedCurrentPortfolios = await Promise.all(currentPortfolios.map(async (portfolio) => ({
       ...portfolio,
@@ -359,6 +371,14 @@ export async function GET(request: NextRequest) {
         real_orders: filteredRealOrders.length,
         open_real_orders: openRealOrderCount,
       },
+      sync_health: syncHealth.filter((row) => platform === 'all' || row.platform === platform).map((row) => ({
+        platform: row.platform, resource: row.resource, last_success_at: row.lastSuccessAt,
+        last_venue_time: row.lastVenueTime, last_error: row.lastError, updated_at: row.updatedAt,
+        is_stale: !row.lastSuccessAt || (
+          ['orders', 'fills', 'settlements'].includes(row.resource)
+          && Date.now() - new Date(row.lastSuccessAt).getTime() > 15 * 60 * 1000
+        ),
+      })),
       strategies: filteredStrategies.map((strategy) => {
         const latestSnapshot = latestSnapshotByStrategy.get(strategy.id);
         return {

@@ -181,31 +181,6 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           }
         }
 
-        const persistedFills = await db.query.officialTradeFills.findMany();
-        const persistedSettlements = await db.query.officialSettlements.findMany();
-        const allocations = buildOfficialSettledStrategyPositions(
-          persistedSettlements,
-          persistedFills,
-          platformStrategies.map((strategy) => ({ id: strategy.id, userId: strategy.userId, name: strategy.strategyId, platform: strategy.platform })),
-        );
-        for (const allocation of allocations) {
-          const settlementId = allocation.id.split(':')[0];
-          await db.insert(officialSettlementAllocations).values({
-            settlementId, strategyId: allocation.strategy_id, userId: allocation.agent_id,
-            outcome: allocation.outcome as 'YES' | 'NO', quantity: allocation.shares.toFixed(6),
-            costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
-            settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
-            allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
-          }).onConflictDoUpdate({
-            target: [officialSettlementAllocations.settlementId, officialSettlementAllocations.strategyId, officialSettlementAllocations.outcome],
-            set: {
-              quantity: allocation.shares.toFixed(6), costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
-              settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
-              allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
-            },
-          });
-        }
-
         for (const resource of ['orders', 'fills', 'settlements']) {
           const venueRows = resource === 'fills' ? snapshot.fills : resource === 'settlements' ? (snapshot.settlements ?? []) : snapshot.orders;
           const venueTimes = venueRows.map((row) => row && typeof row === 'object'
@@ -265,6 +240,74 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
         for (const resource of ['orders', 'fills', 'settlements']) await db.insert(officialSyncState).values({ platform, accountScope: 'default', resource, lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() }).onConflictDoUpdate({ target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource], set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() } });
       }
 
+      // Rebuild strategy allocations from immutable official facts for both
+      // supported venues. Upserts make this safe after attribution repairs.
+      const persistedFills = await db.query.officialTradeFills.findMany();
+      const persistedSettlements = await db.query.officialSettlements.findMany();
+      const allocations = buildOfficialSettledStrategyPositions(
+        persistedSettlements,
+        persistedFills,
+        platformStrategies.map((strategy) => ({ id: strategy.id, userId: strategy.userId, name: strategy.strategyId, platform: strategy.platform })),
+      );
+      for (const allocation of allocations) {
+        const settlementId = allocation.id.split(':')[0];
+        await db.insert(officialSettlementAllocations).values({
+          settlementId, strategyId: allocation.strategy_id, userId: allocation.agent_id,
+          outcome: allocation.outcome as 'YES' | 'NO', quantity: allocation.shares.toFixed(6),
+          costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
+          settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
+          allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: [officialSettlementAllocations.settlementId, officialSettlementAllocations.strategyId, officialSettlementAllocations.outcome],
+          set: {
+            quantity: allocation.shares.toFixed(6), costBasis: allocation.cost_basis.toFixed(6), proceeds: allocation.proceeds.toFixed(6),
+            settlementFee: (allocation.settlement_fee ?? 0).toFixed(6), realizedPnl: allocation.realized_pnl.toFixed(6),
+            allocationMethod: 'attributed_lots_official_amounts_v2', allocationVersion: 2, updatedAt: new Date(),
+          },
+        });
+      }
+
+      // Existing official facts predate the cash ledger. Backfill them once;
+      // deterministic entry keys keep retries idempotent if a run is interrupted.
+      const cashBackfillState = await db.query.officialSyncState.findFirst({
+        where: and(
+          eq(officialSyncState.platform, platform),
+          eq(officialSyncState.resource, 'cash_ledger_backfill'),
+        ),
+      });
+      if (!cashBackfillState?.lastSuccessAt) {
+        for (const fill of persistedFills.filter((row) => row.platform === platform)) {
+          for (const entry of buildFillCashLedgerEntries({
+            ...fill,
+            platform,
+            quantity: Number(fill.quantity),
+            price: Number(fill.price),
+            fee: Number(fill.fee),
+            payload: fill.payload as Record<string, unknown>,
+          })) {
+            await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+          }
+        }
+        for (const settlement of persistedSettlements.filter((row) => row.platform === platform)) {
+          for (const entry of buildSettlementCashLedgerEntries({
+            ...settlement,
+            platform,
+            revenue: Number(settlement.revenue),
+            fee: Number(settlement.fee),
+            payload: settlement.payload as Record<string, unknown>,
+          })) {
+            await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+          }
+        }
+        await db.insert(officialSyncState).values({
+          platform, accountScope: 'default', resource: 'cash_ledger_backfill',
+          lastSuccessAt: new Date(), lastError: null, updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource],
+          set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },
+        });
+      }
+
       for (const strategy of platformStrategies) {
         await db.insert(portfolioSnapshots).values({
           strategyId: strategy.id,
@@ -304,10 +347,16 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
         result.strategies_synced += 1;
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       result.errors.push({
         platform,
-        message: error instanceof Error ? error.message : String(error),
+        message,
       });
+      for (const resource of ['orders', 'fills', 'settlements']) {
+        try {
+          await db.insert(officialSyncState).values({ platform, accountScope: 'default', resource, lastError: message, updatedAt: new Date() }).onConflictDoUpdate({ target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource], set: { lastError: message, updatedAt: new Date() } });
+        } catch { /* Preserve the original sync error if health persistence also fails. */ }
+      }
     }
   }
 

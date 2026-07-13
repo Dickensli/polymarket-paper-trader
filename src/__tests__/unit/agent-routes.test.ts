@@ -114,6 +114,7 @@ function createMockDb() {
       strategies: { findFirst: vi.fn() },
       portfolios: { findFirst: vi.fn() },
       strategyRuns: { findFirst: vi.fn() },
+      officialSyncState: { findMany: vi.fn(async () => []) },
     },
     insert: vi.fn(() => ({ values: insertValues })),
     update: vi.fn(() => ({ set: updateSet })),

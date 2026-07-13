@@ -94,4 +94,37 @@ describe('real account sync job', () => {
       quantity: '10.000000',
     }));
   });
+
+  it('backfills the balanced cash ledger once from persisted official facts', async () => {
+    db.query.strategies.findMany.mockResolvedValue([
+      { id: 'strategy-1', userId: 'user-1', strategyId: 'high_freq_real', platform: 'kalshi', agentMode: 'real' },
+    ]);
+    db.query.officialSyncState.findFirst
+      .mockResolvedValueOnce({ lastSuccessAt: new Date() })
+      .mockResolvedValueOnce({ lastSuccessAt: new Date() })
+      .mockResolvedValueOnce({ lastSuccessAt: new Date() })
+      .mockResolvedValueOnce(undefined);
+    db.query.officialTradeFills.findMany.mockResolvedValue([{
+      id: 'fill-row', platform: 'kalshi', officialFillId: 'fill-old', officialOrderId: 'order-old',
+      strategyId: 'strategy-1', userId: 'user-1', marketId: 'KXTEST', outcome: 'YES', side: 'BUY',
+      quantity: '2.000000', price: '0.400000', fee: '0.010000', isTaker: true,
+      payload: {}, filledAt: new Date('2026-07-01T00:00:00Z'), observedAt: new Date(),
+    }]);
+    db.query.officialSettlements.findMany.mockResolvedValue([{
+      id: 'settlement-row', platform: 'kalshi', settlementKey: 'kalshi:KXTEST:2026-07-02', eventId: null,
+      marketId: 'KXTEST', marketResult: 'YES', yesQuantity: '2.000000', noQuantity: '0.000000',
+      yesCost: '0.800000', noCost: '0.000000', revenue: '2.000000', fee: '0.100000',
+      payload: {}, settledAt: new Date('2026-07-02T00:00:00Z'), observedAt: new Date(),
+    }]);
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 100, positionsValue: 0, totalValue: 100, pnl: 0,
+      positions: [], orders: [], fills: [], settlements: [], activity: [], raw: {},
+    });
+
+    await expect(runRealAccountSync()).resolves.toMatchObject({ errors: [] });
+    expect(onConflictDoNothing).toHaveBeenCalledTimes(6);
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      set: expect.objectContaining({ lastSuccessAt: expect.any(Date), lastError: null }),
+    }));
+  });
 });

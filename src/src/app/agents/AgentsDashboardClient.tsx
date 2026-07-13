@@ -156,6 +156,7 @@ type DashboardData = {
   reports: Report[];
   snapshots: Snapshot[];
   real_orders: RealOrder[];
+  sync_health: Array<{ platform: string; resource: string; last_success_at: string | null; last_venue_time: string | null; last_error: string | null; is_stale: boolean }>;
   filter_options: {
     strategies: StrategyOption[];
     platforms: Platform[];
@@ -237,6 +238,13 @@ function Metric({ label, value, detail }: { label: string; value: string | numbe
       {detail && <div className="mt-1 text-xs text-foreground-muted">{detail}</div>}
     </div>
   );
+}
+
+function SyncHealthPanel({ rows }: { rows: DashboardData['sync_health'] }) {
+  return <section className="glass-card p-4 sm:p-5">
+    <div className="flex items-center justify-between"><div><h2 className="text-lg font-semibold text-foreground">Official Sync Health</h2><p className="mt-1 text-xs text-foreground-muted">Orders, executions, settlements and historical checkpoints.</p></div><a href="/agents/history" className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary-light">Open Trade History</a></div>
+    <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">{rows.map((row) => <div key={`${row.platform}:${row.resource}`} className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3"><div className="flex items-center justify-between"><span className="text-xs font-semibold uppercase text-foreground">{row.platform} · {row.resource}</span><Badge tone={row.last_error || row.is_stale ? 'bg-loss/10 text-loss-light border-loss/25' : 'bg-profit/10 text-profit-light border-profit/25'}>{row.last_error ? 'ERROR' : row.is_stale ? 'STALE' : 'HEALTHY'}</Badge></div><div className="mt-2 text-xs text-foreground-muted">Success: {row.last_success_at ? formatDate(row.last_success_at) : 'Never'}</div>{row.last_venue_time && <div className="mt-1 text-xs text-foreground-muted">Venue: {formatDate(row.last_venue_time)}</div>}{row.last_error && <div className="mt-2 text-xs text-loss-light">{row.last_error}</div>}</div>)}</div>
+  </section>;
 }
 
 function EmptyRow({ label }: { label: string }) {
@@ -919,6 +927,8 @@ export default function AgentsDashboardClient() {
           <AgentPositionsPanel
             summaries={positionSummaries}
           />
+
+          <SyncHealthPanel rows={data.sync_health ?? []} />
 
           <SettledPositionsPanel positions={data.settled_positions ?? []} />
 
