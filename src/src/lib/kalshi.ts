@@ -1,4 +1,4 @@
-const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || 'https://external-api.kalshi.com/trade-api/v2';
+const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || (process.env.KALSHI_USE_DEMO === 'true' ? 'https://demo-api.kalshi.co/trade-api/v2' : 'https://external-api.kalshi.com/trade-api/v2');
 
 type KalshiMarketResponse = {
   market?: Record<string, unknown>;

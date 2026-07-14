@@ -41,8 +41,8 @@ export async function getAgentMarketContext(
         market_status: text(market.status),
         close_time: text(market.close_time) ?? text(market.expected_expiration_time),
         settlement_result: text(market.result),
-        yes_price: getKalshiOutcomePriceFromMarket(market, 'YES'),
-        no_price: getKalshiOutcomePriceFromMarket(market, 'NO'),
+        yes_price: getKalshiOutcomePriceFromMarket(market, 'YES', 'SELL'),
+        no_price: getKalshiOutcomePriceFromMarket(market, 'NO', 'SELL'),
       };
     }
 
@@ -57,8 +57,8 @@ export async function getAgentMarketContext(
         market_title: market.title,
         market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
         settlement_result: market.closed ? market.outcome : null,
-        yes_price: await getPolymarketUsOutcomePrice(market.slug, 'YES'),
-        no_price: await getPolymarketUsOutcomePrice(market.slug, 'NO'),
+        yes_price: await getPolymarketUsOutcomePrice(market.slug, 'YES', 'SELL'),
+        no_price: await getPolymarketUsOutcomePrice(market.slug, 'NO', 'SELL'),
       };
     }
 
@@ -114,19 +114,14 @@ export async function enrichPositionRowsWithMarkets(
       const outcome = rawShares >= 0 ? 'YES' : 'NO';
       const totalTraded = Number(row.total_traded_dollars ?? 0);
       
-      const avgPrice = outcome === 'YES' 
-        ? (shares > 0 ? totalTraded / shares : 0)
-        : (shares > 0 ? 1 - (totalTraded / shares) : 0);
-        
+      const avgPrice = shares > 0 ? totalTraded / shares : 0;
       const currentPrice = outcome === 'YES' ? context.yes_price : context.no_price;
       
       const val = currentPrice != null 
         ? (shares * currentPrice) 
-        : (outcome === 'YES' 
-            ? Number(row.market_exposure_dollars ?? 0) 
-            : shares - Number(row.market_exposure_dollars ?? 0));
+        : Number(row.market_exposure_dollars ?? 0);
             
-      const cost = shares * avgPrice;
+      const cost = totalTraded;
       const pnl = val - cost;
 
       extra = {
