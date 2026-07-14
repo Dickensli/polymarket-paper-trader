@@ -35,11 +35,11 @@ test('settled position history is collapsed by default and expands with broker-s
   await page.goto('/agents');
   const disclosure = page.getByRole('button', { name: /Settled Position History/ });
   await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.getByText('Settlement Proceeds')).not.toBeVisible();
+  await expect(page.getByText('Exit Proceeds')).not.toBeVisible();
 
   await disclosure.click();
   await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.getByText('Settlement Proceeds')).toBeVisible();
+  await expect(page.getByText('Exit Proceeds')).toBeVisible();
   await expect(page.getByText('Will the test resolve yes?')).toBeVisible();
   await expect(page.getByRole('table').getByText('$6.00')).toBeVisible();
 });
