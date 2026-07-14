@@ -37,6 +37,19 @@ import { users, ledgerEntries, portfolios, paperTrades, positions, marketCache }
 import { eq, sql, and } from 'drizzle-orm';
 import * as polymarket from '@/lib/polymarket';
 import * as polymarketUs from '@/lib/polymarket-us';
+import * as kalshi from '@/lib/kalshi';
+
+vi.mock('@/lib/kalshi', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/kalshi')>();
+  return {
+    ...original,
+    getKalshiMarket: vi.fn(async (ticker: string) => ({
+      ticker,
+      status: 'active',
+    } as any)),
+    getKalshiOutcomePrice: vi.fn(async () => 0.5),
+  };
+});
 
 vi.mock('@/lib/polymarket-us', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/polymarket-us')>();
@@ -1194,6 +1207,36 @@ describe('On-the-fly position resolution and auto-settlement', () => {
       shares: 100,
       price: 0.6,
       platform: 'polymarket_us' as const,
+    });
+
+    await expect(executeTrade(userId, params)).rejects.toThrow(
+      'Market is closed/resolved. Positions are settled automatically.'
+    );
+
+    marketSpy.mockRestore();
+  });
+
+  it('rejects trade execution on a closed Kalshi market', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    const testMarketId = `closed-market-kalshi-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `closed-token-kalshi-${randomUUID().slice(0, 8)}`;
+
+    const marketSpy = vi.spyOn(kalshi, 'getKalshiMarket').mockImplementation(
+      async (ticker) => ({
+        ticker,
+        status: 'settled', // Settled/Closed!
+      } as any)
+    );
+
+    const params = validBuyParams({
+      marketId: testMarketId,
+      tokenId: testTokenId,
+      shares: 100,
+      price: 0.6,
+      platform: 'kalshi' as const,
     });
 
     await expect(executeTrade(userId, params)).rejects.toThrow(

@@ -17,7 +17,7 @@ import type {
 } from '@/lib/types';
 import { Redis } from '@upstash/redis';
 import { getMidpoint, getMarket } from '@/lib/polymarket';
-import { getKalshiOutcomePrice, parseKalshiTokenId } from '@/lib/kalshi';
+import { getKalshiOutcomePrice, parseKalshiTokenId, getKalshiMarket } from '@/lib/kalshi';
 import { getPolymarketUsMarket } from '@/lib/polymarket-us';
 export { runResolutionCheckForUser } from '@/worker/jobs/resolution-handler';
 
@@ -256,6 +256,19 @@ export async function executeTrade(
       try {
         const marketData = await getPolymarketUsMarket(marketId);
         if (marketData && marketData.closed) {
+          throw new TradingError(
+            `Market is closed/resolved. Positions are settled automatically.`,
+            'INVALID_TRADE',
+          );
+        }
+      } catch (err) {
+        if (err instanceof TradingError) throw err;
+        console.warn(`[executeTrade] Could not verify market status for ${marketId}:`, err);
+      }
+    } else if (platform === 'kalshi') {
+      try {
+        const marketData = await getKalshiMarket(marketId);
+        if (marketData && (marketData.status === 'finalized' || marketData.status === 'settled' || marketData.status === 'closed')) {
           throw new TradingError(
             `Market is closed/resolved. Positions are settled automatically.`,
             'INVALID_TRADE',
