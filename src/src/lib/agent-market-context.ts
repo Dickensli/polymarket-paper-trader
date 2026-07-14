@@ -113,17 +113,26 @@ export async function enrichPositionRowsWithMarkets(
       const shares = Math.abs(rawShares);
       const outcome = rawShares >= 0 ? 'YES' : 'NO';
       const totalTraded = Number(row.total_traded_dollars ?? 0);
-      const avgPrice = shares > 0 ? (totalTraded / shares) : 0;
+      
+      const avgPrice = outcome === 'YES' 
+        ? (shares > 0 ? totalTraded / shares : 0)
+        : (shares > 0 ? 1 - (totalTraded / shares) : 0);
+        
       const currentPrice = outcome === 'YES' ? context.yes_price : context.no_price;
       
-      const val = Number(row.market_exposure_dollars ?? (shares * (currentPrice ?? 0)));
-      const cost = totalTraded;
-      const pnl = rawShares >= 0 ? (val - cost) : (cost - val);
+      const val = currentPrice != null 
+        ? (shares * currentPrice) 
+        : (outcome === 'YES' 
+            ? Number(row.market_exposure_dollars ?? 0) 
+            : shares - Number(row.market_exposure_dollars ?? 0));
+            
+      const cost = shares * avgPrice;
+      const pnl = val - cost;
 
       extra = {
         outcome,
         shares,
-        avgPrice: outcome === 'YES' ? avgPrice : 1 - avgPrice,
+        avgPrice,
         currentPrice,
         value: val,
         pnl,
