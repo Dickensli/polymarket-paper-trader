@@ -5,6 +5,7 @@ import { runLeaderboardCalculation } from '@/worker/jobs/leaderboard';
 import { runStrategyPerformanceCalculation } from '@/worker/jobs/strategy-performance';
 import { runOrderCheck } from '@/worker/jobs/order-checker';
 import { runRealAccountSync } from '@/worker/jobs/real-account-sync';
+import { runPaperAccountSync } from '@/worker/jobs/paper-account-sync';
 
 export const maxDuration = 60; // 60 seconds (Pro plan limit)
 
@@ -39,10 +40,14 @@ export async function GET(req: Request) {
     } else if (task === 'real-account-sync') {
       const result = await runRealAccountSync();
       return NextResponse.json({ success: result.errors.length === 0, result });
+    } else if (task === 'paper-account-sync') {
+      const result = await runPaperAccountSync();
+      return NextResponse.json({ success: result.errors.length === 0, result });
     } else if (task === 'daily') {
       const summary: Record<string, any> = {};
       summary.pricesUpdated = await runPriceRefresh();
       summary.realAccounts = await runRealAccountSync();
+      summary.paperAccounts = await runPaperAccountSync();
       summary.orderCheck = await runOrderCheck();
       summary.positionsSettled = await runResolutionCheck();
       summary.usersRanked = await runLeaderboardCalculation();
@@ -71,6 +76,9 @@ export async function GET(req: Request) {
       // 2. Private account reconciliation for active real strategies. Calls
       // each environment-bound platform account only once per cron run.
       summary.realAccounts = await runRealAccountSync();
+      
+      // 2.5. Paper account snapshotting for active simulated strategies
+      summary.paperAccounts = await runPaperAccountSync();
       
       // 3. Limit Order Checker (Every 5m trigger)
       summary.orderCheck = await runOrderCheck();
