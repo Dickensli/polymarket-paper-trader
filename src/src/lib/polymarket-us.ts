@@ -244,14 +244,31 @@ export async function getPolymarketUsOutcomePrice(
   if (bboRaw) {
     // Handle both direct shape and { marketData: { ... } } wrapper
     const bbo = (bboRaw.marketData ?? bboRaw) as Record<string, unknown>;
-    const priceField = side === 'BUY' ? bbo.bestAsk : bbo.bestBid;
-    const price = normalizePrice(priceField);
-    if (price !== null && price < 1) return price;
+    
+    if (outcome === 'YES') {
+      const priceField = side === 'BUY' ? bbo.bestAsk : bbo.bestBid;
+      const price = normalizePrice(priceField);
+      if (price !== null && price < 1) return price;
+    } else {
+      // outcome === 'NO'
+      if (side === 'BUY') {
+        const shortQuote = normalizePrice(bbo.shortQuote);
+        if (shortQuote !== null && shortQuote < 1) return shortQuote;
+        const bestBid = normalizePrice(bbo.bestBid);
+        if (bestBid !== null && bestBid < 1) return Math.round((1 - bestBid) * 10000) / 10000;
+      } else {
+        // side === 'SELL'
+        const bestAsk = normalizePrice(bbo.bestAsk);
+        if (bestAsk !== null && bestAsk < 1) return Math.round((1 - bestAsk) * 10000) / 10000;
+      }
+    }
 
     // Also try currentPx as a fallback
     if (bbo.currentPx) {
       const px = normalizePrice(bbo.currentPx);
-      if (px !== null && px < 1) return px;
+      if (px !== null && px < 1) {
+        return outcome === 'YES' ? px : Math.round((1 - px) * 10000) / 10000;
+      }
     }
   }
 
@@ -262,13 +279,25 @@ export async function getPolymarketUsOutcomePrice(
     const offers = book.offers as Array<{ px: unknown }> | undefined;
     const bids = book.bids as Array<{ px: unknown }> | undefined;
 
-    if (side === 'BUY' && offers?.length) {
-      const price = normalizePrice(offers[0].px);
-      if (price !== null && price < 1) return price;
-    }
-    if (side === 'SELL' && bids?.length) {
-      const price = normalizePrice(bids[0].px);
-      if (price !== null && price < 1) return price;
+    if (outcome === 'YES') {
+      if (side === 'BUY' && offers?.length) {
+        const price = normalizePrice(offers[0].px);
+        if (price !== null && price < 1) return price;
+      }
+      if (side === 'SELL' && bids?.length) {
+        const price = normalizePrice(bids[0].px);
+        if (price !== null && price < 1) return price;
+      }
+    } else {
+      // outcome === 'NO'
+      if (side === 'BUY' && bids?.length) {
+        const price = normalizePrice(bids[0].px);
+        if (price !== null && price < 1) return Math.round((1 - price) * 10000) / 10000;
+      }
+      if (side === 'SELL' && offers?.length) {
+        const price = normalizePrice(offers[0].px);
+        if (price !== null && price < 1) return Math.round((1 - price) * 10000) / 10000;
+      }
     }
   }
 
