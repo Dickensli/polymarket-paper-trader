@@ -17,6 +17,34 @@ import {
 } from '@/lib/limit-orders';
 import { getPortfolio, executeTrade, TradingError } from '@/lib/trading-engine';
 import * as polymarket from '@/lib/polymarket';
+import * as kalshi from '@/lib/kalshi';
+import * as polymarketUs from '@/lib/polymarket-us';
+
+vi.mock('@/lib/kalshi', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/kalshi')>();
+  return {
+    ...original,
+    getKalshiOutcomePrice: vi.fn(async () => 0.5),
+    getKalshiMarket: vi.fn(async (ticker: string) => ({
+      ticker,
+      status: 'active',
+    } as any)),
+  };
+});
+
+vi.mock('@/lib/polymarket-us', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/polymarket-us')>();
+  return {
+    ...original,
+    getPolymarketUsOutcomePrice: vi.fn(async () => 0.5),
+    getPolymarketUsMarket: vi.fn(async (slug: string) => ({
+      slug,
+      question: 'Mock Question US',
+      closed: false,
+      active: true,
+    } as any)),
+  };
+});
 
 vi.mock('@/lib/polymarket', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/polymarket')>();
@@ -482,6 +510,99 @@ describe('Limit Orders Integration', () => {
 
       expect(u1?.status).toBe('FILLED');
       expect(u2?.status).toBe('REJECTED');
+    });
+
+    it('fills a Kalshi limit BUY order using getKalshiOutcomePrice', async () => {
+      const userId = await createTestUser();
+      await getPortfolio(userId);
+
+      // Create a limit order with a Kalshi-style tokenId
+      const order = await createLimitOrder(userId, {
+        marketId: 'KXINX-26JUL-T4200',
+        marketQuestion: 'Will S&P hit 4200?',
+        tokenId: 'kalshi:KXINX-26JUL-T4200:YES',
+        outcome: 'YES',
+        side: 'BUY',
+        amount: 100,
+        limitPrice: 0.5,
+        orderType: 'GTC',
+      });
+
+      // Mock Kalshi price below limit
+      vi.mocked(kalshi.getKalshiOutcomePrice).mockResolvedValue(0.45);
+
+      const counts = await checkAndFillOrders(userId);
+      expect(counts.filled).toBe(1);
+
+      // Verify Kalshi price API was called (not Polymarket getMidpoint)
+      expect(kalshi.getKalshiOutcomePrice).toHaveBeenCalledWith('KXINX-26JUL-T4200', 'YES');
+      expect(polymarket.getMidpoint).not.toHaveBeenCalledWith('kalshi:KXINX-26JUL-T4200:YES');
+
+      const db = getDb();
+      const updated = await db.query.limitOrders.findFirst({ where: eq(limitOrders.id, order.id) });
+      expect(updated?.status).toBe('FILLED');
+      expect(updated?.filledTradeId).toBeDefined();
+    });
+
+    it('fills a Polymarket US limit BUY order using getPolymarketUsOutcomePrice', async () => {
+      const userId = await createTestUser();
+      await getPortfolio(userId);
+
+      // Create a limit order with a Polymarket US tokenId
+      const order = await createLimitOrder(userId, {
+        marketId: 'paccc-usse-midterms-2026-11-03-dem',
+        marketQuestion: 'Will Dems win Senate?',
+        tokenId: 'polymarket_us:paccc-usse-midterms-2026-11-03-dem:NO',
+        outcome: 'NO',
+        side: 'BUY',
+        amount: 100,
+        limitPrice: 0.5,
+        orderType: 'GTC',
+      });
+
+      // Mock Polymarket US price below limit
+      vi.mocked(polymarketUs.getPolymarketUsOutcomePrice).mockResolvedValue(0.42);
+
+      const counts = await checkAndFillOrders(userId);
+      expect(counts.filled).toBe(1);
+
+      // Verify Polymarket US price API was called (not Polymarket getMidpoint)
+      expect(polymarketUs.getPolymarketUsOutcomePrice).toHaveBeenCalledWith(
+        'paccc-usse-midterms-2026-11-03-dem', 'NO'
+      );
+      expect(polymarket.getMidpoint).not.toHaveBeenCalledWith(
+        'polymarket_us:paccc-usse-midterms-2026-11-03-dem:NO'
+      );
+
+      const db = getDb();
+      const updated = await db.query.limitOrders.findFirst({ where: eq(limitOrders.id, order.id) });
+      expect(updated?.status).toBe('FILLED');
+      expect(updated?.filledTradeId).toBeDefined();
+    });
+
+    it('does NOT fill a Polymarket US limit BUY order if price is above limitPrice', async () => {
+      const userId = await createTestUser();
+      await getPortfolio(userId);
+
+      const order = await createLimitOrder(userId, {
+        marketId: 'paccc-usho-midterms-2026-11-03-rep',
+        tokenId: 'polymarket_us:paccc-usho-midterms-2026-11-03-rep:YES',
+        outcome: 'YES',
+        side: 'BUY',
+        amount: 100,
+        limitPrice: 0.3,
+        orderType: 'GTC',
+      });
+
+      // Mock Polymarket US price above limit
+      vi.mocked(polymarketUs.getPolymarketUsOutcomePrice).mockResolvedValue(0.45);
+
+      const counts = await checkAndFillOrders(userId);
+      expect(counts.filled).toBe(0);
+
+      const db = getDb();
+      const updated = await db.query.limitOrders.findFirst({ where: eq(limitOrders.id, order.id) });
+      expect(updated?.status).toBe('PENDING');
     });
   });
 });

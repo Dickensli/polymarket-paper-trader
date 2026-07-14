@@ -3,6 +3,8 @@ import { getDb } from '@/lib/db';
 import { limitOrders, portfolios, positions } from '@/lib/db/schema';
 import { executeTrade, TradingError } from '@/lib/trading-engine';
 import { getMidpoint } from '@/lib/polymarket';
+import { getKalshiOutcomePrice, parseKalshiTokenId } from '@/lib/kalshi';
+import { getPolymarketUsOutcomePrice, parsePolymarketUsTokenId } from '@/lib/polymarket-us';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -286,12 +288,26 @@ export async function checkAndFillOrders(
   if (pendingOrders.length === 0) return result;
 
   // ── Step 3: Fetch live midpoints (deduplicated by tokenId) ──
+  // Routes price fetches through the correct platform API based on tokenId format:
+  //  - polymarket_us:<slug>:<YES|NO> → getPolymarketUsOutcomePrice
+  //  - kalshi:<ticker>:<YES|NO>      → getKalshiOutcomePrice
+  //  - anything else                 → getMidpoint (Polymarket International CLOB)
   const tokenIds = Array.from(new Set(pendingOrders.map((o) => o.tokenId)));
   const midpoints: Record<string, number | null> = {};
 
   await Promise.all(
     tokenIds.map(async (tokenId) => {
       try {
+        const polyUsMatch = parsePolymarketUsTokenId(tokenId);
+        if (polyUsMatch) {
+          midpoints[tokenId] = await getPolymarketUsOutcomePrice(polyUsMatch.slug, polyUsMatch.outcome);
+          return;
+        }
+        const kalshiMatch = parseKalshiTokenId(tokenId);
+        if (kalshiMatch) {
+          midpoints[tokenId] = await getKalshiOutcomePrice(kalshiMatch.ticker, kalshiMatch.outcome);
+          return;
+        }
         midpoints[tokenId] = await getMidpoint(tokenId);
       } catch {
         midpoints[tokenId] = null;
