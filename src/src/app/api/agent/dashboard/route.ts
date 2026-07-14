@@ -442,14 +442,35 @@ export async function GET(request: NextRequest) {
         })),
       )),
     ].sort((a, b) => b.settled_at.localeCompare(a.settled_at));
-    const enrichedCurrentPortfolios = await Promise.all(currentPortfolios.map(async (portfolio) => ({
-      ...portfolio,
-      positions: await enrichPositionRowsWithMarkets(
+    const enrichedCurrentPortfolios = await Promise.all(currentPortfolios.map(async (portfolio) => {
+      const enrichedPositions = await enrichPositionRowsWithMarkets(
         portfolio.platform as 'kalshi' | 'polymarket' | 'polymarket_us',
         portfolio.positions,
         officialFills.filter((fill) => fill.strategyId === portfolio.strategy_id),
-      ),
-    })));
+      );
+      // Recalculate header-level values from enriched mark-to-market positions
+      // so the summary PNL is consistent with per-position PNL figures.
+      if (portfolio.agent_mode === 'real' && Array.isArray(enrichedPositions)) {
+        const mtmPositionsValue = enrichedPositions.reduce((sum, pos) => {
+          if (!pos || typeof pos !== 'object') return sum;
+          const row = pos as Record<string, unknown>;
+          const val = Number(row.value);
+          return sum + (Number.isFinite(val) ? val : 0);
+        }, 0);
+        const mtmTotalValue = portfolio.cash + mtmPositionsValue;
+        const startingBalance = numeric(
+          filteredStrategies.find((s) => s.id === portfolio.strategy_id)?.startingBalance || 0,
+        );
+        return {
+          ...portfolio,
+          positions: enrichedPositions,
+          positions_value: mtmPositionsValue,
+          total_value: mtmTotalValue,
+          pnl: mtmTotalValue - startingBalance,
+        };
+      }
+      return { ...portfolio, positions: enrichedPositions };
+    }));
     // The collapsed history renders at most 50 rows. Avoid blocking the initial
     // dashboard response on market lookups for records the user cannot see.
     const enrichedSettledPositions = [
