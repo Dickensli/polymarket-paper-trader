@@ -23,14 +23,15 @@ export async function GET() {
       const realPortfolio = await getOfficialPortfolioSnapshot(platform);
       
       // Map to the shape expected by the frontend and MCP tools
+      const totalPnL = realPortfolio.totalValue - Number(strategy.startingBalance || 0);
       return NextResponse.json({
         data: {
           balance: realPortfolio.cash,
           positions: realPortfolio.positions,
           tradeHistory: realPortfolio.fills,
           totalValue: realPortfolio.totalValue,
-          totalPnL: realPortfolio.pnl,
-          totalPnLPercent: realPortfolio.totalValue > 0 ? (realPortfolio.pnl / realPortfolio.totalValue) * 100 : 0,
+          totalPnL,
+          totalPnLPercent: realPortfolio.totalValue > 0 ? (totalPnL / realPortfolio.totalValue) * 100 : 0,
           raw: realPortfolio.raw,
         }
       });

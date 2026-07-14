@@ -173,7 +173,7 @@ export async function GET(request: NextRequest) {
         cash: realPortfolio.cash.toFixed(2),
         positionsValue: realPortfolio.positionsValue.toFixed(2),
         totalValue: realPortfolio.totalValue.toFixed(2),
-        pnl: realPortfolio.pnl.toFixed(6),
+        pnl: (realPortfolio.totalValue - Number(strategy.startingBalance || 0)).toFixed(6),
         positions: realPortfolio.positions,
         orders: realPortfolio.orders,
       });
@@ -258,7 +258,7 @@ export async function GET(request: NextRequest) {
       
       positionsValue = realPortfolio.positionsValue;
       totalValue = realPortfolio.totalValue;
-      totalPnL = realPortfolio.pnl;
+      totalPnL = realPortfolio.totalValue - Number(strategy.startingBalance || 0);
     }
 
     // ── 7. Warnings ────────────────────────────────────────────

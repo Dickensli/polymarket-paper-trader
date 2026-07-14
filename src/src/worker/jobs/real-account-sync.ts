@@ -329,7 +329,7 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           cash: snapshot.cash.toFixed(2),
           positionsValue: snapshot.positionsValue.toFixed(2),
           totalValue: snapshot.totalValue.toFixed(2),
-          pnl: snapshot.pnl.toFixed(6),
+          pnl: (snapshot.totalValue - Number(strategy.startingBalance || 0)).toFixed(6),
           positions: snapshot.positions,
           orders: snapshot.orders,
         });
