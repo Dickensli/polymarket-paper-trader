@@ -96,6 +96,15 @@ export async function enrichOpenOrdersWithMarkets(
 export async function enrichPositionRowsWithMarkets(
   platform: 'kalshi' | 'polymarket' | 'polymarket_us',
   positions: unknown,
+  fills?: Array<{
+    marketId: string;
+    outcome: string | null;
+    side: string | null;
+    quantity: unknown;
+    price: unknown;
+    fee: unknown;
+    filledAt: Date | string;
+  }>,
 ): Promise<unknown> {
   if (!Array.isArray(positions)) return positions;
   const cache = new Map<string, Promise<AgentMarketContext>>();
@@ -112,16 +121,49 @@ export async function enrichPositionRowsWithMarkets(
       const rawShares = Number(row.position_fp ?? 0);
       const shares = Math.abs(rawShares);
       const outcome = rawShares >= 0 ? 'YES' : 'NO';
-      const totalTraded = Number(row.total_traded_dollars ?? 0);
       
-      const avgPrice = shares > 0 ? totalTraded / shares : 0;
+      let avgPrice = 0;
+      let cost = 0;
+
+      if (fills && fills.length > 0) {
+        const marketFills = fills.filter((f) => f.marketId === marketId);
+        let netQty = 0;
+        let netCost = 0;
+        const sortedFills = [...marketFills].sort(
+          (a, b) => new Date(a.filledAt).getTime() - new Date(b.filledAt).getTime()
+        );
+        for (const fill of sortedFills) {
+          const qty = Number(fill.quantity) || 0;
+          const price = Number(fill.price) || 0;
+          const fee = Number(fill.fee) || 0;
+          if (fill.outcome === outcome && fill.side === 'BUY') {
+            netQty += qty;
+            netCost += qty * price + fee;
+          } else {
+            const removed = Math.min(qty, netQty);
+            netCost = netQty > 0 ? (netCost / netQty) * (netQty - removed) : 0;
+            netQty -= removed;
+          }
+        }
+        if (netQty > 0) {
+          avgPrice = netCost / netQty;
+          cost = (shares / netQty) * netCost;
+        } else {
+          const totalTraded = Number(row.total_traded_dollars ?? 0);
+          avgPrice = shares > 0 ? totalTraded / shares : 0;
+          cost = totalTraded;
+        }
+      } else {
+        const totalTraded = Number(row.total_traded_dollars ?? 0);
+        avgPrice = shares > 0 ? totalTraded / shares : 0;
+        cost = totalTraded;
+      }
+      
       const currentPrice = outcome === 'YES' ? context.yes_price : context.no_price;
-      
       const val = currentPrice != null 
         ? (shares * currentPrice) 
         : Number(row.market_exposure_dollars ?? 0);
             
-      const cost = totalTraded;
       const pnl = val - cost;
 
       extra = {

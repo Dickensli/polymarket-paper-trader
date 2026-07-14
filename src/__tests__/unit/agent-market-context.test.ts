@@ -108,4 +108,47 @@ describe('agent open-order market context', () => {
       close_time: '2026-07-13T00:00:00Z',
     });
   });
+
+  it('calculates average price and cost basis for Kalshi positions from fills list', async () => {
+    vi.mocked(getKalshiMarket).mockResolvedValue({ title: 'WTI Crude Oil', status: 'open' });
+    
+    const positions = [
+      { ticker: 'KXWTI-TEST', position_fp: '354.22', total_traded_dollars: '601.496200', market_exposure_dollars: '251.496200' }
+    ];
+    const fills = [
+      {
+        strategyId: 'strat-1',
+        marketId: 'KXWTI-TEST',
+        outcome: 'YES',
+        side: 'BUY',
+        quantity: 704.22,
+        price: 0.71,
+        fee: 0,
+        filledAt: '2026-07-14T08:10:00Z'
+      },
+      {
+        strategyId: 'strat-1',
+        marketId: 'KXWTI-TEST',
+        outcome: 'NO',
+        side: 'SELL',
+        quantity: 350.00,
+        price: 0.29,
+        fee: 5.00,
+        filledAt: '2026-07-14T12:00:00Z'
+      }
+    ];
+
+    const result = await enrichPositionRowsWithMarkets('kalshi', positions, fills);
+    expect(result).toMatchObject([
+      {
+        ticker: 'KXWTI-TEST',
+        shares: 354.22,
+        outcome: 'YES',
+        avgPrice: 0.71,
+        value: 177.11, // 354.22 * 0.5 (mocked outcome price is 0.5)
+        pnl: -74.3862, // 177.11 - 251.4962
+      }
+    ]);
+  });
 });
+

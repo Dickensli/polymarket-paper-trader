@@ -447,6 +447,7 @@ export async function GET(request: NextRequest) {
       positions: await enrichPositionRowsWithMarkets(
         portfolio.platform as 'kalshi' | 'polymarket' | 'polymarket_us',
         portfolio.positions,
+        officialFills.filter((fill) => fill.strategyId === portfolio.strategy_id),
       ),
     })));
     // The collapsed history renders at most 50 rows. Avoid blocking the initial
