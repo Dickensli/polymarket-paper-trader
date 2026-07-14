@@ -6,6 +6,8 @@ export type AgentMarketContext = {
   market_status: string | null;
   close_time: string | null;
   settlement_result: string | null;
+  yes_price?: number | null;
+  no_price?: number | null;
 };
 
 function text(value: unknown): string | null {
@@ -24,11 +26,13 @@ export async function getAgentMarketContext(
     market_status: null,
     close_time: null,
     settlement_result: null,
+    yes_price: null,
+    no_price: null,
   };
 
   try {
     if (platform === 'kalshi') {
-      const { getKalshiMarket } = await import('@/lib/kalshi');
+      const { getKalshiMarket, getKalshiOutcomePriceFromMarket } = await import('@/lib/kalshi');
       const market = await getKalshiMarket(marketId);
       if (!market) return fallback;
       return {
@@ -37,11 +41,13 @@ export async function getAgentMarketContext(
         market_status: text(market.status),
         close_time: text(market.close_time) ?? text(market.expected_expiration_time),
         settlement_result: text(market.result),
+        yes_price: getKalshiOutcomePriceFromMarket(market, 'YES'),
+        no_price: getKalshiOutcomePriceFromMarket(market, 'NO'),
       };
     }
 
     if (platform === 'polymarket_us') {
-      const { getPolymarketUsMarket } = await import('@/lib/polymarket-us');
+      const { getPolymarketUsMarket, getPolymarketUsOutcomePrice } = await import('@/lib/polymarket-us');
       const market = await getPolymarketUsMarket(marketId);
       if (!market) return fallback;
       return {
@@ -51,6 +57,8 @@ export async function getAgentMarketContext(
         market_title: market.title,
         market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
         settlement_result: market.closed ? market.outcome : null,
+        yes_price: await getPolymarketUsOutcomePrice(market.slug, 'YES'),
+        no_price: await getPolymarketUsOutcomePrice(market.slug, 'NO'),
       };
     }
 
@@ -64,6 +72,8 @@ export async function getAgentMarketContext(
       market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
       close_time: market.endDate,
       settlement_result: null,
+      yes_price: market.outcomePrices?.[0] ?? null,
+      no_price: market.outcomePrices?.[1] ?? null,
     };
   } catch {
     return fallback;
@@ -96,8 +106,34 @@ export async function enrichPositionRowsWithMarkets(
     if (!marketId) return row;
     if (!cache.has(marketId)) cache.set(marketId, getAgentMarketContext(platform, marketId));
     const context = await cache.get(marketId)!;
+
+    let extra = {};
+    if (platform === 'kalshi') {
+      const rawShares = Number(row.position_fp ?? 0);
+      const shares = Math.abs(rawShares);
+      const outcome = rawShares >= 0 ? 'YES' : 'NO';
+      const totalTraded = Number(row.total_traded_dollars ?? 0);
+      const avgPrice = shares > 0 ? (totalTraded / shares) : 0;
+      const currentPrice = outcome === 'YES' ? context.yes_price : context.no_price;
+      
+      const val = Number(row.market_exposure_dollars ?? (shares * (currentPrice ?? 0)));
+      const cost = totalTraded;
+      const pnl = rawShares >= 0 ? (val - cost) : (cost - val);
+
+      extra = {
+        outcome,
+        shares,
+        avgPrice: outcome === 'YES' ? avgPrice : 1 - avgPrice,
+        currentPrice,
+        value: val,
+        pnl,
+        unrealizedPnL: pnl,
+      };
+    }
+
     return {
       ...row,
+      ...extra,
       marketQuestion: context.market_title ?? row.marketQuestion ?? row.market_question ?? marketId,
       market_context: context,
     };

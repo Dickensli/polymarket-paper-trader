@@ -138,9 +138,24 @@ export function summarizeKalshiPositions(
     const realizedPnl = Number(position.realized_pnl_dollars ?? position.realized_pnl ?? 0) / (hasDollarPnl ? 1 : 100);
     const hasDollarCost = position.position_cost_dollars != null;
     const positionCost = Number(position.position_cost_dollars ?? position.position_cost ?? 0) / (hasDollarCost ? 1 : 100);
+
+    const positionFp = Number(position.position_fp ?? position.position ?? 0) / (position.position_fp != null ? 1 : 100);
+    const totalTraded = Number(position.total_traded_dollars ?? position.total_cost_dollars ?? position.position_cost ?? position.position_cost_dollars ?? 0) / (position.total_traded_dollars != null || position.total_cost_dollars != null || position.position_cost_dollars != null ? 1 : 100);
+
+    let unrealizedPnl = 0;
+    if (positionFp !== 0 && totalTraded !== 0) {
+      if (positionFp > 0) {
+        unrealizedPnl = marketValue - totalTraded;
+      } else {
+        unrealizedPnl = totalTraded - marketValue;
+      }
+    }
+
     if (Number.isFinite(marketValue)) positionsValue += marketValue;
     if (Number.isFinite(realizedPnl)) pnl += realizedPnl;
-    if (!hasDollarPnl && Number.isFinite(marketValue - positionCost)) {
+    if (unrealizedPnl !== 0) {
+      pnl += unrealizedPnl;
+    } else if (!hasDollarPnl && Number.isFinite(marketValue - positionCost)) {
       pnl += marketValue - positionCost;
     }
   }

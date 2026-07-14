@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/kalshi', () => ({
   getKalshiMarket: vi.fn(),
   getKalshiMarkets: vi.fn(),
+  getKalshiOutcomePriceFromMarket: vi.fn(() => 0.5),
 }));
-vi.mock('@/lib/polymarket-us', () => ({ getPolymarketUsMarket: vi.fn() }));
+vi.mock('@/lib/polymarket-us', () => ({
+  getPolymarketUsMarket: vi.fn(),
+  getPolymarketUsOutcomePrice: vi.fn(async () => 0.5),
+}));
 vi.mock('@/lib/polymarket', () => ({ getMarket: vi.fn() }));
 
 import { getKalshiMarket, getKalshiMarkets } from '@/lib/kalshi';
