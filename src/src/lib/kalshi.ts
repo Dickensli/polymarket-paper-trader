@@ -1,4 +1,8 @@
-const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || (process.env.KALSHI_USE_DEMO === 'true' ? 'https://demo-api.kalshi.co/trade-api/v2' : 'https://external-api.kalshi.com/trade-api/v2');
+// Public read-only calls (prices, market info, orderbooks) always use the
+// Production API so that paper strategies see real market prices and liquidity.
+// The KALSHI_USE_DEMO flag only affects authenticated order-execution endpoints
+// in official-trading.ts.
+const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || 'https://api.elections.kalshi.com/trade-api/v2';
 
 type KalshiMarketResponse = {
   market?: Record<string, unknown>;
