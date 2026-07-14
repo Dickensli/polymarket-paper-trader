@@ -36,6 +36,21 @@ import { getDb } from '@/lib/db';
 import { users, ledgerEntries, portfolios, paperTrades, positions, marketCache } from '@/lib/db/schema';
 import { eq, sql, and } from 'drizzle-orm';
 import * as polymarket from '@/lib/polymarket';
+import * as polymarketUs from '@/lib/polymarket-us';
+
+vi.mock('@/lib/polymarket-us', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/polymarket-us')>();
+  return {
+    ...original,
+    getPolymarketUsMarket: vi.fn(async (slug: string) => ({
+      slug,
+      question: 'Mock Question US',
+      closed: false,
+      active: true,
+    } as any)),
+    getPolymarketUsOutcomePrice: vi.fn(async () => 0.5),
+  };
+});
 
 vi.mock('@/lib/polymarket', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/polymarket')>();
@@ -1124,5 +1139,67 @@ describe('On-the-fly position resolution and auto-settlement', () => {
       active: true,
       closed: false,
     } as any));
+  });
+
+  it('rejects trade execution on a closed Polymarket market', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    const testMarketId = `closed-market-poly-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `closed-token-poly-${randomUUID().slice(0, 8)}`;
+
+    const marketSpy = vi.spyOn(polymarket, 'getMarket').mockImplementation(
+      async (id) => ({
+        id,
+        question: 'Will Japan win?',
+        closed: true, // Closed!
+      } as any)
+    );
+
+    const params = validBuyParams({
+      marketId: testMarketId,
+      tokenId: testTokenId,
+      shares: 100,
+      price: 0.6,
+      platform: 'polymarket' as const,
+    });
+
+    await expect(executeTrade(userId, params)).rejects.toThrow(
+      'Market is closed/resolved. Positions are settled automatically.'
+    );
+
+    marketSpy.mockRestore();
+  });
+
+  it('rejects trade execution on a closed Polymarket US market', async () => {
+    const userId = await createTestUser();
+    testUserIds.push(userId);
+    await getPortfolio(userId);
+
+    const testMarketId = `closed-market-polyus-${randomUUID().slice(0, 8)}`;
+    const testTokenId = `closed-token-polyus-${randomUUID().slice(0, 8)}`;
+
+    const marketSpy = vi.spyOn(polymarketUs, 'getPolymarketUsMarket').mockImplementation(
+      async (slug) => ({
+        slug,
+        question: 'Will Japan win?',
+        closed: true, // Closed!
+      } as any)
+    );
+
+    const params = validBuyParams({
+      marketId: testMarketId,
+      tokenId: testTokenId,
+      shares: 100,
+      price: 0.6,
+      platform: 'polymarket_us' as const,
+    });
+
+    await expect(executeTrade(userId, params)).rejects.toThrow(
+      'Market is closed/resolved. Positions are settled automatically.'
+    );
+
+    marketSpy.mockRestore();
   });
 });

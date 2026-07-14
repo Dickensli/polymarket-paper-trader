@@ -18,6 +18,7 @@ import type {
 import { Redis } from '@upstash/redis';
 import { getMidpoint, getMarket } from '@/lib/polymarket';
 import { getKalshiOutcomePrice, parseKalshiTokenId } from '@/lib/kalshi';
+import { getPolymarketUsMarket } from '@/lib/polymarket-us';
 export { runResolutionCheckForUser } from '@/worker/jobs/resolution-handler';
 
 // Constants
@@ -237,21 +238,33 @@ export async function executeTrade(
   // not through normal buy/sell at stale midpoint prices.
   // Skip this check for internal resolution calls (identified by idempotencyKey prefix).
   const isResolutionCall = idempotencyKey?.startsWith('resolve_');
-  if (!isResolutionCall && platform !== 'kalshi' && platform !== 'polymarket_us') {
-    try {
-      const marketData = await getMarket(marketId);
-      if (marketData.closed) {
-        throw new TradingError(
-          `Market is closed/resolved. Positions are settled automatically.`,
-          'INVALID_TRADE',
-        );
+  if (!isResolutionCall) {
+    if (platform === 'polymarket') {
+      try {
+        const marketData = await getMarket(marketId);
+        if (marketData && marketData.closed) {
+          throw new TradingError(
+            `Market is closed/resolved. Positions are settled automatically.`,
+            'INVALID_TRADE',
+          );
+        }
+      } catch (err) {
+        if (err instanceof TradingError) throw err;
+        console.warn(`[executeTrade] Could not verify market status for ${marketId}:`, err);
       }
-    } catch (err) {
-      // If it's already a TradingError (market closed), re-throw it
-      if (err instanceof TradingError) throw err;
-      // For network errors fetching market data, log but allow trade to proceed
-      // (the market data might be temporarily unavailable)
-      console.warn(`[executeTrade] Could not verify market status for ${marketId}:`, err);
+    } else if (platform === 'polymarket_us') {
+      try {
+        const marketData = await getPolymarketUsMarket(marketId);
+        if (marketData && marketData.closed) {
+          throw new TradingError(
+            `Market is closed/resolved. Positions are settled automatically.`,
+            'INVALID_TRADE',
+          );
+        }
+      } catch (err) {
+        if (err instanceof TradingError) throw err;
+        console.warn(`[executeTrade] Could not verify market status for ${marketId}:`, err);
+      }
     }
   }
 

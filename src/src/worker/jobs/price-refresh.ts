@@ -4,6 +4,7 @@ import { positions } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { getMidpoint } from '@/lib/polymarket';
 import { getKalshiOutcomePrice } from '@/lib/kalshi';
+import { getPolymarketUsOutcomePrice } from '@/lib/polymarket-us';
 import { Redis } from '@upstash/redis';
 
 /**
@@ -27,8 +28,20 @@ function parseKalshiPosition(
 }
 
 /**
+ * Detect whether a tokenId is a Polymarket US position.
+ * Polymarket US tokenIds are structured as "polymarket_us:<slug>:<outcome>"
+ */
+function parsePolymarketUsPosition(
+  tokenId: string,
+): { slug: string; outcome: 'YES' | 'NO' } | null {
+  const canonical = /^polymarket_us:(.+):(YES|NO)$/.exec(tokenId);
+  if (canonical) return { slug: canonical[1], outcome: canonical[2] as 'YES' | 'NO' };
+  return null;
+}
+
+/**
  * Runs a single iteration of the price refresh job.
- * Handles both Polymarket (CLOB midpoint) and Kalshi (public market API) positions.
+ * Handles Polymarket (CLOB midpoint), Kalshi (public market API), and Polymarket US positions.
  */
 export async function runPriceRefresh() {
   const db = getDb();
@@ -43,15 +56,25 @@ export async function runPriceRefresh() {
   const redis = process.env.UPSTASH_REDIS_REST_URL ? Redis.fromEnv() : null;
 
   // 2. Group positions by type and fetch prices
-  // For Polymarket: use getMidpoint (public CLOB API)
-  // For Kalshi: use getKalshiOutcomePrice (public market API, no auth needed)
   const polymarketTokenIds = Array.from(new Set(
-    openPositions.filter(p => !parseKalshiPosition(p.tokenId, p.outcome)).map(p => p.tokenId)
+    openPositions.filter(p => 
+      !parseKalshiPosition(p.tokenId, p.outcome) && 
+      !parsePolymarketUsPosition(p.tokenId)
+    ).map(p => p.tokenId)
   ));
 
   const kalshiKeys = Array.from(new Map(
     openPositions.flatMap((position) => {
       const parsed = parseKalshiPosition(position.tokenId, position.outcome);
+      if (!parsed) return [];
+      const key = `${position.tokenId}:${parsed.outcome}`;
+      return [[key, { storedTokenId: position.tokenId, ...parsed }] as const];
+    }),
+  ).values());
+
+  const polymarketUsKeys = Array.from(new Map(
+    openPositions.flatMap((position) => {
+      const parsed = parsePolymarketUsPosition(position.tokenId);
       if (!parsed) return [];
       const key = `${position.tokenId}:${parsed.outcome}`;
       return [[key, { storedTokenId: position.tokenId, ...parsed }] as const];
@@ -70,6 +93,14 @@ export async function runPriceRefresh() {
   const kalshiPrices = await Promise.all(
     kalshiKeys.map(async ({ storedTokenId, ticker, outcome }) => {
       const price = await getKalshiOutcomePrice(ticker, outcome).catch(() => null);
+      return { storedTokenId, outcome, midpoint: price };
+    })
+  );
+
+  // Fetch Polymarket US prices (public API)
+  const polymarketUsPrices = await Promise.all(
+    polymarketUsKeys.map(async ({ storedTokenId, slug, outcome }) => {
+      const price = await getPolymarketUsOutcomePrice(slug, outcome).catch(() => null);
       return { storedTokenId, outcome, midpoint: price };
     })
   );
@@ -101,8 +132,22 @@ export async function runPriceRefresh() {
       .set({ currentPrice: midpoint.toFixed(6), updatedAt: new Date() })
       .where(and(eq(positions.tokenId, storedTokenId), eq(positions.outcome, outcome)));
   }
+
+  // 5. Update DB and Cache — Polymarket US positions
+  for (const { storedTokenId, outcome, midpoint } of polymarketUsPrices) {
+    if (midpoint === null || typeof midpoint !== 'number') continue;
+
+    if (redis) {
+      await redis.set(`price:${storedTokenId}:${outcome}`, midpoint, { ex: 30 }).catch(() => {});
+    }
+
+    await db
+      .update(positions)
+      .set({ currentPrice: midpoint.toFixed(6), updatedAt: new Date() })
+      .where(and(eq(positions.tokenId, storedTokenId), eq(positions.outcome, outcome)));
+  }
   
-  return polymarketTokenIds.length + kalshiKeys.length;
+  return polymarketTokenIds.length + kalshiKeys.length + polymarketUsKeys.length;
 }
 
 export function startPriceRefreshJob() {
