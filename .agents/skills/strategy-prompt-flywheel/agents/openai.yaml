@@ -1,0 +1,4 @@
+interface:
+  display_name: "Strategy Prompt Flywheel"
+  short_description: "Turn verified trading reports into safe prompt improvements"
+  default_prompt: "Use $strategy-prompt-flywheel to analyze recent strategy reports, make evidence-backed prompt updates without overfitting, publish an audit report, and push the changes."

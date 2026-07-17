@@ -1,8 +1,25 @@
 # Trading-agent prompt revision notes
 
-The prompt fragments in this directory were derived from all reports currently
-stored for the two venues: 1,178 Kalshi reports across 14 strategies and 1,211
-Polymarket US reports across 9 strategies.
+## Ongoing report-to-prompt flywheel
+
+Run `.agents/skills/strategy-prompt-flywheel` for future report-driven prompt
+revisions. The flywheel treats report prose as a hypothesis and server-verified
+ledger/performance data as evidence. Performance tuning requires repeated
+behavior across at least three reports, seven post-reset days, three independent
+markets/events, and a chronologically held-out validation slice. Single winners,
+single losses, named-market lessons, and unverified PnL never justify a prompt
+change. Correctness and safety defects may be fixed sooner when they are
+reproducible from authoritative server data.
+
+Every cycle writes a timestamped audit to `docs/strategy-flywheel-reports/`,
+including changed and unchanged strategies, verified strengths, rejected
+overfit candidates, validation results, and the published git commit.
+
+The initial prompt fragments in this directory were derived from the historical
+pre-reset corpus: 1,178 Kalshi reports across 14 strategies and 1,211
+Polymarket US reports across 9 strategies. Those raw reports were removed during
+the 2026-07-17 clean-inception reset. Future revisions must use only post-reset
+evidence gathered by the flywheel above.
 
 ## Repeated failure modes converted into prompt rules
 
