@@ -12,6 +12,12 @@ const requiredTables = [
   'ledger_entries',
   'limit_orders',
   'market_cache',
+  'official_cash_ledger_entries',
+  'official_order_events',
+  'official_settlement_allocations',
+  'official_settlements',
+  'official_sync_state',
+  'official_trade_fills',
   'paper_trade_orders',
   'paper_trades',
   'portfolio_snapshots',
@@ -22,6 +28,9 @@ const requiredTables = [
   'sessions',
   'strategies',
   'strategy_runs',
+  'strategy_capital_flows',
+  'strategy_decisions',
+  'strategy_performance_snapshots',
   'users',
   'verification_tokens',
 ];
@@ -41,6 +50,8 @@ const requiredColumns = {
   strategies: ['id', 'user_id', 'strategy_id', 'agent_mode', 'platform', 'status', 'starting_balance'],
   paper_trade_orders: ['id', 'strategy_id', 'user_id', 'run_id', 'report_id', 'paper_trade_id'],
   paper_trades: ['id', 'strategy_id', 'run_id', 'report_id', 'user_id', 'portfolio_id'],
+  positions: ['id', 'risk_group_id', 'market_id', 'user_id'],
+  strategy_decisions: ['id', 'strategy_id', 'user_id', 'status', 'server_quote'],
   users: ['id', 'email', 'name', 'settings', 'color'],
 };
 
@@ -58,6 +69,8 @@ const requiredIndexes = [
   'paper_trade_orders_report_idx',
   'paper_trades_report_idx',
   'leaderboard_platform_idx',
+  'positions_risk_group_idx',
+  'strategy_decisions_strategy_idx',
 ];
 
 function fail(message) {

@@ -187,6 +187,8 @@ export type TradeSide = 'BUY' | 'SELL';
 export interface Position {
   id: string;
   marketId: string;
+  /** Event/category key used to aggregate related-market risk. */
+  riskGroupId?: string;
   marketQuestion: string;
   tokenId: string;
   outcome: OutcomeLabel;
@@ -224,6 +226,7 @@ export interface Portfolio {
 
 export interface TradeParams {
   marketId: string;
+  riskGroupId?: string;
   marketQuestion: string;
   tokenId: string;
   outcome: OutcomeLabel;

@@ -32,6 +32,7 @@ export function resolvePaperRiskLimits(value: unknown): PaperRiskLimits {
 export function validatePaperBuyRisk(args: {
   portfolio: Portfolio;
   marketId: string;
+  riskGroupId?: string;
   notional: number;
   riskConfig?: unknown;
 }): string | null {
@@ -44,11 +45,13 @@ export function validatePaperBuyRisk(args: {
     return `Trade notional exceeds ${(limits.maxTradePct * 100).toFixed(1)}% of portfolio NAV`;
   }
 
+  const riskGroupId = args.riskGroupId ?? marketId;
   const existingMarketExposure = portfolio.positions
-    .filter((position) => position.marketId === marketId)
+    .filter((position) => (position.riskGroupId ?? position.marketId) === riskGroupId)
     .reduce((sum, position) => sum + position.shares * position.currentPrice, 0);
   if (existingMarketExposure + notional > nav * limits.maxMarketExposurePct + 1e-9) {
-    return `Cumulative market exposure exceeds ${(limits.maxMarketExposurePct * 100).toFixed(1)}% of portfolio NAV`;
+    const scope = riskGroupId === marketId ? 'market' : 'event';
+    return `Cumulative ${scope} exposure exceeds ${(limits.maxMarketExposurePct * 100).toFixed(1)}% of portfolio NAV`;
   }
 
   if (portfolio.balance - notional < nav * limits.minCashReservePct - 1e-9) {

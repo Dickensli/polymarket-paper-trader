@@ -23,6 +23,7 @@ import {
   type EventsListParams,
   type SearchParams,
 } from 'polymarket-us';
+import type { OrderBook, OrderBookLevel } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Singleton client — initialized lazily
@@ -114,17 +115,58 @@ export function resolvePolymarketUsOutcomePriceFromBbo(
     return outcome === 'YES' ? bestBid : complementPrice(bestAsk);
   }
 
-  const quote = normalizePrice(outcome === 'YES' ? bbo.longQuote : bbo.shortQuote);
-  if (quote !== null) return quote;
+  // Existing long positions are marked at executable liquidation value. A
+  // quote/current/midpoint can be useful for display, but cannot be realized
+  // and materially overstates NAV when the spread is wide.
+  return outcome === 'YES' ? bestBid : complementPrice(bestAsk);
+}
 
-  const current = normalizePrice(bbo.currentPx);
-  if (current !== null) return outcome === 'YES' ? current : complementPrice(current);
+function normalizeBookLevels(value: unknown): OrderBookLevel[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((level) => {
+    if (!level || typeof level !== 'object') return [];
+    const record = level as Record<string, unknown>;
+    const price = normalizePrice(record.px);
+    const size = Number(record.qty);
+    if (price === null || price <= 0 || price >= 1 || !Number.isFinite(size) || size <= 0) return [];
+    return [{ price, size }];
+  });
+}
 
-  if (bestBid !== null && bestAsk !== null) {
-    const midpoint = roundPrice((bestBid + bestAsk) / 2);
-    return outcome === 'YES' ? midpoint : complementPrice(midpoint);
-  }
-  return null;
+/** Convert the venue's single YES book into executable YES or NO depth. */
+export function normalizePolymarketUsOutcomeOrderBook(
+  slug: string,
+  outcome: 'YES' | 'NO',
+  raw: unknown,
+): OrderBook {
+  const wrapped = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const book = wrapped.marketData && typeof wrapped.marketData === 'object'
+    ? wrapped.marketData as Record<string, unknown>
+    : wrapped;
+  const yesBids = normalizeBookLevels(book.bids);
+  const yesOffers = normalizeBookLevels(book.offers);
+  const complement = (levels: OrderBookLevel[]) => levels.map((level) => ({
+    price: roundPrice(1 - level.price),
+    size: level.size,
+  }));
+
+  const bids = outcome === 'YES' ? yesBids : complement(yesOffers);
+  const asks = outcome === 'YES' ? yesOffers : complement(yesBids);
+  return {
+    market: slug,
+    assetId: polymarketUsTokenId(slug, outcome),
+    timestamp: typeof book.transactTime === 'string' ? book.transactTime : new Date().toISOString(),
+    bids: bids.sort((a, b) => b.price - a.price),
+    asks: asks.sort((a, b) => a.price - b.price),
+  };
+}
+
+export async function getPolymarketUsOutcomeOrderBook(
+  slug: string,
+  outcome: 'YES' | 'NO',
+): Promise<OrderBook | null> {
+  const raw = await getPolymarketUsMarketBook(slug);
+  return raw ? normalizePolymarketUsOutcomeOrderBook(slug, outcome, raw) : null;
 }
 
 // ---------------------------------------------------------------------------

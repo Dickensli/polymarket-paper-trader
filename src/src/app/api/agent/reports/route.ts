@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { and, desc, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { agentReports, getDb, strategies } from '@/lib/db';
+import { getPortfolio } from '@/lib/trading-engine';
 
 const reportSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -147,6 +148,27 @@ export async function POST(request: NextRequest) {
       ),
     });
 
+    const verifiedAt = new Date();
+    let verifiedPortfolio: Record<string, unknown> = { source: 'unavailable', verified_at: verifiedAt.toISOString() };
+    let verifiedTrades: Record<string, unknown> = { source: 'unavailable', verified_at: verifiedAt.toISOString() };
+    if (strategy.agentMode === 'paper') {
+      const portfolio = await getPortfolio(session.user.id);
+      verifiedPortfolio = {
+        source: 'server_paper_ledger',
+        verified_at: verifiedAt.toISOString(),
+        cash: portfolio.balance,
+        positions_value: portfolio.totalValue - portfolio.balance,
+        total_value: portfolio.totalValue,
+        pnl: portfolio.totalPnL,
+        pnl_percent: portfolio.totalPnLPercent,
+      };
+      verifiedTrades = {
+        source: 'server_paper_ledger',
+        verified_at: verifiedAt.toISOString(),
+        recent_trades: portfolio.tradeHistory.slice(0, 25),
+      };
+    }
+
     const values = {
       strategyId: strategy.id,
       runId: report.run_id ?? null,
@@ -157,9 +179,15 @@ export async function POST(request: NextRequest) {
       title: report.title ?? null,
       lessonsLearned: report.lessons_learned ?? null,
       nextSteps: report.next_steps ?? null,
-      portfolioSummary: report.portfolio_summary ?? {},
-      tradeSummary: report.trade_summary ?? {},
-      createdAt: new Date(),
+      portfolioSummary: {
+        verified: verifiedPortfolio,
+        agent_supplied: report.portfolio_summary ?? {},
+      },
+      tradeSummary: {
+        verified: verifiedTrades,
+        agent_supplied: report.trade_summary ?? {},
+      },
+      createdAt: verifiedAt,
     };
 
     const sanitizeAgentReport = (r: any) => ({

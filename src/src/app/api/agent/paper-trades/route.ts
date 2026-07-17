@@ -22,7 +22,7 @@ import { getKalshiMarket, getKalshiOrderBook, kalshiTokenId } from '@/lib/kalshi
 import { simulateBuyFill, simulateBuySharesFill, simulateSellFill } from '@/lib/orderbook-simulator';
 import { tradeProposalSchema, validateTradeProposal } from '@/lib/trade-proposal';
 // Polymarket US helpers
-import { getPolymarketUsOutcomePrice, getPolymarketUsMarket, polymarketUsTokenId } from '@/lib/polymarket-us';
+import { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook, polymarketUsTokenId } from '@/lib/polymarket-us';
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -199,6 +199,7 @@ export async function POST(request: NextRequest) {
 
     // ── Resolve market data & price per platform ──────────────
     let marketId: string;
+    let riskGroupId: string;
     let marketQuestion: string;
     let tokenId: string;
     let price: number;
@@ -217,6 +218,7 @@ export async function POST(request: NextRequest) {
       const outcomeIndex = order.outcome === 'YES' ? 0 : 1;
       tokenId = market.tokenIds[outcomeIndex];
       marketId = order.slug;
+      riskGroupId = marketId;
       marketQuestion = market.question || order.slug;
 
       const executablePrice = await getMidpoint(tokenId).catch(() => null);
@@ -244,6 +246,7 @@ export async function POST(request: NextRequest) {
         );
       }
       marketId = order.slug;
+      riskGroupId = String(market.event_ticker ?? market.eventTicker ?? marketId);
       tokenId = kalshiTokenId(order.slug, order.outcome);
       marketQuestion = String(market.title ?? market.subtitle ?? order.slug);
 
@@ -271,6 +274,12 @@ export async function POST(request: NextRequest) {
       fillDetails = fill as unknown as Record<string, unknown>;
     } else if (platform === 'polymarket_us') {
       // Polymarket US
+      if (order.side === 'SELL' && !order.shares) {
+        return NextResponse.json(
+          { error: 'Polymarket US shadow sells require an explicit share quantity' },
+          { status: 400 },
+        );
+      }
       const market = await getPolymarketUsMarket(order.slug).catch(
         () => null,
       );
@@ -281,6 +290,7 @@ export async function POST(request: NextRequest) {
         );
       }
       marketId = order.slug;
+      riskGroupId = market.eventSlug || marketId;
       tokenId = polymarketUsTokenId(order.slug, order.outcome);
       marketQuestion =
         (market as unknown as Record<string, unknown>).question as string ||
@@ -288,18 +298,28 @@ export async function POST(request: NextRequest) {
         market.description ||
         order.slug;
 
-      const usPrice = await getPolymarketUsOutcomePrice(
-        order.slug,
-        order.outcome,
-        order.side,
-      ).catch(() => null);
-      if (usPrice === null || usPrice <= 0 || usPrice >= 1) {
+      const orderBook = await getPolymarketUsOutcomeOrderBook(order.slug, order.outcome).catch(() => null);
+      if (!orderBook) {
         return NextResponse.json(
-          { error: 'No executable Polymarket US market price is available' },
-          { status: 400 },
+          { error: 'No Polymarket US order book is available' },
+          { status: 409 },
         );
       }
-      price = usPrice;
+      executableDepth = (order.side === 'BUY' ? orderBook.asks : orderBook.bids)
+        .reduce((sum, level) => sum + level.size, 0);
+      const fill = order.side === 'SELL'
+        ? simulateSellFill(orderBook, order.shares ?? 0, 0, 'FOK')
+        : order.shares
+          ? simulateBuySharesFill(orderBook, order.shares, 0, 'FOK')
+          : simulateBuyFill(orderBook, order.amount ?? 0, 0, 'FOK');
+      if (!fill.success) {
+        return NextResponse.json(
+          { error: 'Full order cannot fill against current Polymarket US depth', code: 'SHADOW_FOK_NO_FILL' },
+          { status: 409 },
+        );
+      }
+      price = fill.avgPrice;
+      fillDetails = fill as unknown as Record<string, unknown>;
     } else {
       return NextResponse.json(
         { error: `Unsupported platform: ${platform}` },
@@ -309,7 +329,7 @@ export async function POST(request: NextRequest) {
 
     // ── Calculate shares ──────────────────────────────────────
     let shares: number;
-    if (platform === 'kalshi' && fillDetails) {
+    if ((platform === 'kalshi' || platform === 'polymarket_us') && fillDetails) {
       shares = Number(fillDetails.totalShares);
     } else if (order.shares) {
       shares = order.shares;
@@ -362,6 +382,7 @@ export async function POST(request: NextRequest) {
       const riskError = validatePaperBuyRisk({
         portfolio: portfolioBeforeTrade,
         marketId,
+        riskGroupId,
         notional: shares * price,
         riskConfig: strategy.riskConfig,
       });
@@ -392,6 +413,7 @@ export async function POST(request: NextRequest) {
     // ── Execute trade ─────────────────────────────────────────
     const trade = await executeTrade(session.user.id, {
       marketId,
+      riskGroupId,
       marketQuestion,
       tokenId,
       outcome: order.outcome,
@@ -435,7 +457,11 @@ export async function POST(request: NextRequest) {
         quantity: shares.toFixed(6),
         price: price.toFixed(6),
         notional: trade.total.toFixed(2),
-        fillModel: platform === 'kalshi' ? 'live_orderbook_depth_fok' : 'top_of_book_no_depth',
+        fillModel: platform === 'kalshi'
+          ? 'live_orderbook_depth_fok'
+          : platform === 'polymarket_us'
+            ? 'polymarket_us_orderbook_depth_fok'
+            : 'paper_midpoint',
         status: 'FILLED',
         idempotencyKey,
         request: order,

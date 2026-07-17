@@ -6,42 +6,84 @@
       "idx": 0,
       "version": "7",
       "when": 1783030425737,
-      "tag": "0000_shocking_kabuki",
+      "tag": "0000_grey_echo",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
       "when": 1783123073587,
-      "tag": "0001_early_bromley",
+      "tag": "0001_stiff_the_order",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
       "when": 1783132659571,
-      "tag": "0002_fix_schema",
+      "tag": "0002_align_current_schema",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
       "when": 1783223000000,
-      "tag": "0003_add_user_color",
+      "tag": "0004_add_leaderboard_platform",
       "breakpoints": true
     },
     {
       "idx": 4,
       "version": "7",
       "when": 1783280000000,
-      "tag": "0004_add_leaderboard_platform",
+      "tag": "0006_professional_trade_ledger",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "7",
       "when": 1783300000000,
-      "tag": "0005_fix_snapshot_platform",
+      "tag": "0007_allow_unattributed_historical_fills",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783310000000,
+      "tag": "0008_official_allocations_cash_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783320000000,
+      "tag": "0009_position_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783330000000,
+      "tag": "0010_add_compact_strategy_performance",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783340000000,
+      "tag": "0011_add_strategy_capital_flows",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783350000000,
+      "tag": "0012_add_strategy_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783360000000,
+      "tag": "0013_add_position_risk_groups",
       "breakpoints": true
     }
   ]

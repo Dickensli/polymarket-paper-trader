@@ -21,6 +21,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:verify": "node scripts/verify-supabase-schema.mjs",
+    "db:reset-paper-agents": "node scripts/reset-all-paper-strategies.mjs --confirm-reset-all-paper",
     "db:studio": "drizzle-kit studio",
     "prepare": "husky"
   },

@@ -97,11 +97,28 @@ describe('official trading helpers', () => {
     expect(normalizeKalshiOrderStatus({ status: 'canceled', initial_count_fp: '126.92', fill_count_fp: '23.00', remaining_count_fp: '0.00' })).toBe('PARTIALLY_FILLED_CANCELED');
   });
 
-  it('reads current Kalshi fixed-point dollar position fields', () => {
+  it('marks Kalshi positions from execution-venue liquidation bids, not exposure', () => {
     expect(summarizeKalshiPositions([
-      { market_exposure_dollars: '58.195200', realized_pnl_dollars: '-8.680000' },
-      { market_exposure_dollars: '63.144700', realized_pnl_dollars: '-3.000000' },
-    ])).toEqual({ positionsValue: 121.3399, pnl: -11.68 });
+      { ticker: 'YES-TICKER', position_fp: '100.00', market_exposure_dollars: '58.00', realized_pnl_dollars: '-2.00' },
+      { ticker: 'NO-TICKER', position_fp: '-50.00', market_exposure_dollars: '30.00', realized_pnl_dollars: '1.00' },
+    ], new Map([
+      ['YES-TICKER', { yes_bid_dollars: '0.40', no_bid_dollars: '0.59' }],
+      ['NO-TICKER', { yes_bid_dollars: '0.29', no_bid_dollars: '0.70' }],
+    ]))).toEqual({
+      positionsValue: 75,
+      pnl: -14,
+      unpricedTickers: [],
+    });
+  });
+
+  it('values an unpriced Kalshi position at zero instead of its exposure amount', () => {
+    expect(summarizeKalshiPositions([
+      { ticker: 'NO-BOOK', position_fp: '100.00', market_exposure_dollars: '58.00', realized_pnl_dollars: '0.00' },
+    ], new Map())).toEqual({
+      positionsValue: 0,
+      pnl: -58,
+      unpricedTickers: ['NO-BOOK'],
+    });
   });
 
   it('rejects an official snapshot when a critical Kalshi request failed', () => {

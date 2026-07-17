@@ -35,4 +35,18 @@ describe('paper trading server-side risk guard', () => {
       riskConfig: { max_trade_pct: 1, max_market_exposure_pct: 1, min_cash_reserve_pct: 0.05 },
     })).toContain('cash reserve');
   });
+
+  it('aggregates exposure across different markets in the same event risk group', () => {
+    const eventPortfolio: Portfolio = {
+      ...portfolio,
+      positions: [{ ...portfolio.positions[0], marketId: 'house-dem', riskGroupId: 'house-control' }],
+    };
+    expect(validatePaperBuyRisk({
+      portfolio: eventPortfolio,
+      marketId: 'house-rep',
+      riskGroupId: 'house-control',
+      notional: 101,
+      riskConfig: { max_trade_pct: 0.2, max_market_exposure_pct: 0.2 },
+    })).toContain('Cumulative event exposure');
+  });
 });

@@ -1,4 +1,4 @@
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   portfolios,
@@ -10,6 +10,13 @@ import {
   paperTradeOrders,
   portfolioSnapshots,
   strategyDecisions,
+  agentReports,
+  leaderboardSnapshots,
+  reconciliationLogs,
+  strategies,
+  strategyCapitalFlows,
+  strategyPerformanceSnapshots,
+  strategyRuns,
 } from '@/lib/db/schema';
 import type {
   Portfolio,
@@ -150,6 +157,7 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
     return {
       id: pos.id,
       marketId: pos.marketId,
+      riskGroupId: pos.riskGroupId ?? pos.marketId,
       marketQuestion: pos.marketQuestion ?? '',
       tokenId: pos.tokenId,
       outcome: pos.outcome as OutcomeLabel,
@@ -211,7 +219,7 @@ export async function executeTrade(
   userId: string,
   params: TradeParams,
 ): Promise<Trade> {
-  const { marketId, marketQuestion, tokenId, outcome, side, shares, price, idempotencyKey, slippageApplied, feeRateBps, platform = 'polymarket' } =
+  const { marketId, riskGroupId, marketQuestion, tokenId, outcome, side, shares, price, idempotencyKey, slippageApplied, feeRateBps, platform = 'polymarket' } =
     params;
 
   // Validation
@@ -359,6 +367,7 @@ export async function executeTrade(
             avgEntryPrice: newAvgPrice.toFixed(6),
             currentPrice: price.toFixed(6),
             platform,
+            riskGroupId: riskGroupId ?? marketId,
             updatedAt: new Date(),
           })
           .where(eq(positions.id, existingPosition.id));
@@ -389,6 +398,7 @@ export async function executeTrade(
               currentPrice: price.toFixed(6),
               isOpen: true,
               platform,
+              riskGroupId: riskGroupId ?? marketId,
               tokenId,
               marketQuestion,
               portfolioId: userPortfolio.id,
@@ -408,6 +418,7 @@ export async function executeTrade(
               portfolioId: userPortfolio.id,
               platform,
               marketId,
+              riskGroupId: riskGroupId ?? marketId,
               marketQuestion,
               tokenId,
               outcome,
@@ -662,26 +673,47 @@ export async function updatePositionPrices(
 export async function resetPortfolio(userId: string, initialBalance?: number): Promise<Portfolio> {
   const db = getDb();
   const balanceVal = initialBalance ?? DEFAULT_BALANCE;
+  if (!Number.isFinite(balanceVal) || balanceVal <= 0) {
+    throw new TradingError('Reset balance must be a positive finite number.', 'INVALID_TRADE');
+  }
 
   await db.transaction(async (tx) => {
+    const userStrategies = await tx.query.strategies.findMany({
+      where: eq(strategies.userId, userId),
+    });
+    const paperStrategies = userStrategies.filter((strategy) => strategy.agentMode === 'paper');
+    if (userStrategies.length > 0 && paperStrategies.length === 0) {
+      throw new TradingError('Official real-money portfolios cannot be reset locally.', 'INVALID_TRADE');
+    }
+    const strategyIds = paperStrategies.map((strategy) => strategy.id);
+    const resetAt = new Date();
+
     // 1. Reset balance
     await tx
       .update(portfolios)
       .set({
         balance: balanceVal.toFixed(2),
         initialBalance: balanceVal.toFixed(2),
-        updatedAt: new Date(),
+        updatedAt: resetAt,
       })
       .where(eq(portfolios.userId, userId));
 
-    // 2. Delete order/snapshot audit rows so a reset cannot keep reporting
-    // stale fills or historical NAV as current strategy state. Reports remain.
+    // 2. Delete every paper-strategy memory and performance artifact. A reset
+    // is a true new inception, not a cash-only rewrite with stale reports/NAV.
     await tx.delete(limitOrders).where(eq(limitOrders.userId, userId));
     await tx.delete(paperTradeOrders).where(eq(paperTradeOrders.userId, userId));
     await tx.delete(portfolioSnapshots).where(eq(portfolioSnapshots.userId, userId));
     const decisionTable = await tx.execute(sql`select to_regclass('public.strategy_decisions') as name`);
     if ((decisionTable as unknown as Array<{ name: string | null }>)[0]?.name) {
       await tx.delete(strategyDecisions).where(eq(strategyDecisions.userId, userId));
+    }
+    if (strategyIds.length > 0) {
+      await tx.delete(strategyPerformanceSnapshots).where(inArray(strategyPerformanceSnapshots.strategyId, strategyIds));
+      await tx.delete(strategyCapitalFlows).where(inArray(strategyCapitalFlows.strategyId, strategyIds));
+      await tx.delete(reconciliationLogs).where(inArray(reconciliationLogs.strategyId, strategyIds));
+      await tx.delete(agentReports).where(inArray(agentReports.strategyId, strategyIds));
+    } else {
+      await tx.delete(agentReports).where(eq(agentReports.userId, userId));
     }
 
     // 3. Delete all positions
@@ -690,6 +722,42 @@ export async function resetPortfolio(userId: string, initialBalance?: number): P
     // 4. Clear trade history
     await tx.delete(paperTrades).where(eq(paperTrades.userId, userId));
     await tx.delete(ledgerEntries).where(eq(ledgerEntries.userId, userId));
+    if (strategyIds.length > 0) {
+      await tx.delete(strategyRuns).where(inArray(strategyRuns.strategyId, strategyIds));
+      await tx.delete(leaderboardSnapshots).where(eq(leaderboardSnapshots.userId, userId));
+      for (const strategy of paperStrategies) {
+        const metadata = {
+          ...((strategy.metadata as Record<string, unknown> | null) ?? {}),
+          performance_baseline_at: resetAt.toISOString(),
+          last_destructive_reset_at: resetAt.toISOString(),
+          reset_balance: balanceVal,
+        };
+        await tx.update(strategies).set({
+          startingBalance: balanceVal.toFixed(2),
+          metadata,
+          updatedAt: resetAt,
+        }).where(eq(strategies.id, strategy.id));
+
+        const hourly = new Date(resetAt); hourly.setUTCMinutes(0, 0, 0);
+        const daily = new Date(resetAt); daily.setUTCHours(0, 0, 0, 0);
+        await tx.insert(strategyPerformanceSnapshots).values([
+          {
+            strategyId: strategy.id, userId, platform: strategy.platform, agentMode: strategy.agentMode,
+            bucket: 'HOURLY', bucketAt: hourly, cash: balanceVal.toFixed(6), positionsValue: '0.000000',
+            nav: balanceVal.toFixed(6), pnl: '0.000000', returnPct: '0.000000', periodReturnPct: '0.000000',
+            twrPct: '0.000000', mwrPct: null, netExternalFlow: '0.000000', unpricedPositionsCount: 0,
+            pricingUpdatedAt: resetAt, capturedAt: resetAt,
+          },
+          {
+            strategyId: strategy.id, userId, platform: strategy.platform, agentMode: strategy.agentMode,
+            bucket: 'DAILY', bucketAt: daily, cash: balanceVal.toFixed(6), positionsValue: '0.000000',
+            nav: balanceVal.toFixed(6), pnl: '0.000000', returnPct: '0.000000', periodReturnPct: '0.000000',
+            twrPct: '0.000000', mwrPct: null, netExternalFlow: '0.000000', unpricedPositionsCount: 0,
+            pricingUpdatedAt: resetAt, capturedAt: resetAt,
+          },
+        ]);
+      }
+    }
   });
 
   return getPortfolio(userId);

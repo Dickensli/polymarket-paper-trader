@@ -44,6 +44,7 @@ vi.mock('@/lib/kalshi', () => ({
 vi.mock('@/lib/polymarket-us', () => ({
   getPolymarketUsMarket: vi.fn(),
   getPolymarketUsOutcomePrice: vi.fn(),
+  getPolymarketUsOutcomeOrderBook: vi.fn(),
   polymarketUsTokenId: vi.fn((slug: string, outcome: string) => `${slug}:${outcome}`),
 }));
 
@@ -134,8 +135,17 @@ describe('agent route handlers', () => {
 
     const { auth } = await import('@/lib/auth');
     const { getDb } = await import('@/lib/db');
+    const { getPortfolio } = await import('@/lib/trading-engine');
     vi.mocked(auth).mockResolvedValue({ user: { id: 'user-1' } } as never);
     vi.mocked(getDb).mockReturnValue(db as never);
+    vi.mocked(getPortfolio).mockResolvedValue({
+      balance: 10_000,
+      positions: [],
+      tradeHistory: [],
+      totalValue: 10_000,
+      totalPnL: 0,
+      totalPnLPercent: 0,
+    });
   });
 
   it.skip('registers a new strategy and returns existing strategies idempotently', async () => {
@@ -220,7 +230,7 @@ describe('agent route handlers', () => {
     const reportsRoute = await import('@/app/api/agent/reports/route');
     const reportByIdRoute = await import('@/app/api/agent/reports/[id]/route');
 
-    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', strategyId: 'arb' });
+    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', strategyId: 'arb', agentMode: 'paper' });
     db.query.agentReports.findFirst.mockResolvedValueOnce(null);
     db.insertResults.push({
       id: 'report-1',
@@ -438,6 +448,80 @@ describe('agent route handlers', () => {
     expect(response.status).toBe(400);
     expect(executeTrade).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('price') });
+  });
+
+  it('walks Polymarket US depth with FOK semantics and records the event risk group', async () => {
+    const { executeTrade, getPortfolio } = await import('@/lib/trading-engine');
+    const { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook } = await import('@/lib/polymarket-us');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'hft', agentMode: 'paper', platform: 'polymarket_us',
+      status: 'active', riskConfig: { max_single_trade_pct: 0.2 },
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    vi.mocked(getPolymarketUsMarket).mockResolvedValue({
+      slug: 'house-dem', title: 'House control', eventSlug: 'house-control', closed: false, active: true,
+    } as never);
+    vi.mocked(getPolymarketUsOutcomeOrderBook).mockResolvedValue({
+      market: 'house-dem', assetId: 'house-dem:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.2, size: 100 }],
+      asks: [{ price: 0.25, size: 20 }, { price: 0.3, size: 20 }],
+    });
+    vi.mocked(getPortfolio).mockResolvedValue({
+      balance: 10_000, positions: [], tradeHistory: [], totalValue: 10_000, totalPnL: 0, totalPnLPercent: 0,
+    });
+    vi.mocked(executeTrade).mockResolvedValue({
+      id: 'trade-us', marketId: 'house-dem', marketQuestion: 'House control', tokenId: 'house-dem:YES',
+      outcome: 'YES', side: 'BUY', shares: 36.666667, price: 0.272727, total: 10,
+      timestamp: '2026-07-17T00:00:00.000Z',
+    });
+    db.insertResults.push({ id: 'paper-us', platform: 'polymarket_us', fillModel: 'polymarket_us_orderbook_depth_fok' });
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'pmus-depth' },
+      body: { strategy_id: 'hft', slug: 'house-dem', outcome: 'YES', side: 'BUY', amount: 10 },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(executeTrade).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      riskGroupId: 'house-control',
+      shares: 36.666667,
+      price: 0.272727,
+    }));
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      fillModel: 'polymarket_us_orderbook_depth_fok',
+      result: expect.objectContaining({ shadow_fill: expect.objectContaining({ levelsFilled: 2 }) }),
+    }));
+  });
+
+  it('rejects a Polymarket US order when full displayed depth is insufficient', async () => {
+    const { executeTrade } = await import('@/lib/trading-engine');
+    const { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook } = await import('@/lib/polymarket-us');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'hft', agentMode: 'paper', platform: 'polymarket_us', status: 'active',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    vi.mocked(getPolymarketUsMarket).mockResolvedValue({ slug: 'thin', title: 'Thin', closed: false, active: true } as never);
+    vi.mocked(getPolymarketUsOutcomeOrderBook).mockResolvedValue({
+      market: 'thin', assetId: 'thin:YES', timestamp: new Date().toISOString(), bids: [],
+      asks: [{ price: 0.25, size: 1 }],
+    });
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'pmus-no-depth' },
+      body: { strategy_id: 'hft', slug: 'thin', outcome: 'YES', side: 'BUY', amount: 100 },
+    }) as never);
+
+    expect(response.status).toBe(409);
+    expect(executeTrade).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ code: 'SHADOW_FOK_NO_FILL' });
   });
 
   it('executes a live-depth Kalshi shadow fill with a validated proposal', async () => {

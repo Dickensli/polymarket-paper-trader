@@ -21,6 +21,14 @@ Polymarket US reports across 9 strategies.
   order. `SUBMITTED` or `RESTING` does not mean `FILLED`.
 - Narrow the so-called HFT strategies to short-horizon taker trading; they do
   not have the tooling needed for true market making.
+- A reset is a new inception. Agents must never call `init_account` on their
+  own, restore deleted positions from reports, or convert an old marked NAV
+  into new principal. Empty history/reports with $10,000 cash is authoritative.
+- Portfolio value means executable liquidation value. Venue quotes, current
+  prices, top-of-book walls, and exposure/cost fields are not market value.
+- Structured report summaries are server-verified. Narrative text may explain
+  decisions but must not override `portfolio_summary.verified` or
+  `trade_summary.verified`.
 
 ## Configuration corrections outside the prompt text
 
@@ -40,6 +48,8 @@ Polymarket US reports across 9 strategies.
   against fresh price, full depth, edge, and NAV. Graduation is also computed
   server-side; agents may announce `GRADUATION_READY` but cannot self-enable
   real-money trading.
+- Polymarket US paper orders now walk the full outcome-aware book with FOK
+  semantics, and open positions are marked at the executable SELL side.
 - Remove the expired one-off `tactical_reconcile_0230_jul16` trigger.
 - Rotate the agent secret that appeared in the supplied configuration before
   installing the revised config. The prompt files intentionally contain no

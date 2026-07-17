@@ -43,12 +43,15 @@ function capitalFlow(row: typeof strategyCapitalFlows.$inferSelect): CapitalFlow
 
 async function ensureInceptionBaselines(db: ReturnType<typeof getDb>, strategy: StrategyRow) {
   const startingBalance = Number(strategy.startingBalance).toFixed(6);
+  const metadata = (strategy.metadata as Record<string, unknown> | null) ?? {};
+  const configuredBaseline = new Date(String(metadata.performance_baseline_at ?? ''));
+  const baselineAt = Number.isFinite(configuredBaseline.getTime()) ? configuredBaseline : strategy.createdAt;
   for (const bucket of ['HOURLY', 'DAILY'] as const) {
     await db.insert(strategyPerformanceSnapshots).values({
       strategyId: strategy.id, userId: strategy.userId, platform: strategy.platform, agentMode: strategy.agentMode,
-      bucket, bucketAt: bucketDate(strategy.createdAt, bucket), cash: startingBalance, positionsValue: '0.000000',
+      bucket, bucketAt: bucketDate(baselineAt, bucket), cash: startingBalance, positionsValue: '0.000000',
       nav: startingBalance, pnl: '0.000000', returnPct: '0.000000', periodReturnPct: '0.000000', twrPct: '0.000000',
-      mwrPct: null, netExternalFlow: '0.000000', unpricedPositionsCount: 0, pricingUpdatedAt: null, capturedAt: strategy.createdAt,
+      mwrPct: null, netExternalFlow: '0.000000', unpricedPositionsCount: 0, pricingUpdatedAt: null, capturedAt: baselineAt,
     }).onConflictDoNothing();
   }
 }
@@ -69,7 +72,10 @@ async function upsertPerformancePoint(
     ),
     orderBy: [desc(strategyPerformanceSnapshots.bucketAt)],
   });
-  const previousCapturedAt = previous?.capturedAt ?? strategy.createdAt;
+  const metadata = (strategy.metadata as Record<string, unknown> | null) ?? {};
+  const configuredBaseline = new Date(String(metadata.performance_baseline_at ?? ''));
+  const baselineAt = Number.isFinite(configuredBaseline.getTime()) ? configuredBaseline : strategy.createdAt;
+  const previousCapturedAt = previous?.capturedAt ?? baselineAt;
   const intervalFlows = flows.filter((flow) => flow.occurredAt > previousCapturedAt && flow.occurredAt <= point.capturedAt);
   const bucketEnd = new Date(bucketAt.getTime() + (bucket === 'HOURLY' ? 3600000 : 86400000));
   const bucketFlow = flows
@@ -87,7 +93,7 @@ async function upsertPerformancePoint(
     intervalFlows,
   );
   const twrPct = chainTwrPct(previous ? Number(previous.twrPct) : 0, periodReturnPct);
-  const mwrPct = calculateMoneyWeightedReturnPct(startingBalance, strategy.createdAt, point.nav, point.capturedAt, flowsThroughPoint);
+  const mwrPct = calculateMoneyWeightedReturnPct(startingBalance, baselineAt, point.nav, point.capturedAt, flowsThroughPoint);
 
   const values = {
     strategyId: strategy.id,

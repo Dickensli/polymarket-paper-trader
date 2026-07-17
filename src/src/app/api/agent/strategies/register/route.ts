@@ -135,8 +135,18 @@ export async function POST(request: NextRequest) {
             }, { status: 409 });
           }
           let current = existing;
-          if (risk_config !== undefined || schedule !== undefined || metadata !== undefined) {
+          const invalidStartingBalance = !Number.isFinite(Number(existing.startingBalance)) || Number(existing.startingBalance) <= 0;
+          let repairedStartingBalance = finalBalance;
+          if (invalidStartingBalance && is_paper_trading) {
+            const existingPortfolio = await db.query.portfolios.findFirst({
+              where: eq(portfolios.userId, sessionUser.id),
+            });
+            const portfolioBaseline = Number(existingPortfolio?.initialBalance);
+            if (Number.isFinite(portfolioBaseline) && portfolioBaseline > 0) repairedStartingBalance = portfolioBaseline;
+          }
+          if (risk_config !== undefined || schedule !== undefined || metadata !== undefined || invalidStartingBalance) {
             const [updated] = await db.update(strategies).set({
+              ...(invalidStartingBalance ? { startingBalance: repairedStartingBalance.toFixed(2) } : {}),
               ...(risk_config !== undefined ? { riskConfig: risk_config } : {}),
               ...(schedule !== undefined ? { schedule } : {}),
               ...(metadata !== undefined ? {

@@ -86,6 +86,7 @@ export async function GET(request: NextRequest) {
 
     let positionsSummary: any[] = openPositions.map((p) => ({
       market_id: p.marketId,
+      risk_group_id: p.riskGroupId ?? p.marketId,
       market_question: p.marketQuestion,
       outcome: p.outcome,
       shares: Number(p.shares),
@@ -111,7 +112,10 @@ export async function GET(request: NextRequest) {
           executedAt: paperTrades.executedAt,
         })
         .from(paperTrades)
-        .where(eq(paperTrades.userId, session.user.id))
+        .where(strategy ? and(
+          eq(paperTrades.userId, session.user.id),
+          eq(paperTrades.strategyId, strategy.id),
+        ) : eq(paperTrades.userId, session.user.id))
         .orderBy(desc(paperTrades.executedAt))
         .limit(10);
     } catch (err) {
@@ -139,7 +143,10 @@ export async function GET(request: NextRequest) {
             createdAt: agentReports.createdAt,
           })
           .from(agentReports)
-          .where(eq(agentReports.userId, session.user.id))
+          .where(and(
+            eq(agentReports.userId, session.user.id),
+            eq(agentReports.strategyId, strategy.id),
+          ))
           .orderBy(desc(agentReports.createdAt))
           .limit(5);
       }
@@ -156,7 +163,11 @@ export async function GET(request: NextRequest) {
       0,
     );
     let totalValue = (portfolioState?.balance ?? 0) + positionsValue;
-    let totalPnL = totalValue - (portfolioState?.initial_balance ?? 10000);
+    const registeredBaseline = Number(strategy?.startingBalance);
+    const paperBaseline = Number.isFinite(registeredBaseline) && registeredBaseline > 0
+      ? registeredBaseline
+      : portfolioState?.initial_balance ?? 10000;
+    let totalPnL = totalValue - paperBaseline;
 
     // ── 6.5. Real Trading Override ─────────────────────────────
     if (strategy?.agentMode === 'real') {
@@ -273,6 +284,13 @@ export async function GET(request: NextRequest) {
     }
     if (strategy?.status === 'disabled') {
       warnings.push('Strategy is disabled. Contact admin to re-enable.');
+    }
+    if (
+      strategy?.agentMode === 'paper'
+      && portfolioState
+      && Math.abs(Number(portfolioState.initial_balance) - Number(strategy.startingBalance)) > 0.005
+    ) {
+      warnings.push('Portfolio initial balance does not match strategy starting balance. Reset or repair before trading.');
     }
 
     return NextResponse.json({

@@ -33,7 +33,19 @@ import {
   runResolutionCheckForUser,
 } from '@/lib/trading-engine';
 import { getDb } from '@/lib/db';
-import { users, ledgerEntries, portfolios, paperTrades, positions, marketCache } from '@/lib/db/schema';
+import {
+  agentReports,
+  ledgerEntries,
+  marketCache,
+  paperTrades,
+  portfolios,
+  positions,
+  strategies,
+  strategyCapitalFlows,
+  strategyPerformanceSnapshots,
+  strategyRuns,
+  users,
+} from '@/lib/db/schema';
 import { eq, sql, and } from 'drizzle-orm';
 import * as polymarket from '@/lib/polymarket';
 import * as polymarketUs from '@/lib/polymarket-us';
@@ -614,6 +626,32 @@ describe('Portfolio reset', () => {
     const userId = await createTestUser();
     testUserIds.push(userId);
     await getPortfolio(userId);
+    const db = getDb();
+    const [strategy] = await db.insert(strategies).values({
+      userId,
+      strategyId: `reset-${randomUUID()}`,
+      agentMode: 'paper',
+      platform: 'polymarket_us',
+      startingBalance: '0.00',
+      metadata: {},
+    }).returning();
+    const [run] = await db.insert(strategyRuns).values({ strategyId: strategy.id, userId }).returning();
+    await db.insert(agentReports).values({
+      strategyId: strategy.id,
+      runId: run.id,
+      userId,
+      strategyName: strategy.strategyId,
+      filename: 'stale.md',
+      content: 'stale profitable report',
+    });
+    await db.insert(strategyCapitalFlows).values({
+      strategyId: strategy.id,
+      userId,
+      amount: '100.000000',
+      navBeforeFlow: '10000.000000',
+      occurredAt: new Date(),
+      idempotencyKey: randomUUID(),
+    });
 
     // Execute a few trades
     const params = validBuyParams({ shares: 100, price: 0.5 });
@@ -628,6 +666,18 @@ describe('Portfolio reset', () => {
     expect(fresh.positions).toHaveLength(0);
     expect(fresh.tradeHistory).toHaveLength(0);
     expect(fresh.totalPnL).toBe(0);
+
+    const repairedStrategy = await db.query.strategies.findFirst({ where: eq(strategies.id, strategy.id) });
+    expect(Number(repairedStrategy?.startingBalance)).toBe(10000);
+    expect(repairedStrategy?.metadata).toMatchObject({ reset_balance: 10000 });
+    expect(await db.query.agentReports.findMany({ where: eq(agentReports.strategyId, strategy.id) })).toHaveLength(0);
+    expect(await db.query.strategyRuns.findMany({ where: eq(strategyRuns.strategyId, strategy.id) })).toHaveLength(0);
+    expect(await db.query.strategyCapitalFlows.findMany({ where: eq(strategyCapitalFlows.strategyId, strategy.id) })).toHaveLength(0);
+    const baselines = await db.query.strategyPerformanceSnapshots.findMany({
+      where: eq(strategyPerformanceSnapshots.strategyId, strategy.id),
+    });
+    expect(baselines).toHaveLength(2);
+    expect(baselines.every((row) => Number(row.nav) === 10000 && Number(row.pnl) === 0)).toBe(true);
   });
 });
 

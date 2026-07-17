@@ -126,40 +126,50 @@ export function normalizeKalshiOrderStatus(order: Record<string, unknown>): stri
 
 export function summarizeKalshiPositions(
   positionRows: Record<string, unknown>[],
-): { positionsValue: number; pnl: number } {
+  marketByTicker: Map<string, Record<string, unknown>> = new Map(),
+): { positionsValue: number; pnl: number; unpricedTickers: string[] } {
   let positionsValue = 0;
   let pnl = 0;
+  const unpricedTickers: string[] = [];
   for (const position of positionRows) {
-    const hasDollarMarketValue = position.market_exposure_dollars != null || position.market_value_dollars != null;
-    const marketValue = Number(
-      position.market_exposure_dollars ?? position.market_value_dollars ?? position.market_value ?? position.value ?? 0,
-    ) / (hasDollarMarketValue ? 1 : 100);
+    const ticker = String(position.ticker ?? position.market_ticker ?? '');
+    const market = marketByTicker.get(ticker);
+    const positionFp = Number(position.position_fp ?? position.position ?? 0) / (position.position_fp != null ? 1 : 100);
+    const explicitMarketValue = position.market_value_dollars != null
+      ? Number(position.market_value_dollars)
+      : position.market_value != null
+        ? Number(position.market_value) / 100
+        : null;
+    const quoteField = positionFp >= 0
+      ? market?.yes_bid_dollars ?? market?.yes_bid
+      : market?.no_bid_dollars ?? market?.no_bid;
+    const rawBid = Number(quoteField);
+    const bid = quoteField == null || !Number.isFinite(rawBid)
+      ? null
+      : rawBid > 1 ? rawBid / 100 : rawBid;
+    const hasExecutableMark = explicitMarketValue != null && Number.isFinite(explicitMarketValue)
+      || bid != null && bid > 0 && bid < 1;
+    const marketValue = explicitMarketValue != null && Number.isFinite(explicitMarketValue)
+      ? explicitMarketValue
+      : bid != null && bid > 0 && bid < 1
+        ? Math.abs(positionFp) * bid
+        : 0;
+    if (!hasExecutableMark && ticker) unpricedTickers.push(ticker);
     const hasDollarPnl = position.realized_pnl_dollars != null;
     const realizedPnl = Number(position.realized_pnl_dollars ?? position.realized_pnl ?? 0) / (hasDollarPnl ? 1 : 100);
     const hasDollarCost = position.position_cost_dollars != null;
-    const positionCost = Number(position.position_cost_dollars ?? position.position_cost ?? 0) / (hasDollarCost ? 1 : 100);
-
-    const positionFp = Number(position.position_fp ?? position.position ?? 0) / (position.position_fp != null ? 1 : 100);
-    const totalTraded = Number(position.total_traded_dollars ?? position.total_cost_dollars ?? position.position_cost ?? position.position_cost_dollars ?? 0) / (position.total_traded_dollars != null || position.total_cost_dollars != null || position.position_cost_dollars != null ? 1 : 100);
-
-    let unrealizedPnl = 0;
-    if (positionFp !== 0 && totalTraded !== 0) {
-      if (positionFp > 0) {
-        unrealizedPnl = marketValue - totalTraded;
-      } else {
-        unrealizedPnl = totalTraded - marketValue;
-      }
-    }
+    const positionCost = Number(
+      position.position_cost_dollars
+      ?? position.market_exposure_dollars
+      ?? position.position_cost
+      ?? 0,
+    ) / (hasDollarCost || position.market_exposure_dollars != null ? 1 : 100);
 
     if (Number.isFinite(marketValue)) positionsValue += marketValue;
     if (Number.isFinite(realizedPnl)) pnl += realizedPnl;
-    if (unrealizedPnl !== 0) {
-      pnl += unrealizedPnl;
-    } else if (!hasDollarPnl && Number.isFinite(marketValue - positionCost)) {
-      pnl += marketValue - positionCost;
-    }
+    if (Number.isFinite(positionCost)) pnl += marketValue - positionCost;
   }
-  return { positionsValue, pnl };
+  return { positionsValue, pnl, unpricedTickers };
 }
 
 export function kalshiOrderQuantity(order: Record<string, unknown>): number | null {
@@ -401,7 +411,21 @@ async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<Offic
   const fillRows = Array.isArray(fillsRecord.fills) ? fillsRecord.fills : [];
   const settlementRows = Array.isArray(settlementsRecord.settlements) ? settlementsRecord.settlements : [];
 
-  const { positionsValue, pnl } = summarizeKalshiPositions(positionRows);
+  const executionMarkets = new Map<string, Record<string, unknown>>();
+  await Promise.all(positionRows.map(async (position) => {
+    const ticker = String((position as Record<string, unknown>).ticker ?? '');
+    if (!ticker || executionMarkets.has(ticker)) return;
+    const response = await kalshiRequest<Record<string, unknown>>(
+      'GET',
+      `/markets/${encodeURIComponent(ticker)}`,
+    ).catch(() => null);
+    if (!response) return;
+    const market = response.market && typeof response.market === 'object'
+      ? response.market as Record<string, unknown>
+      : response;
+    executionMarkets.set(ticker, market);
+  }));
+  const { positionsValue, pnl, unpricedTickers } = summarizeKalshiPositions(positionRows, executionMarkets);
   const totalValue = cash + positionsValue;
 
   return {
@@ -414,7 +438,17 @@ async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<Offic
     fills: fillRows,
     settlements: settlementRows,
     activity: [],
-    raw: { balance: balanceRecord, positions: positionsRecord, orders: ordersRecord, fills: fillsRecord, settlements: settlementsRecord },
+    raw: {
+      balance: balanceRecord,
+      positions: positionsRecord,
+      orders: ordersRecord,
+      fills: fillsRecord,
+      settlements: settlementsRecord,
+      valuation: {
+        source: 'execution_venue_liquidation_bid',
+        unpriced_tickers: unpricedTickers,
+      },
+    },
   };
 }
 
