@@ -36,6 +36,15 @@ describe('agent open-order market context', () => {
     });
   });
 
+  it('falls back on a Kalshi transport failure without hiding mapping errors', async () => {
+    vi.mocked(getKalshiMarket).mockRejectedValue(new Error('venue unavailable'));
+    await expect(getAgentMarketContext('kalshi', 'KXUNAVAILABLE')).resolves.toMatchObject({
+      ticker: 'KXUNAVAILABLE',
+      market_title: null,
+      yes_price: null,
+    });
+  });
+
   it('uses readable Kalshi titles for current and settled position rows', async () => {
     vi.mocked(getKalshiMarket).mockResolvedValue({ title: 'Bitcoin up this interval?', status: 'finalized' });
     vi.mocked(getKalshiMarkets).mockResolvedValue(new Map([
@@ -109,11 +118,11 @@ describe('agent open-order market context', () => {
     });
   });
 
-  it('calculates average price and cost basis for Kalshi positions from fills list', async () => {
+  it('calculates Kalshi cost basis from canonical exposure instead of legacy action', async () => {
     vi.mocked(getKalshiMarket).mockResolvedValue({ title: 'WTI Crude Oil', status: 'open' });
     
     const positions = [
-      { ticker: 'KXWTI-TEST', position_fp: '354.22', total_traded_dollars: '601.496200', market_exposure_dollars: '251.496200' }
+      { ticker: 'KXWTI-TEST', position_fp: '60', total_traded_dollars: '999', market_exposure_dollars: '30' }
     ];
     const fills = [
       {
@@ -121,19 +130,21 @@ describe('agent open-order market context', () => {
         marketId: 'KXWTI-TEST',
         outcome: 'YES',
         side: 'BUY',
-        quantity: 704.22,
-        price: 0.71,
-        fee: 0,
+        quantity: 100,
+        price: 0.4,
+        fee: 1,
         filledAt: '2026-07-14T08:10:00Z'
       },
       {
         strategyId: 'strat-1',
         marketId: 'KXWTI-TEST',
+        // A canonical NO exposure offsets the existing YES lots regardless
+        // of the deprecated action value.
         outcome: 'NO',
         side: 'SELL',
-        quantity: 350.00,
-        price: 0.29,
-        fee: 5.00,
+        quantity: 40,
+        price: 0.6,
+        fee: 0,
         filledAt: '2026-07-14T12:00:00Z'
       }
     ];
@@ -142,13 +153,24 @@ describe('agent open-order market context', () => {
     expect(result).toMatchObject([
       {
         ticker: 'KXWTI-TEST',
-        shares: 354.22,
+        shares: 60,
         outcome: 'YES',
-        avgPrice: 0.71,
-        value: 177.11, // 354.22 * 0.5 (mocked outcome price is 0.5)
-        pnl: -74.3862, // 177.11 - 251.4962
+        avgPrice: 0.41,
+        value: 30,
       }
     ]);
+    expect((result as Array<{ pnl: number }>)[0].pnl).toBeCloseTo(5.4);
+  });
+
+  it('treats SELL NO canonical YES exposure as an added YES lot', async () => {
+    vi.mocked(getKalshiMarket).mockResolvedValue({ title: 'Test market', status: 'open' });
+    const result = await enrichPositionRowsWithMarkets('kalshi', [
+      { ticker: 'KXTEST', position_fp: '10', total_traded_dollars: '0' },
+    ], [{
+      marketId: 'KXTEST', outcome: 'YES', side: 'SELL', quantity: 10,
+      price: 0.6, fee: 0, filledAt: '2026-07-14T12:00:00Z',
+    }]);
+
+    expect(result).toMatchObject([{ outcome: 'YES', shares: 10, avgPrice: 0.6, pnl: -1 }]);
   });
 });
-

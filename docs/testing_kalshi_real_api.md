@@ -28,6 +28,21 @@ KALSHI_USE_DEMO=true
 KALSHI_MARKET_DATA_ENV=live
 ```
 
+Flag resolution matrix:
+
+| Configuration | Public quotes/depth | `agent_mode=paper` write | `agent_mode=real` write |
+| --- | --- | --- | --- |
+| `MARKET_DATA_ENV=live`, `USE_DEMO=true` | Production/live | Local DB only | Kalshi Demo account |
+| `MARKET_DATA_ENV=live`, `USE_DEMO=false` | Production/live | Local DB only | Kalshi production account; real money |
+| `MARKET_DATA_ENV=demo`, `USE_DEMO=true` | Demo | Local DB only | Kalshi Demo account |
+| `MARKET_DATA_ENV=demo`, `USE_DEMO=false` | Demo | Local DB only | **Unsafe mismatch: production account** |
+
+In other words, `KALSHI_USE_DEMO=true` does not force market reads to Demo,
+and `KALSHI_MARKET_DATA_ENV=live` does not cause a paper strategy to submit an
+official order. The recommended pair deliberately tests decision quality on
+the live book while testing signing and reconciliation against the Demo
+account. Demo orders still depend on Demo liquidity and therefore may not fill.
+
 There is no `KALSHI_EXECUTION_MODE` variable. Strategy registration already
 selects execution: `agent_mode=paper` means a local live-depth FOK shadow fill;
 `agent_mode=real` means an authenticated official API submission (demo when

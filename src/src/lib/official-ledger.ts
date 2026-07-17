@@ -25,7 +25,24 @@ function firstText(row: Record<string, unknown>, keys: string[]): string | null 
 }
 
 export function normalizeKalshiFill(row: Record<string, unknown>) {
-  const rawOutcome = row.outcome_side ?? row.side;
+  // `outcome_side`/`book_side` are canonical exposure directions. For legacy
+  // rows, SELL NO is long YES and SELL YES is long NO, so `side` cannot be
+  // interpreted without `action`.
+  const canonicalOutcome = row.outcome_side
+    ?? (String(row.book_side ?? '').toLowerCase() === 'bid'
+      ? 'yes'
+      : String(row.book_side ?? '').toLowerCase() === 'ask'
+        ? 'no'
+        : null);
+  const legacySide = row.side == null ? null : String(row.side).toLowerCase();
+  const legacyAction = row.action == null ? null : String(row.action).toLowerCase();
+  const rawOutcome = canonicalOutcome ?? (
+    legacySide === 'yes' || legacySide === 'no'
+      ? legacyAction === 'sell'
+        ? legacySide === 'yes' ? 'no' : 'yes'
+        : legacySide
+      : null
+  );
   const outcome = rawOutcome == null ? null : String(rawOutcome).toUpperCase() === 'NO' ? 'NO' : 'YES';
   const price = outcome !== 'NO'
     ? number(row.yes_price_dollars ?? row.yes_price) / (row.yes_price_dollars == null ? 100 : 1)

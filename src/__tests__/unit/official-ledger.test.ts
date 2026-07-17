@@ -23,6 +23,26 @@ describe('official trading ledger normalization', () => {
     });
   });
 
+  it('uses canonical direction and correctly converts legacy sell-side fills', () => {
+    expect(normalizeKalshiFill({
+      fill_id: 'canonical-sell-no', ticker: 'KXTEST', outcome_side: 'yes',
+      side: 'no', action: 'sell', count_fp: '2', yes_price_dollars: '0.61',
+      created_time: '2026-07-13T01:00:00Z',
+    })).toMatchObject({ outcome: 'YES', side: 'SELL', price: 0.61 });
+
+    expect(normalizeKalshiFill({
+      fill_id: 'legacy-sell-no', ticker: 'KXTEST', side: 'no', action: 'sell',
+      count_fp: '2', yes_price_dollars: '0.61',
+      created_time: '2026-07-13T01:00:00Z',
+    })).toMatchObject({ outcome: 'YES', side: 'SELL', price: 0.61 });
+
+    expect(normalizeKalshiFill({
+      fill_id: 'book-ask', ticker: 'KXTEST', book_side: 'ask', action: 'sell',
+      count_fp: '2', no_price_dollars: '0.39',
+      created_time: '2026-07-13T01:00:00Z',
+    })).toMatchObject({ outcome: 'NO', price: 0.39 });
+  });
+
   it('normalizes Polymarket US orders, fills, and settlement activity', () => {
     expect(normalizePolymarketUsOrderEvent({ id: 'o1', state: 'partially_filled', quantity: 10, filledQuantity: 4, updatedAt: '2026-01-01T00:00:00Z' })).toMatchObject({ officialOrderId: 'o1', status: 'PARTIALLY_FILLED', remainingQuantity: 6 });
     expect(normalizePolymarketUsFill({ id: 'f1', orderId: 'o1', marketSlug: 'btc-up', outcomeSide: 'YES', action: 'BUY', quantity: 4, price: { value: '0.55' }, fee: { value: '0.02' }, createdAt: '2026-01-01T00:01:00Z' })).toMatchObject({ officialFillId: 'f1', quantity: 4, price: 0.55, fee: 0.02 });

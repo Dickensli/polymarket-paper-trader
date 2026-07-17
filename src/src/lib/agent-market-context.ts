@@ -30,54 +30,51 @@ export async function getAgentMarketContext(
     no_price: null,
   };
 
-  try {
-    if (platform === 'kalshi') {
-      const { getKalshiMarket, getKalshiOutcomePriceFromMarket } = await import('@/lib/kalshi');
-      const market = await getKalshiMarket(marketId);
-      if (!market) return fallback;
-      return {
-        ...fallback,
-        market_title: text(market.title) ?? text(market.subtitle),
-        market_status: text(market.status),
-        close_time: text(market.close_time) ?? text(market.expected_expiration_time),
-        settlement_result: text(market.result),
-        yes_price: getKalshiOutcomePriceFromMarket(market, 'YES', 'SELL'),
-        no_price: getKalshiOutcomePriceFromMarket(market, 'NO', 'SELL'),
-      };
-    }
-
-    if (platform === 'polymarket_us') {
-      const { getPolymarketUsMarket, getPolymarketUsOutcomePrice } = await import('@/lib/polymarket-us');
-      const market = await getPolymarketUsMarket(marketId);
-      if (!market) return fallback;
-      return {
-        ...fallback,
-        market_id: String(market.id),
-        market_slug: market.slug,
-        market_title: market.title,
-        market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
-        settlement_result: market.closed ? market.outcome : null,
-        yes_price: await getPolymarketUsOutcomePrice(market.slug, 'YES', 'SELL'),
-        no_price: await getPolymarketUsOutcomePrice(market.slug, 'NO', 'SELL'),
-      };
-    }
-
-    const { getMarket } = await import('@/lib/polymarket');
-    const market = await getMarket(marketId);
+  if (platform === 'kalshi') {
+    const { getKalshiMarket, getKalshiOutcomePriceFromMarket } = await import('@/lib/kalshi');
+    const market = await getKalshiMarket(marketId).catch(() => null);
+    if (!market) return fallback;
     return {
       ...fallback,
-      market_id: market.id,
-      market_slug: market.slug,
-      market_title: market.question,
-      market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
-      close_time: market.endDate,
-      settlement_result: null,
-      yes_price: market.outcomePrices?.[0] ?? null,
-      no_price: market.outcomePrices?.[1] ?? null,
+      market_title: text(market.title) ?? text(market.subtitle),
+      market_status: text(market.status),
+      close_time: text(market.close_time) ?? text(market.expected_expiration_time),
+      settlement_result: text(market.result),
+      yes_price: getKalshiOutcomePriceFromMarket(market, 'YES', 'SELL'),
+      no_price: getKalshiOutcomePriceFromMarket(market, 'NO', 'SELL'),
     };
-  } catch {
-    return fallback;
   }
+
+  if (platform === 'polymarket_us') {
+    const { getPolymarketUsMarket, getPolymarketUsOutcomePrice } = await import('@/lib/polymarket-us');
+    const market = await getPolymarketUsMarket(marketId).catch(() => null);
+    if (!market) return fallback;
+    return {
+      ...fallback,
+      market_id: String(market.id),
+      market_slug: market.slug,
+      market_title: market.title,
+      market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
+      settlement_result: market.closed ? market.outcome : null,
+      yes_price: await getPolymarketUsOutcomePrice(market.slug, 'YES', 'SELL').catch(() => null),
+      no_price: await getPolymarketUsOutcomePrice(market.slug, 'NO', 'SELL').catch(() => null),
+    };
+  }
+
+  const { getMarket } = await import('@/lib/polymarket');
+  const market = await getMarket(marketId).catch(() => null);
+  if (!market) return fallback;
+  return {
+    ...fallback,
+    market_id: market.id,
+    market_slug: market.slug,
+    market_title: market.question,
+    market_status: market.closed ? 'closed' : market.active ? 'active' : 'inactive',
+    close_time: market.endDate,
+    settlement_result: null,
+    yes_price: market.outcomePrices?.[0] ?? null,
+    no_price: market.outcomePrices?.[1] ?? null,
+  };
 }
 
 export async function enrichOpenOrdersWithMarkets(
@@ -136,10 +133,14 @@ export async function enrichPositionRowsWithMarkets(
           const qty = Number(fill.quantity) || 0;
           const price = Number(fill.price) || 0;
           const fee = Number(fill.fee) || 0;
-          if (fill.outcome === outcome && fill.side === 'BUY') {
+          // Kalshi's canonical `outcome_side` already represents exposure:
+          // BUY YES and SELL NO are both YES; BUY NO and SELL YES are both NO.
+          // Fills for the held outcome add lots, while the opposite exposure
+          // closes lots. The deprecated action field must not flip it again.
+          if (fill.outcome === outcome) {
             netQty += qty;
             netCost += qty * price + fee;
-          } else {
+          } else if (fill.outcome === 'YES' || fill.outcome === 'NO') {
             const removed = Math.min(qty, netQty);
             netCost = netQty > 0 ? (netCost / netQty) * (netQty - removed) : 0;
             netQty -= removed;

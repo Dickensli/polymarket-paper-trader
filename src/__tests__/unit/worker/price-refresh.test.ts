@@ -13,7 +13,12 @@ vi.mock('@/lib/polymarket-us');
 vi.mock('@upstash/redis');
 
 describe('Price Refresh Job', () => {
-  let mockDb: any;
+  let mockDb: {
+    query: { positions: { findMany: ReturnType<typeof vi.fn> } };
+    update: ReturnType<typeof vi.fn>;
+    set: ReturnType<typeof vi.fn>;
+    where: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -29,7 +34,9 @@ describe('Price Refresh Job', () => {
       where: vi.fn().mockResolvedValue([])
     };
 
-    vi.spyOn(dbLib, 'getDb').mockReturnValue(mockDb as any);
+    vi.spyOn(dbLib, 'getDb').mockReturnValue(
+      mockDb as unknown as ReturnType<typeof dbLib.getDb>,
+    );
     vi.spyOn(Redis, 'fromEnv').mockImplementation(() => {
       throw new Error('No redis in test env');
     });
@@ -94,8 +101,8 @@ describe('Price Refresh Job', () => {
 
     // Kalshi called twice (one per unique ticker:outcome)
     expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledTimes(2);
-    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledWith('KXBTC15M-26JUL091115-15', 'NO');
-    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledWith('KXBTCD-26JUL0914-T62999.99', 'YES');
+    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledWith('KXBTC15M-26JUL091115-15', 'NO', 'SELL');
+    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledWith('KXBTCD-26JUL0914-T62999.99', 'YES', 'SELL');
 
     // 3 DB updates total (1 Polymarket + 2 Kalshi)
     expect(mockDb.update).toHaveBeenCalledTimes(3);

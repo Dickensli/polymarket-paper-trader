@@ -264,6 +264,27 @@ KALSHI_USE_DEMO=true
 KALSHI_MARKET_DATA_ENV=live
 ```
 
+The two variables answer different questions:
+
+- `KALSHI_MARKET_DATA_ENV`: **Which public book is used to research, quote,
+  validate depth, and mark positions?**
+- `KALSHI_USE_DEMO`: **Which authenticated Kalshi account receives an official
+  order when—and only when—the registered strategy is `agent_mode=real`?**
+
+Their complete behavior is:
+
+| Market data | Official account | Paper strategy (`commander`) | Real strategy (`commander_real`) | Supported use |
+| --- | --- | --- | --- | --- |
+| `live` | Demo (`KALSHI_USE_DEMO=true`) | Live-book local FOK shadow fill | Live research; authenticated Demo order | Recommended integration test |
+| `live` | Production (`KALSHI_USE_DEMO=false`) | Live-book local FOK shadow fill | Live research; real-money production order | Production only, after human approval |
+| `demo` | Demo (`KALSHI_USE_DEMO=true`) | Demo-book local shadow fill | Demo research and Demo order | API smoke test; liquidity is unrealistic |
+| `demo` | Production (`KALSHI_USE_DEMO=false`) | Demo-book local shadow fill | Demo research but real-money order | **Forbidden mismatch** |
+
+`KALSHI_USE_DEMO` never changes `commander`, because a paper strategy has no
+authenticated venue write. Conversely, `KALSHI_MARKET_DATA_ENV=live` does not
+make `commander_real` a production-money strategy: with
+`KALSHI_USE_DEMO=true`, its official order still goes only to Demo.
+
 Do not set the legacy shared `KALSHI_BASE_URL` in this topology. The two agents
 then follow different write paths while sharing production public research
 data:

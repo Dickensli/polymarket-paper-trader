@@ -89,7 +89,9 @@ export async function runPriceRefresh() {
   // Fetch Kalshi prices (public API, no API key needed)
   const kalshiPrices = await Promise.all(
     kalshiKeys.map(async ({ storedTokenId, ticker, outcome }) => {
-      const price = await getKalshiOutcomePrice(ticker, outcome).catch(() => null);
+      // Mark an existing long at executable liquidation value, never at the
+      // higher BUY ask. This keeps paper NAV and graduation conservative.
+      const price = await getKalshiOutcomePrice(ticker, outcome, 'SELL').catch(() => null);
       return { storedTokenId, outcome, midpoint: price };
     })
   );

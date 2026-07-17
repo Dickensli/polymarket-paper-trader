@@ -36,6 +36,7 @@ vi.mock('@/lib/kalshi', () => ({
   getKalshiMarket: vi.fn(),
   getKalshiMarkets: vi.fn().mockResolvedValue(new Map()),
   getKalshiOutcomePrice: vi.fn(),
+  getKalshiOutcomePriceFromMarket: vi.fn(() => 0.5),
   getKalshiOrderBook: vi.fn(),
   kalshiTokenId: vi.fn((ticker: string, outcome: string) => `kalshi:${ticker}:${outcome}`),
 }));

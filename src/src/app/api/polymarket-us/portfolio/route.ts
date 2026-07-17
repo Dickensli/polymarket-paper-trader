@@ -3,8 +3,8 @@ import { auth } from '@/lib/auth';
 import { getPortfolio, resetPortfolio } from '@/lib/trading-engine';
 import { getDb } from '@/lib/db';
 import { strategies } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
-import { realTradeOrders } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
+import { calculatePnLPercent } from '@/lib/portfolio-metrics';
 export async function GET() {
   try {
     const session = await auth();
@@ -31,7 +31,7 @@ export async function GET() {
           tradeHistory: realPortfolio.fills,
           totalValue: realPortfolio.totalValue,
           totalPnL,
-          totalPnLPercent: realPortfolio.totalValue > 0 ? (totalPnL / realPortfolio.totalValue) * 100 : 0,
+          totalPnLPercent: calculatePnLPercent(totalPnL, Number(strategy.startingBalance)),
           raw: realPortfolio.raw,
         }
       });

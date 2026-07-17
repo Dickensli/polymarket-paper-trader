@@ -19,3 +19,17 @@ This version has breaking changes — APIs, conventions, and file structure may 
 4. **COMMANDER_REAL (OFFICIAL DEMO)**: `commander_real` also researches against live public data, but reads official balances/orders/fills and submits authenticated orders to Kalshi Demo while `KALSHI_USE_DEMO=true`. Because Demo and production are independent books, a price derived from live data may not fill on Demo; use this path to verify signing, order lifecycle, cancellation, sync, and reconciliation—not strategy P&L or fill realism.
 5. **GRADUATION GATE**: Before `commander_real` may add risk, the server checks the `commander` shadow scorecard configured by `graduation_source_strategy_id`. This validates the same decision policy on realistic live depth before official execution is allowed. A passing `GRADUATION_READY` result is only a notification for human review; it never sets `real_trading_enabled` and never authorizes automatic real-money activation. Risk-reducing orders remain permitted.
 6. **NO CROSS-VENUE FILL ASSUMPTIONS**: Production market data cannot provide liquidity to a Demo order. Never report a local shadow fill as an official Demo fill, and never report a submitted/resting Demo order as filled.
+
+The controls resolve in this order:
+
+| Control | `commander` (`agent_mode=paper`) | `commander_real` (`agent_mode=real`) |
+| --- | --- | --- |
+| `KALSHI_MARKET_DATA_ENV=live` | Reads live public markets/orderbooks | Reads live public markets/orderbooks |
+| `KALSHI_MARKET_DATA_ENV=demo` | Reads Demo public markets/orderbooks | Reads Demo public markets/orderbooks |
+| `KALSHI_USE_DEMO=true` | Ignored for execution; writes local paper state only | Uses Demo credentials/account and submits to Demo |
+| `KALSHI_USE_DEMO=false` | Ignored for execution; writes local paper state only | Uses production credentials/account and can spend real money |
+
+The supported test pair is `KALSHI_MARKET_DATA_ENV=live` plus
+`KALSHI_USE_DEMO=true`. Never combine Demo market data with production
+execution (`KALSHI_MARKET_DATA_ENV=demo`, `KALSHI_USE_DEMO=false`): that would
+make real-money decisions from the wrong book.

@@ -31,6 +31,11 @@ Polymarket US reports across 9 strategies.
   (the default) for production quotes and realistic local shadow fills. A paper
   strategy is already the shadow execution mode; no `KALSHI_EXECUTION_MODE`
   variable is needed.
+- With the recommended pair (`KALSHI_USE_DEMO=true`,
+  `KALSHI_MARKET_DATA_ENV=live`), `commander` reads the live book and writes
+  only local paper state, while `commander_real` reads the same live public
+  book but submits authenticated orders only to Kalshi Demo. Live liquidity
+  cannot fill the Demo order; the two executions must be evaluated separately.
 - Every Kalshi BUY now carries a structured proposal that the server checks
   against fresh price, full depth, edge, and NAV. Graduation is also computed
   server-side; agents may announce `GRADUATION_READY` but cannot self-enable
