@@ -128,12 +128,30 @@ export async function POST(request: NextRequest) {
         });
 
         if (existing) {
+          const requestedMode = is_paper_trading ? 'paper' : 'real';
+          if (existing.platform !== platform || existing.agentMode !== requestedMode) {
+            return NextResponse.json({
+              error: 'Existing strategy venue and trading mode are immutable',
+            }, { status: 409 });
+          }
+          let current = existing;
+          if (risk_config !== undefined || schedule !== undefined || metadata !== undefined) {
+            const [updated] = await db.update(strategies).set({
+              ...(risk_config !== undefined ? { riskConfig: risk_config } : {}),
+              ...(schedule !== undefined ? { schedule } : {}),
+              ...(metadata !== undefined ? {
+                metadata: { ...((existing.metadata as Record<string, unknown>) ?? {}), ...metadata },
+              } : {}),
+              updatedAt: new Date(),
+            }).where(eq(strategies.id, existing.id)).returning();
+            current = updated ?? existing;
+          }
           try { await ensureUserColor(db, sessionUser.id); } catch { /* non-fatal */ }
           return NextResponse.json({
             registered: true,
             is_new: false,
-            strategy: sanitizeStrategy(existing),
-            message: 'Strategy already registered.'
+            strategy: sanitizeStrategy(current),
+            message: 'Strategy already registered; mutable configuration synchronized.'
           });
         }
       }

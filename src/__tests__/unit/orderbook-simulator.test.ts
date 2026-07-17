@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   simulateBuyFill,
+  simulateBuySharesFill,
   simulateSellFill,
   calculateFeeForLevel,
   calculateMidpoint,
@@ -162,6 +163,26 @@ describe('Order Book Simulator', () => {
       // With fees, fewer shares should be purchased for the same USD
       expect(withFee.totalShares).toBeLessThan(withoutFee.totalShares);
       expect(withFee.fee).toBeGreaterThan(0);
+    });
+  });
+
+  describe('simulateBuySharesFill', () => {
+    it('walks asks for an exact share quantity', () => {
+      const ob = makeOrderBook([], [
+        { price: 0.5, size: 10 },
+        { price: 0.6, size: 10 },
+      ]);
+      const result = simulateBuySharesFill(ob, 15, 0, 'FOK');
+      expect(result.success).toBe(true);
+      expect(result.totalShares).toBe(15);
+      expect(result.totalCost).toBe(8);
+      expect(result.avgPrice).toBeCloseTo(8 / 15, 6);
+      expect(result.levelsFilled).toBe(2);
+    });
+
+    it('kills an exact-share order when full live depth is unavailable', () => {
+      const ob = makeOrderBook([], [{ price: 0.5, size: 10 }]);
+      expect(simulateBuySharesFill(ob, 11, 0, 'FOK').success).toBe(false);
     });
   });
 

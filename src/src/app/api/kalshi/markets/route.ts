@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveKalshiMarketDataBaseUrl } from '@/lib/kalshi';
 
-const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || 'https://external-api.kalshi.com/trade-api/v2';
+const KALSHI_BASE_URL = resolveKalshiMarketDataBaseUrl();
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -16,4 +17,3 @@ export async function GET(request: NextRequest) {
     headers: { 'Content-Type': res.headers.get('content-type') || 'application/json' },
   });
 }
-

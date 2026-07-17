@@ -22,7 +22,9 @@ if (whitelist.length === 0) {
 }
 log(`[Harness] Whitelist initialized with strategies: ${JSON.stringify(whitelist)}`);
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
-const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || "https://external-api.kalshi.com/trade-api/v2";
+const KALSHI_BASE_URL = process.env.KALSHI_MARKET_DATA_BASE_URL || process.env.KALSHI_BASE_URL || (process.env.KALSHI_MARKET_DATA_ENV?.toLowerCase() === "demo"
+    ? "https://demo-api.kalshi.co/trade-api/v2"
+    : "https://external-api.kalshi.com/trade-api/v2");
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 function generateIdempotencyKey() {
@@ -72,6 +74,26 @@ function json(data) {
 }
 const accountProps = {
     strategy_id: { type: "string", description: "Strategy name to isolate Kalshi paper portfolios." },
+};
+const proposalSchema = {
+    type: "object",
+    description: "Structured entry thesis audited against fresh server quotes. Required for BUY orders.",
+    properties: {
+        thesis: { type: "string" },
+        rules_verified: { type: "boolean", const: true },
+        source_urls: { type: "array", items: { type: "string" }, minItems: 1 },
+        fair_probability: { type: "number", minimum: 0.001, maximum: 0.999 },
+        confidence_low: { type: "number", minimum: 0, maximum: 1 },
+        confidence_high: { type: "number", minimum: 0, maximum: 1 },
+        quote_observed_at: { type: "string", description: "Fresh ISO-8601 timestamp." },
+        observed_price: { type: "number", minimum: 0.001, maximum: 0.999 },
+        available_depth: { type: "number", exclusiveMinimum: 0 },
+        net_edge: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+        proposed_nav_pct: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+        exit_condition: { type: "string" },
+        invalidation_condition: { type: "string" },
+    },
+    required: ["thesis", "rules_verified", "source_urls", "fair_probability", "confidence_low", "confidence_high", "quote_observed_at", "observed_price", "available_depth", "net_edge", "proposed_nav_pct", "exit_condition", "invalidation_condition"],
 };
 function requireDestructiveResetConfirmation(args) {
     if (args.confirm_destructive_reset !== true) {
@@ -132,10 +154,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     outcome: { type: "string", enum: ["YES", "NO"] },
                     amount: { type: "number", description: "Dollar amount to spend." },
                     shares: { type: "number", description: "Optional exact shares to buy." },
-                    price: { type: "number", description: "DO NOT USE. Market orders only." },
+                    proposal: proposalSchema,
                     ...accountProps,
                 },
-                required: ["ticker", "strategy_id"],
+                required: ["ticker", "strategy_id", "proposal"],
             },
         },
         {
@@ -144,14 +166,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: {
-                    positionId: { type: "string" },
                     ticker: { type: "string" },
                     outcome: { type: "string", enum: ["YES", "NO"] },
-                    quantity: { anyOf: [{ type: "number" }, { type: "string", enum: ["ALL"] }] },
-                    price: { type: "number", description: "DO NOT USE. Market orders only." },
+                    quantity: { type: "number", description: "Explicit shares to sell." },
                     ...accountProps,
                 },
-                required: ["strategy_id"],
+                required: ["ticker", "outcome", "quantity", "strategy_id"],
             },
         },
         {
@@ -309,6 +329,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode. Set false to register this strategy for real Kalshi trading.", default: true },
                     platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'", default: "kalshi" },
                     balance: { type: "number", description: "Starting paper balance in USD", default: 10000 },
+                    risk_config: { type: "object", description: "Server-enforced risk ratios, e.g. max_single_trade_pct, max_market_exposure_pct, min_cash_reserve_pct" },
+                    schedule: { type: "string", description: "Cron schedule recorded for strategy auditing" },
+                    metadata: { type: "object", description: "Server-side strategy controls such as shadow graduation requirements." },
                 },
                 required: ["strategy_id"],
             },
@@ -320,6 +343,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 type: "object",
                 properties: {
                     strategy_id: { type: "string", description: "Strategy name to get context for" },
+                },
+                required: ["strategy_id"],
+            },
+        },
+        {
+            name: "get_graduation_status",
+            description: "Read the server-computed Kalshi shadow graduation scorecard. This never enables real trading automatically.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    strategy_id: { type: "string", description: "The currently assigned strategy ID." },
+                    source_strategy_id: { type: "string", description: "Optional paper strategy whose scorecard backs a real strategy." },
                 },
                 required: ["strategy_id"],
             },
@@ -402,8 +437,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     side: args.side || "BUY",
                     amount: args.amount,
                     shares: args.shares,
-                    price: args.price,
-                    time_in_force: args.time_in_force || "GTC",
+                    proposal: args.proposal,
+                    time_in_force: "FOK",
                     client_order_id: idempotencyKey,
                 }),
             });
@@ -411,7 +446,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         case "sell": {
             const idempotencyKey = generateIdempotencyKey();
-            const quantity = args.quantity || "ALL";
+            const quantity = Number(args.quantity);
+            if (!Number.isFinite(quantity) || quantity <= 0) {
+                throw new Error("sell requires an explicit positive numeric quantity");
+            }
             const data = await callPolyTrader("/agent/trades", {
                 method: "POST",
                 headers: getAgentHeaders(args, idempotencyKey),
@@ -420,8 +458,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     slug: args.ticker,
                     outcome: args.outcome || "YES",
                     side: "SELL",
-                    shares: typeof quantity === "number" ? quantity : undefined,
-                    price: args.price,
+                    shares: quantity,
                     client_order_id: idempotencyKey,
                 }),
             });
@@ -565,8 +602,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     strategy_id,
                     account_id,
                     is_paper_trading: args.is_paper_trading !== false,
-                    platform: args.platform || "kalshi",
+                    platform: "kalshi",
                     balance: Number(args.balance || 10000),
+                    risk_config: args.risk_config,
+                    schedule: args.schedule,
+                    metadata: args.metadata,
                 }),
             });
             return json({ ok: true, data: data.data ?? data });
@@ -576,6 +616,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!strategy_id)
                 throw new Error("Missing required field: strategy_id");
             const data = await callPolyTrader(`/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`, { headers: getAgentHeaders(args) });
+            return json({ ok: true, data: data.data ?? data });
+        }
+        case "get_graduation_status": {
+            const strategy_id = String(args.strategy_id);
+            const source = args.source_strategy_id;
+            if (!strategy_id)
+                throw new Error("Missing required field: strategy_id");
+            const params = new URLSearchParams({ strategy_id });
+            if (source)
+                params.set("source_strategy_id", String(source));
+            const data = await callPolyTrader(`/agent/graduation?${params.toString()}`, {
+                headers: getAgentHeaders(args),
+            });
             return json({ ok: true, data: data.data ?? data });
         }
         case "cancel_real_order": {

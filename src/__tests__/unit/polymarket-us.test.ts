@@ -1,99 +1,34 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getPolymarketUsOutcomePrice, getPolymarketUsClient } from '@/lib/polymarket-us';
+import { describe, expect, it } from 'vitest';
 
-vi.mock('polymarket-us', () => {
-  const mockBbo = vi.fn();
-  const mockBook = vi.fn();
-  class MockPolymarketUS {
-    markets = {
-      bbo: mockBbo,
-      book: mockBook,
-      retrieveBySlug: vi.fn(),
-      list: vi.fn(),
-      settlement: vi.fn(),
-    };
-  }
-  return {
-    PolymarketUS: MockPolymarketUS,
+import { resolvePolymarketUsOutcomePriceFromBbo } from '@/lib/polymarket-us';
+
+describe('Polymarket US outcome-side pricing', () => {
+  const bbo = {
+    marketData: {
+      bestBid: { value: '0.1770', currency: 'USD' },
+      bestAsk: { value: '0.1790', currency: 'USD' },
+      currentPx: { value: '0.1780', currency: 'USD' },
+      longQuote: { value: '0.1790', currency: 'USD' },
+      shortQuote: { value: '0.8230', currency: 'USD' },
+    },
   };
-});
 
-describe('Polymarket US price helpers', () => {
-  let mockClient: any;
-
-  beforeEach(() => {
-    mockClient = getPolymarketUsClient();
-    vi.clearAllMocks();
+  it('uses the long-side ask/bid for YES market orders', () => {
+    expect(resolvePolymarketUsOutcomePriceFromBbo(bbo, 'YES', 'BUY')).toBe(0.179);
+    expect(resolvePolymarketUsOutcomePriceFromBbo(bbo, 'YES', 'SELL')).toBe(0.177);
   });
 
-  describe('getPolymarketUsOutcomePrice', () => {
-    it('returns the correct price for YES outcome on BUY side (bestAsk)', async () => {
-      mockClient.markets.bbo.mockResolvedValue({
-        marketData: {
-          marketSlug: 'test-market',
-          bestAsk: { value: '0.1940', currency: 'USD' },
-          bestBid: { value: '0.1930', currency: 'USD' },
-          shortQuote: { value: '0.8070', currency: 'USD' },
-        }
-      });
+  it('crosses the complementary side of the book for NO market orders', () => {
+    expect(resolvePolymarketUsOutcomePriceFromBbo(bbo, 'NO', 'BUY')).toBe(0.823);
+    expect(resolvePolymarketUsOutcomePriceFromBbo(bbo, 'NO', 'SELL')).toBe(0.821);
+  });
 
-      const price = await getPolymarketUsOutcomePrice('test-market', 'YES', 'BUY');
-      expect(price).toBe(0.194);
-    });
+  it('marks NO from the venue short quote instead of the YES current price', () => {
+    expect(resolvePolymarketUsOutcomePriceFromBbo(bbo, 'NO', 'MARK')).toBe(0.823);
+  });
 
-    it('returns the correct price for YES outcome on SELL side (bestBid)', async () => {
-      mockClient.markets.bbo.mockResolvedValue({
-        marketData: {
-          marketSlug: 'test-market',
-          bestAsk: { value: '0.1940', currency: 'USD' },
-          bestBid: { value: '0.1930', currency: 'USD' },
-          shortQuote: { value: '0.8070', currency: 'USD' },
-        }
-      });
-
-      const price = await getPolymarketUsOutcomePrice('test-market', 'YES', 'SELL');
-      expect(price).toBe(0.193);
-    });
-
-    it('returns the correct price for NO outcome on BUY side (shortQuote)', async () => {
-      mockClient.markets.bbo.mockResolvedValue({
-        marketData: {
-          marketSlug: 'test-market',
-          bestAsk: { value: '0.1940', currency: 'USD' },
-          bestBid: { value: '0.1930', currency: 'USD' },
-          shortQuote: { value: '0.8070', currency: 'USD' },
-        }
-      });
-
-      const price = await getPolymarketUsOutcomePrice('test-market', 'NO', 'BUY');
-      expect(price).toBe(0.807);
-    });
-
-    it('returns the correct price for NO outcome on SELL side (1 - bestAsk)', async () => {
-      mockClient.markets.bbo.mockResolvedValue({
-        marketData: {
-          marketSlug: 'test-market',
-          bestAsk: { value: '0.1940', currency: 'USD' },
-          bestBid: { value: '0.1930', currency: 'USD' },
-          shortQuote: { value: '0.8070', currency: 'USD' },
-        }
-      });
-
-      const price = await getPolymarketUsOutcomePrice('test-market', 'NO', 'SELL');
-      expect(price).toBe(0.806); // 1 - 0.194
-    });
-
-    it('falls back to 1 - bestBid for NO outcome on BUY side if shortQuote is missing', async () => {
-      mockClient.markets.bbo.mockResolvedValue({
-        marketData: {
-          marketSlug: 'test-market',
-          bestAsk: { value: '0.1940', currency: 'USD' },
-          bestBid: { value: '0.1930', currency: 'USD' },
-        }
-      });
-
-      const price = await getPolymarketUsOutcomePrice('test-market', 'NO', 'BUY');
-      expect(price).toBe(0.807); // 1 - 0.193
-    });
+  it('does not invent an executable price when the relevant book side is absent', () => {
+    expect(resolvePolymarketUsOutcomePriceFromBbo({ marketData: {} }, 'YES', 'BUY')).toBeNull();
+    expect(resolvePolymarketUsOutcomePriceFromBbo({ marketData: {} }, 'NO', 'BUY')).toBeNull();
   });
 });

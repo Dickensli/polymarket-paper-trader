@@ -217,12 +217,19 @@ function loadKalshiPrivateKey(): string {
   return readFileSync(requireEnv(pathVar), 'utf8');
 }
 
-function kalshiBaseUrl(): string {
-  if (process.env.KALSHI_BASE_URL) {
-    return process.env.KALSHI_BASE_URL.replace(/\/$/, '');
+export function resolveKalshiExecutionBaseUrl(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const explicit = env.KALSHI_EXECUTION_BASE_URL || env.KALSHI_BASE_URL;
+  if (explicit) {
+    return explicit.replace(/\/$/, '');
   }
-  const useDemo = process.env.KALSHI_USE_DEMO === 'true';
+  const useDemo = env.KALSHI_USE_DEMO === 'true';
   return useDemo ? 'https://demo-api.kalshi.co/trade-api/v2' : 'https://external-api.kalshi.com/trade-api/v2';
+}
+
+function kalshiBaseUrl(): string {
+  return resolveKalshiExecutionBaseUrl();
 }
 
 function kalshiSign(method: string, path: string): Record<string, string> {

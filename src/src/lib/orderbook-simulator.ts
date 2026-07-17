@@ -224,6 +224,58 @@ export function simulateBuyFill(
   };
 }
 
+/** Walk asks for an exact number of shares, preserving FOK semantics. */
+export function simulateBuySharesFill(
+  orderBook: OrderBook,
+  sharesToBuy: number,
+  feeRateBps: number = 0,
+  fillType: FillType = 'FAK',
+): BuyFillResult {
+  const emptyResult: BuyFillResult = {
+    success: false, avgPrice: 0, totalShares: 0, totalCost: 0, fee: 0,
+    totalWithFee: 0, slippageBps: 0, levelsFilled: 0, isPartial: false, levels: [],
+  };
+  if (!Number.isFinite(sharesToBuy) || sharesToBuy <= 0) return emptyResult;
+
+  const asks = [...orderBook.asks].sort((a, b) => a.price - b.price);
+  const midpoint = calculateMidpoint(orderBook);
+  let remainingShares = sharesToBuy;
+  let totalShares = 0;
+  let totalCost = 0;
+  let totalFee = 0;
+  const levels: FilledLevel[] = [];
+
+  for (const level of asks) {
+    if (remainingShares <= 0.001) break;
+    if (level.price <= 0 || level.size <= 0) continue;
+    const size = Math.min(remainingShares, level.size);
+    const cost = size * level.price;
+    const fee = calculateFeeForLevel(level.price, size, feeRateBps);
+    totalShares += size;
+    totalCost += cost;
+    totalFee += fee;
+    remainingShares -= size;
+    levels.push({ price: level.price, size, cost });
+  }
+
+  if (totalShares < 0.001) return emptyResult;
+  const isPartial = remainingShares > 0.001;
+  if (fillType === 'FOK' && isPartial) return emptyResult;
+  const avgPrice = totalCost / totalShares;
+  return {
+    success: true,
+    avgPrice: roundTo(avgPrice, 6),
+    totalShares: roundTo(totalShares, 6),
+    totalCost: roundTo(totalCost, 6),
+    fee: roundTo(totalFee, 6),
+    totalWithFee: roundTo(totalCost + totalFee, 6),
+    slippageBps: midpoint > 0 ? Math.round(((avgPrice - midpoint) / midpoint) * 10_000) : 0,
+    levelsFilled: levels.length,
+    isPartial,
+    levels,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Sell Fill Simulation
 // ---------------------------------------------------------------------------

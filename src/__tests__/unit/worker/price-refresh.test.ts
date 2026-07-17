@@ -101,37 +101,41 @@ describe('Price Refresh Job', () => {
     expect(mockDb.update).toHaveBeenCalledTimes(3);
   });
 
-  it('fetches prices via Polymarket US API for polymarket_us positions', async () => {
+  it('refreshes Polymarket US positions from the US venue with the stored outcome', async () => {
+    vi.spyOn(polymarketUsLib, 'parsePolymarketUsTokenId').mockImplementation((tokenId) => {
+      const match = /^polymarket_us:(.+):(YES|NO)$/.exec(tokenId);
+      return match ? { slug: match[1], outcome: match[2] as 'YES' | 'NO' } : null;
+    });
     mockDb.query.positions.findMany.mockResolvedValue([
-      { id: '1', tokenId: 'polymarket_us:market-a:YES', outcome: 'YES' },
-      { id: '2', tokenId: 'polymarket_us:market-b:NO', outcome: 'NO' },
-      { id: '3', tokenId: 'polyTokenA', outcome: 'YES' }, // Polymarket position
+      {
+        id: 'us-1',
+        platform: 'polymarket_us',
+        tokenId: 'polymarket_us:house-midterms:NO',
+        outcome: 'NO',
+      },
+      {
+        id: 'us-2',
+        platform: 'polymarket_us',
+        tokenId: 'polymarket_us:house-midterms:YES',
+        outcome: 'YES',
+      },
     ]);
-
-    vi.spyOn(polymarketLib, 'getMidpoint').mockResolvedValue(0.50);
     vi.spyOn(polymarketUsLib, 'getPolymarketUsOutcomePrice').mockImplementation(
-      async (slug, outcome) => {
-        if (slug === 'market-a' && outcome === 'YES') return 0.25;
-        if (slug === 'market-b' && outcome === 'NO') return 0.60;
-        return null;
-      }
+      async (_slug, outcome, side) => {
+        expect(side).toBe('MARK');
+        return outcome === 'NO' ? 0.82 : 0.18;
+      },
     );
 
     const count = await runPriceRefresh();
-    
-    // 1 Polymarket token + 2 Polymarket US tokens
-    expect(count).toBe(3);
 
-    // Polymarket called once
-    expect(polymarketLib.getMidpoint).toHaveBeenCalledTimes(1);
-    expect(polymarketLib.getMidpoint).toHaveBeenCalledWith('polyTokenA');
-
-    // Polymarket US called twice
-    expect(polymarketUsLib.getPolymarketUsOutcomePrice).toHaveBeenCalledTimes(2);
-    expect(polymarketUsLib.getPolymarketUsOutcomePrice).toHaveBeenCalledWith('market-a', 'YES');
-    expect(polymarketUsLib.getPolymarketUsOutcomePrice).toHaveBeenCalledWith('market-b', 'NO');
-
-    // 3 DB updates total (1 Polymarket + 2 Polymarket US)
-    expect(mockDb.update).toHaveBeenCalledTimes(3);
+    expect(count).toBe(2);
+    expect(polymarketUsLib.getPolymarketUsOutcomePrice).toHaveBeenCalledWith(
+      'house-midterms',
+      'NO',
+      'MARK',
+    );
+    expect(polymarketLib.getMidpoint).not.toHaveBeenCalled();
+    expect(mockDb.update).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,4 +1,4 @@
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   portfolios,
@@ -7,6 +7,9 @@ import {
   ledgerEntries,
   marketCache,
   limitOrders,
+  paperTradeOrders,
+  portfolioSnapshots,
+  strategyDecisions,
 } from '@/lib/db/schema';
 import type {
   Portfolio,
@@ -167,7 +170,8 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
   );
   const totalValue = roundTo(balance + positionsValue, 2);
 
-  const initialBalance = Number(userPortfolio.initialBalance) || DEFAULT_BALANCE;
+  const parsedInitialBalance = Number(userPortfolio.initialBalance);
+  const initialBalance = Number.isFinite(parsedInitialBalance) ? parsedInitialBalance : DEFAULT_BALANCE;
   const totalPnL = roundTo(totalValue - initialBalance, 2);
   const totalPnLPercent = initialBalance > 0 ? roundTo((totalPnL / initialBalance) * 100, 2) : 0;
 
@@ -175,7 +179,6 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
   const dbTrades = await db.query.paperTrades.findMany({
     where: eq(paperTrades.userId, userId),
     orderBy: [desc(paperTrades.executedAt)],
-    limit: 50,
   });
 
   const tradeHistory: Trade[] = dbTrades.map((t) => ({
@@ -671,8 +674,15 @@ export async function resetPortfolio(userId: string, initialBalance?: number): P
       })
       .where(eq(portfolios.userId, userId));
 
-    // 2. Delete all limit orders first to prevent foreign key violations (filled_trade_id -> paperTrades)
+    // 2. Delete order/snapshot audit rows so a reset cannot keep reporting
+    // stale fills or historical NAV as current strategy state. Reports remain.
     await tx.delete(limitOrders).where(eq(limitOrders.userId, userId));
+    await tx.delete(paperTradeOrders).where(eq(paperTradeOrders.userId, userId));
+    await tx.delete(portfolioSnapshots).where(eq(portfolioSnapshots.userId, userId));
+    const decisionTable = await tx.execute(sql`select to_regclass('public.strategy_decisions') as name`);
+    if ((decisionTable as unknown as Array<{ name: string | null }>)[0]?.name) {
+      await tx.delete(strategyDecisions).where(eq(strategyDecisions.userId, userId));
+    }
 
     // 3. Delete all positions
     await tx.delete(positions).where(eq(positions.userId, userId));

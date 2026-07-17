@@ -36,6 +36,8 @@ vi.mock('@/lib/kalshi', () => ({
   getKalshiMarket: vi.fn(),
   getKalshiMarkets: vi.fn().mockResolvedValue(new Map()),
   getKalshiOutcomePrice: vi.fn(),
+  getKalshiOrderBook: vi.fn(),
+  kalshiTokenId: vi.fn((ticker: string, outcome: string) => `kalshi:${ticker}:${outcome}`),
 }));
 
 vi.mock('@/lib/polymarket-us', () => ({
@@ -182,6 +184,35 @@ describe('agent route handlers', () => {
       is_new: false,
       strategy: { strategyId: 'arb', agentMode: 'paper', platform: 'kalshi' },
     });
+  });
+
+  it('updates risk controls for an existing strategy without changing its locked venue or mode', async () => {
+    const { POST } = await import('@/app/api/agent/strategies/register/route');
+    const existing = {
+      id: 'strategy-1', userId: 'user-1', strategyId: 'arb', agentMode: 'paper',
+      platform: 'kalshi', status: 'active', startingBalance: '10000.00',
+      riskConfig: {}, schedule: null, metadata: {},
+    };
+    db.query.strategies.findFirst.mockResolvedValue(existing);
+    db.updateResults.push({
+      ...existing,
+      riskConfig: { max_single_trade_pct: 0.05 },
+      schedule: '0 */2 * * *',
+    });
+
+    const response = await POST(makeRequest({
+      body: {
+        strategy_id: 'arb', account_id: 'default', is_paper_trading: true,
+        platform: 'kalshi', risk_config: { max_single_trade_pct: 0.05 },
+        schedule: '0 */2 * * *',
+      },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      riskConfig: { max_single_trade_pct: 0.05 },
+      schedule: '0 */2 * * *',
+    }));
   });
 
   it('writes, lists, and reads strategy reports through /api/agent/reports', async () => {
@@ -346,9 +377,71 @@ describe('agent route handlers', () => {
     });
   });
 
-  it.skip('executes a unified paper trade and writes normalized order plus portfolio snapshot', async () => {
+  it('rejects a nonexistent Kalshi market instead of filling it at 0.50', async () => {
+    const { getKalshiMarket } = await import('@/lib/kalshi');
+    const { executeTrade } = await import('@/lib/trading-engine');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'hft', agentMode: 'paper', platform: 'kalshi', status: 'active',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    vi.mocked(getKalshiMarket).mockResolvedValue(null);
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'invalid-kalshi' },
+      body: { strategy_id: 'hft', slug: 'KXDOES-NOT-EXIST', outcome: 'YES', side: 'BUY', amount: 10 },
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(executeTrade).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ error: 'Kalshi market not found or not tradable' });
+  });
+
+  it('rejects closed Polymarket US markets before price lookup or execution', async () => {
+    const { getPolymarketUsMarket, getPolymarketUsOutcomePrice } = await import('@/lib/polymarket-us');
+    const { executeTrade } = await import('@/lib/trading-engine');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'arb', agentMode: 'paper', platform: 'polymarket_us', status: 'active',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    vi.mocked(getPolymarketUsMarket).mockResolvedValue({ closed: true, active: false } as never);
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'closed-us' },
+      body: { strategy_id: 'arb', slug: 'closed-market', outcome: 'NO', side: 'BUY', amount: 10 },
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(getPolymarketUsOutcomePrice).not.toHaveBeenCalled();
+    expect(executeTrade).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ error: 'Polymarket US market not found or not tradable' });
+  });
+
+  it('rejects caller-supplied prices for paper trades', async () => {
+    const { executeTrade } = await import('@/lib/trading-engine');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'custom-price' },
+      body: { strategy_id: 'arb', slug: 'market', outcome: 'YES', side: 'BUY', amount: 10, price: 0.01 },
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(executeTrade).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('price') });
+  });
+
+  it('executes a live-depth Kalshi shadow fill with a validated proposal', async () => {
     const { executeTrade, getPortfolio } = await import('@/lib/trading-engine');
-    const { getKalshiOutcomePrice } = await import('@/lib/kalshi');
+    const { getKalshiMarket, getKalshiOrderBook } = await import('@/lib/kalshi');
     const { POST } = await import('@/app/api/agent/paper-trades/route');
 
     db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
@@ -369,12 +462,16 @@ describe('agent route handlers', () => {
       id: 'report-1',
       filename: 'run.md',
     });
-    vi.mocked(getKalshiOutcomePrice).mockResolvedValue(0.25);
+    vi.mocked(getKalshiMarket).mockResolvedValue({ status: 'active', title: 'KXTEST' });
+    vi.mocked(getKalshiOrderBook).mockResolvedValue({
+      market: 'KXTEST', assetId: 'kalshi:KXTEST:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.24, size: 100 }], asks: [{ price: 0.25, size: 100 }],
+    });
     vi.mocked(executeTrade).mockResolvedValue({
       id: 'trade-1',
       marketId: 'KXTEST',
       marketQuestion: 'KXTEST',
-      tokenId: 'KXTEST:YES',
+      tokenId: 'kalshi:KXTEST:YES',
       outcome: 'YES',
       side: 'BUY',
       shares: 40,
@@ -390,12 +487,14 @@ describe('agent route handlers', () => {
       totalPnL: 0,
       totalPnLPercent: 0,
     });
+    db.insertResults.push({ id: 'decision-1', status: 'ACCEPTED' });
     db.insertResults.push({
       id: 'paper-order-1',
       strategyId: 'strategy-1',
       paperTradeId: 'trade-1',
       platform: 'kalshi',
       reportId: 'report-1',
+      fillModel: 'live_orderbook_depth_fok',
     });
 
     const response = await POST(makeRequest({
@@ -406,6 +505,23 @@ describe('agent route handlers', () => {
         outcome: 'YES',
         side: 'BUY',
         amount: 10,
+        client_order_id: 'idem-2',
+        time_in_force: 'FOK',
+        proposal: {
+          thesis: 'A current official source supports a material pricing discrepancy.',
+          rules_verified: true,
+          source_urls: ['https://example.com/source'],
+          fair_probability: 0.4,
+          confidence_low: 0.35,
+          confidence_high: 0.45,
+          quote_observed_at: new Date().toISOString(),
+          observed_price: 0.25,
+          available_depth: 100,
+          net_edge: 0.15,
+          proposed_nav_pct: 0.001,
+          exit_condition: 'Exit when the catalyst passes or the edge closes.',
+          invalidation_condition: 'Do not enter if the official source changes.',
+        },
       },
     }) as never);
 
@@ -417,10 +533,10 @@ describe('agent route handlers', () => {
       price: 0.25,
     }));
     expect(db.update).toHaveBeenCalled();
-    expect(db.insert).toHaveBeenCalledTimes(2);
+    expect(db.insert).toHaveBeenCalledTimes(3);
     await expect(response.json()).resolves.toMatchObject({
-      data: { marketId: 'KXTEST', tokenId: 'KXTEST:YES' },
-      paper_order: { platform: 'kalshi' },
+      data: { marketId: 'KXTEST', tokenId: 'kalshi:KXTEST:YES' },
+      paper_order: { platform: 'kalshi', fillModel: 'live_orderbook_depth_fok' },
       report: { filename: 'run.md' },
       portfolio: { cash: 9990, total_value: 10000 },
     });
@@ -467,8 +583,9 @@ describe('agent route handlers', () => {
   });
 
   it('submits enabled real trades without creating a local mirror position', async () => {
-    const { submitOfficialRealTrade } = await import('@/lib/official-trading');
+    const { submitOfficialRealTrade, getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
     const { executeTrade } = await import('@/lib/trading-engine');
+    const { getKalshiMarket, getKalshiOrderBook } = await import('@/lib/kalshi');
     const { POST } = await import('@/app/api/agent/real-trades/route');
 
     db.query.strategies.findFirst.mockResolvedValue({
@@ -479,8 +596,15 @@ describe('agent route handlers', () => {
       status: 'active',
       metadata: { real_trading_enabled: true },
     });
+    db.insertResults.push({ id: 'decision-1', status: 'ACCEPTED' });
     db.insertResults.push({ id: 'audit-1', status: 'SUBMITTING' });
     db.updateResults.push({ id: 'audit-1', status: 'SUBMITTED', request: {}, officialResponse: {} });
+    vi.mocked(getKalshiMarket).mockResolvedValue({ status: 'active' });
+    vi.mocked(getKalshiOrderBook).mockResolvedValue({
+      market: 'KXTEST', assetId: 'kalshi:KXTEST:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.24, size: 100 }], asks: [{ price: 0.25, size: 100 }],
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({ totalValue: 1000 } as never);
     vi.mocked(submitOfficialRealTrade).mockResolvedValue({
       officialOrderId: 'official-1',
       clientOrderId: 'client-1',
@@ -495,7 +619,21 @@ describe('agent route handlers', () => {
         outcome: 'YES',
         side: 'BUY',
         shares: 10,
-        price: 0.25,
+        proposal: {
+          thesis: 'A current official source supports a material pricing discrepancy.',
+          rules_verified: true,
+          source_urls: ['https://example.com/source'],
+          fair_probability: 0.4,
+          confidence_low: 0.35,
+          confidence_high: 0.45,
+          quote_observed_at: new Date().toISOString(),
+          observed_price: 0.25,
+          available_depth: 100,
+          net_edge: 0.15,
+          proposed_nav_pct: 0.0025,
+          exit_condition: 'Exit when the catalyst passes or the edge closes.',
+          invalidation_condition: 'Do not enter if the official source changes.',
+        },
       },
     }) as never);
 
@@ -507,11 +645,12 @@ describe('agent route handlers', () => {
       price: 0.25,
     }));
     expect(executeTrade).not.toHaveBeenCalled();
-    expect(db.insert).toHaveBeenCalledTimes(3);
+    expect(getKalshiOrderBook).toHaveBeenCalledWith('KXTEST', 'YES');
+    expect(db.insert).toHaveBeenCalledTimes(4);
     expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({ status: 'SUBMITTING', officialOrderId: 'local:audit-1' }));
     expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({ status: 'SUBMITTED', officialOrderId: 'official-1' }));
     expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
-      request: expect.objectContaining({ outcome: 'YES', side: 'BUY', price: 0.25 }),
+      request: expect.objectContaining({ outcome: 'YES', side: 'BUY', price: 0.25, price_source: 'server_executable_quote' }),
       officialResponse: expect.objectContaining({
         order_id: 'official-1',
         submitted_request: { ticker: 'KXTEST' },

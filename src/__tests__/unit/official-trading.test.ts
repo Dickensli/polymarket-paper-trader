@@ -6,9 +6,20 @@ import {
   summarizeKalshiPositions,
   validateOfficialPortfolioSnapshot,
   collectKalshiCursorPages,
+  resolveKalshiExecutionBaseUrl,
 } from '@/lib/official-trading';
 
 describe('official trading helpers', () => {
+  it('keeps demo official execution independent from live market data', () => {
+    expect(resolveKalshiExecutionBaseUrl({
+      KALSHI_USE_DEMO: 'true',
+      KALSHI_MARKET_DATA_ENV: 'live',
+    })).toBe('https://demo-api.kalshi.co/trade-api/v2');
+    expect(resolveKalshiExecutionBaseUrl({
+      KALSHI_USE_DEMO: 'false',
+      KALSHI_MARKET_DATA_ENV: 'demo',
+    })).toBe('https://external-api.kalshi.com/trade-api/v2');
+  });
   it('collects all cursor pages without duplicating the first page', async () => {
     const fetchPage = vi.fn()
       .mockResolvedValueOnce({ rows: [{ id: 1 }], cursor: 'next' })

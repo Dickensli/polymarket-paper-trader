@@ -10,3 +10,12 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # Test-Driven Development (TDD) Enforcement
 1. **TEST-DRIVEN**: When implementing any new feature or modifying existing logic, you MUST verify if appropriate tests (unit, integration, or E2E via Playwright) exist. If new features do not have covering test cases, you MUST write them. Never consider a feature complete without automated verification.
+
+# Kalshi Split-Environment Execution
+
+1. **INDEPENDENT CONTROLS**: `KALSHI_MARKET_DATA_ENV` selects the public quote venue; `KALSHI_USE_DEMO` selects credentials and the authenticated official-account venue. Never infer one from the other. Do not introduce `KALSHI_ACCOUNT_ENV` or `KALSHI_EXECUTION_MODE`; strategy `agent_mode` is the execution-mode source of truth.
+2. **RECOMMENDED TEST CONFIGURATION**: Use `KALSHI_MARKET_DATA_ENV=live` with `KALSHI_USE_DEMO=true`. Do not set the legacy shared `KALSHI_BASE_URL`; use `KALSHI_MARKET_DATA_BASE_URL` or `KALSHI_EXECUTION_BASE_URL` only for an intentional explicit override.
+3. **COMMANDER (PAPER/SHADOW)**: `commander` reads the live production market/orderbook, validates a structured BUY proposal, walks displayed depth with FOK semantics, and writes only local paper state. It never submits an authenticated Demo or production order. Its fills and scorecard measure decision quality under displayed live liquidity.
+4. **COMMANDER_REAL (OFFICIAL DEMO)**: `commander_real` also researches against live public data, but reads official balances/orders/fills and submits authenticated orders to Kalshi Demo while `KALSHI_USE_DEMO=true`. Because Demo and production are independent books, a price derived from live data may not fill on Demo; use this path to verify signing, order lifecycle, cancellation, sync, and reconciliation—not strategy P&L or fill realism.
+5. **GRADUATION GATE**: Before `commander_real` may add risk, the server checks the `commander` shadow scorecard configured by `graduation_source_strategy_id`. This validates the same decision policy on realistic live depth before official execution is allowed. A passing `GRADUATION_READY` result is only a notification for human review; it never sets `real_trading_enabled` and never authorizes automatic real-money activation. Risk-reducing orders remain permitted.
+6. **NO CROSS-VENUE FILL ASSUMPTIONS**: Production market data cannot provide liquidity to a Demo order. Never report a local shadow fill as an official Demo fill, and never report a submitted/resting Demo order as filled.
