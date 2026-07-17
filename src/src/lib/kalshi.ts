@@ -1,11 +1,24 @@
-export function resolveKalshiBaseUrl(env: Record<string, string | undefined> = process.env): string {
-  if (env.KALSHI_BASE_URL) return env.KALSHI_BASE_URL.replace(/\/$/, '');
-  return env.KALSHI_USE_DEMO === 'true'
+import type { OrderBook, OrderBookLevel } from '@/lib/types';
+
+/**
+ * Resolve the public quote venue independently from the authenticated account
+ * venue. KALSHI_USE_DEMO belongs to official execution only; paper/shadow
+ * strategies normally consume production liquidity.
+ */
+export function resolveKalshiMarketDataBaseUrl(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const explicit = env.KALSHI_MARKET_DATA_BASE_URL || env.KALSHI_BASE_URL;
+  if (explicit) return explicit.replace(/\/$/, '');
+  return env.KALSHI_MARKET_DATA_ENV?.toLowerCase() === 'demo'
     ? 'https://demo-api.kalshi.co/trade-api/v2'
     : 'https://external-api.kalshi.com/trade-api/v2';
 }
 
-const KALSHI_BASE_URL = resolveKalshiBaseUrl();
+/** @deprecated Prefer resolveKalshiMarketDataBaseUrl. */
+export const resolveKalshiBaseUrl = resolveKalshiMarketDataBaseUrl;
+
+const KALSHI_MARKET_DATA_BASE_URL = resolveKalshiMarketDataBaseUrl();
 
 type KalshiMarketResponse = {
   market?: Record<string, unknown>;
@@ -44,7 +57,7 @@ function retryDelayMs(response: Response, attempt: number): number {
 }
 
 async function fetchKalshiMarketBatch(batch: string[]): Promise<Record<string, unknown>[]> {
-  const url = new URL(`${KALSHI_BASE_URL.replace(/\/$/, '')}/markets`);
+  const url = new URL(`${KALSHI_MARKET_DATA_BASE_URL}/markets`);
   url.searchParams.set('tickers', batch.join(','));
   url.searchParams.set('limit', String(batch.length));
 
@@ -75,7 +88,7 @@ function normalizePrice(value: unknown): number | null {
 }
 
 export async function getKalshiMarket(ticker: string): Promise<Record<string, unknown> | null> {
-  const res = await fetch(`${KALSHI_BASE_URL.replace(/\/$/, '')}/markets/${encodeURIComponent(ticker)}`, {
+  const res = await fetch(`${KALSHI_MARKET_DATA_BASE_URL}/markets/${encodeURIComponent(ticker)}`, {
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   });
@@ -85,6 +98,71 @@ export async function getKalshiMarket(ticker: string): Promise<Record<string, un
   }
   const json = (await res.json()) as KalshiMarketResponse;
   return json.market ?? (json as Record<string, unknown>);
+}
+
+type KalshiOrderBookResponse = {
+  orderbook_fp?: {
+    yes_dollars?: unknown;
+    no_dollars?: unknown;
+  };
+  orderbook?: {
+    yes?: unknown;
+    no?: unknown;
+  };
+};
+
+function normalizeOrderBookLevels(value: unknown): OrderBookLevel[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((level) => {
+    if (!Array.isArray(level) || level.length < 2) return [];
+    const rawPrice = Number(level[0]);
+    const rawSize = Number(level[1]);
+    const price = rawPrice > 1 ? rawPrice / 100 : rawPrice;
+    if (!Number.isFinite(price) || !Number.isFinite(rawSize) || price <= 0 || price >= 1 || rawSize <= 0) {
+      return [];
+    }
+    return [{ price, size: rawSize }];
+  });
+}
+
+export function normalizeKalshiOrderBook(
+  ticker: string,
+  outcome: 'YES' | 'NO',
+  response: KalshiOrderBookResponse,
+): OrderBook {
+  const yesBids = normalizeOrderBookLevels(
+    response.orderbook_fp?.yes_dollars ?? response.orderbook?.yes,
+  );
+  const noBids = normalizeOrderBookLevels(
+    response.orderbook_fp?.no_dollars ?? response.orderbook?.no,
+  );
+  const outcomeBids = outcome === 'YES' ? yesBids : noBids;
+  const oppositeBids = outcome === 'YES' ? noBids : yesBids;
+
+  return {
+    market: ticker,
+    assetId: kalshiTokenId(ticker, outcome),
+    timestamp: new Date().toISOString(),
+    bids: outcomeBids.sort((a, b) => b.price - a.price),
+    asks: oppositeBids
+      .map((level) => ({ price: Number((1 - level.price).toFixed(6)), size: level.size }))
+      .sort((a, b) => a.price - b.price),
+  };
+}
+
+export async function getKalshiOrderBook(
+  ticker: string,
+  outcome: 'YES' | 'NO',
+): Promise<OrderBook | null> {
+  const res = await fetch(
+    `${KALSHI_MARKET_DATA_BASE_URL}/markets/${encodeURIComponent(ticker)}/orderbook?depth=0`,
+    { headers: { Accept: 'application/json' }, cache: 'no-store' },
+  );
+  if (!res.ok) {
+    console.warn(`[Kalshi] Failed to fetch orderbook ${ticker}: ${res.status} ${res.statusText}`);
+    return null;
+  }
+  return normalizeKalshiOrderBook(ticker, outcome, await res.json() as KalshiOrderBookResponse);
 }
 
 /**

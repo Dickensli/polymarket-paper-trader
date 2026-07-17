@@ -26,8 +26,15 @@ Polymarket US reports across 9 strategies.
 
 - The supplied Kalshi `POLYTRADER_API_URL` is a Markdown link, not a URL. Use
   `http://localhost:3000/api` locally or the actual deployed HTTPS API URL.
-- Set `KALSHI_USE_DEMO=true` wherever demo orders are submitted so public market
-  data and official execution use the same venue.
+- `KALSHI_USE_DEMO=true` selects demo credentials and the demo venue only for
+  authenticated official-account reads/writes. Set `KALSHI_MARKET_DATA_ENV=live`
+  (the default) for production quotes and realistic local shadow fills. A paper
+  strategy is already the shadow execution mode; no `KALSHI_EXECUTION_MODE`
+  variable is needed.
+- Every Kalshi BUY now carries a structured proposal that the server checks
+  against fresh price, full depth, edge, and NAV. Graduation is also computed
+  server-side; agents may announce `GRADUATION_READY` but cannot self-enable
+  real-money trading.
 - Remove the expired one-off `tactical_reconcile_0230_jul16` trigger.
 - Rotate the agent secret that appeared in the supplied configuration before
   installing the revised config. The prompt files intentionally contain no

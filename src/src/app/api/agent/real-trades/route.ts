@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
+import { auth, resolveTargetUserId } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { officialOrderEvents, realTradeOrders, strategies } from '@/lib/db/schema';
+import { officialOrderEvents, realTradeOrders, strategies, strategyDecisions } from '@/lib/db/schema';
 import { resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
-import { getKalshiMarket, getKalshiOutcomePrice } from '@/lib/kalshi';
+import { getKalshiMarket, getKalshiOrderBook, getKalshiOutcomePrice } from '@/lib/kalshi';
 import { getPolymarketUsMarket, getPolymarketUsOutcomePrice } from '@/lib/polymarket-us';
+import { simulateBuyFill, simulateBuySharesFill } from '@/lib/orderbook-simulator';
+import { tradeProposalSchema, validateTradeProposal } from '@/lib/trade-proposal';
+import { getStrategyGraduation } from '@/lib/strategy-graduation';
 
 const realTradeSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -19,12 +22,17 @@ const realTradeSchema = z.object({
   client_order_id: z.string().min(1).max(255).optional(),
   time_in_force: z.enum(['GTC', 'IOC', 'FOK']).optional(),
   run_id: z.string().uuid().optional(),
+  proposal: tradeProposalSchema.optional(),
 });
 
 function realTradingEnabled(metadata: unknown): boolean {
   if (!metadata || typeof metadata !== 'object') return false;
   const value = (metadata as Record<string, unknown>).real_trading_enabled;
   return value === true;
+}
+
+function strategyMetadata(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {};
 }
 
 // POST /api/agent/real-trades
@@ -123,6 +131,8 @@ export async function POST(request: NextRequest) {
     }
 
     let executionPrice = order.price;
+    let executableDepth = 0;
+    let shadowFill: Record<string, unknown> | null = null;
     if (!executionPrice) {
       if (strategy.platform === 'kalshi') {
         const market = await getKalshiMarket(order.slug).catch(() => null);
@@ -130,7 +140,21 @@ export async function POST(request: NextRequest) {
         if (!market || (status !== 'open' && status !== 'active')) {
           return NextResponse.json({ error: 'Kalshi market not found or not tradable' }, { status: 400 });
         }
-        executionPrice = await getKalshiOutcomePrice(order.slug, order.outcome, order.side).catch(() => null) ?? undefined;
+        if (order.side === 'BUY') {
+          const book = await getKalshiOrderBook(order.slug, order.outcome).catch(() => null);
+          if (book) {
+            executableDepth = book.asks.reduce((sum, level) => sum + level.size, 0);
+            const fill = order.shares
+              ? simulateBuySharesFill(book, order.shares, 0, 'FOK')
+              : simulateBuyFill(book, order.amount ?? 0, 0, 'FOK');
+            if (fill.success) {
+              executionPrice = fill.avgPrice;
+              shadowFill = fill as unknown as Record<string, unknown>;
+            }
+          }
+        } else {
+          executionPrice = await getKalshiOutcomePrice(order.slug, order.outcome, order.side).catch(() => null) ?? undefined;
+        }
       } else {
         const market = await getPolymarketUsMarket(order.slug).catch(() => null);
         if (!market || market.closed || market.active === false) {
@@ -181,6 +205,69 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const metadata = strategyMetadata(strategy.metadata);
+    if (strategy.platform === 'kalshi' && order.side === 'BUY' && metadata.require_shadow_graduation === true) {
+      const accountId = request.headers.get('x-agent-account-id');
+      const sourceStrategyId = String(metadata.graduation_source_strategy_id ?? '');
+      const sourceUserId = accountId && sourceStrategyId
+        ? resolveTargetUserId(accountId, sourceStrategyId, 'kalshi')
+        : null;
+      const sourceStrategy = sourceUserId ? await db.query.strategies.findFirst({
+        where: and(
+          eq(strategies.userId, sourceUserId),
+          eq(strategies.strategyId, sourceStrategyId),
+          eq(strategies.agentMode, 'paper'),
+          eq(strategies.platform, 'kalshi'),
+        ),
+      }) : null;
+      const graduation = sourceStrategy ? await getStrategyGraduation(sourceStrategy) : null;
+      if (!graduation?.graduated) {
+        await db.insert(strategyDecisions).values({
+          strategyId: strategy.id, userId: session.user.id, runId: order.run_id ?? null,
+          platform: strategy.platform, agentMode: strategy.agentMode, marketId: order.slug,
+          outcome: order.outcome, side: order.side, proposal: order.proposal ?? {},
+          serverQuote: { graduation }, status: 'REJECTED',
+          rejectionReasons: ['SHADOW_GRADUATION_REQUIRED'],
+        });
+        return NextResponse.json({
+          error: 'Shadow graduation criteria have not passed. New real-money risk is blocked.',
+          code: 'SHADOW_GRADUATION_REQUIRED',
+          graduation,
+        }, { status: 403 });
+      }
+    }
+
+    let acceptedDecisionId: string | null = null;
+    if (strategy.platform === 'kalshi' && order.side === 'BUY') {
+      const officialSnapshot = await import('@/lib/official-trading')
+        .then(({ getOfficialPortfolioSnapshot }) => getOfficialPortfolioSnapshot('kalshi'));
+      const validation = order.proposal
+        ? validateTradeProposal(order.proposal, {
+            executablePrice: executionPrice,
+            executableDepth,
+            requestedShares: resolvedQuantity,
+            requestedNotional: resolvedQuantity * executionPrice,
+            portfolioNav: officialSnapshot.totalValue,
+          })
+        : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
+      if (!shadowFill) validation.reasons.push('INSUFFICIENT_EXECUTABLE_DEPTH');
+      if (validation.reasons.length > 0) validation.valid = false;
+      const [decision] = await db.insert(strategyDecisions).values({
+        strategyId: strategy.id, userId: session.user.id, runId: order.run_id ?? null,
+        platform: strategy.platform, agentMode: strategy.agentMode, marketId: order.slug,
+        outcome: order.outcome, side: order.side, proposal: order.proposal ?? {},
+        serverQuote: { executable_price: executionPrice, executable_depth: executableDepth, shadow_fill: shadowFill },
+        status: validation.valid ? 'ACCEPTED' : 'REJECTED', rejectionReasons: validation.reasons,
+      }).returning();
+      if (!validation.valid) {
+        return NextResponse.json({
+          error: 'Structured trade proposal failed server validation',
+          code: 'PROPOSAL_REJECTED', reasons: validation.reasons,
+        }, { status: 422 });
+      }
+      acceptedDecisionId = decision?.id ?? null;
+    }
+
     const [audit] = await db
       .insert(realTradeOrders)
       .values({
@@ -197,6 +284,11 @@ export async function POST(request: NextRequest) {
         request: auditedOrder,
       })
       .returning();
+
+    if (acceptedDecisionId) {
+      await db.update(strategyDecisions).set({ realTradeOrderId: audit.id })
+        .where(eq(strategyDecisions.id, acceptedDecisionId));
+    }
 
     const writeLifecycleEvent = async (status: string, officialOrderId: string, payload: Record<string, unknown>, filled = 0, remaining = resolvedQuantity) => {
       const occurredAt = new Date();

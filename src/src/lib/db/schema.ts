@@ -373,6 +373,35 @@ export const realTradeOrders = pgTable(
   ],
 );
 
+/** Server-audited entry proposals, including rejected attempts. */
+export const strategyDecisions = pgTable(
+  'strategy_decisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    strategyId: uuid('strategy_id').notNull().references(() => strategies.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id').references(() => strategyRuns.id, { onDelete: 'set null' }),
+    platform: platformEnum('platform').notNull(),
+    agentMode: agentModeEnum('agent_mode').notNull(),
+    marketId: varchar('market_id', { length: 255 }).notNull(),
+    outcome: outcomeEnum('outcome').notNull(),
+    side: tradeActionEnum('side').notNull(),
+    proposal: jsonb('proposal').notNull().default({}),
+    serverQuote: jsonb('server_quote').notNull().default({}),
+    status: varchar('status', { length: 20 }).notNull(),
+    rejectionReasons: jsonb('rejection_reasons').notNull().default([]),
+    paperTradeOrderId: uuid('paper_trade_order_id').references(() => paperTradeOrders.id, { onDelete: 'set null' }),
+    realTradeOrderId: uuid('real_trade_order_id').references(() => realTradeOrders.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('strategy_decisions_strategy_idx').on(table.strategyId),
+    index('strategy_decisions_user_idx').on(table.userId),
+    index('strategy_decisions_status_idx').on(table.status),
+    index('strategy_decisions_created_idx').on(table.createdAt),
+  ],
+);
+
 // ─── Official Trading Ledger ───────────────────────────────
 
 /** Append-only lifecycle observations for official orders. */

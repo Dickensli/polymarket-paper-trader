@@ -1,17 +1,51 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getKalshiMarkets, getKalshiOutcomePriceFromMarket, resolveKalshiBaseUrl } from '@/lib/kalshi';
+import {
+  getKalshiMarkets,
+  getKalshiOutcomePriceFromMarket,
+  normalizeKalshiOrderBook,
+  resolveKalshiMarketDataBaseUrl,
+} from '@/lib/kalshi';
 
 describe('Kalshi market batch lookup', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('routes market data to demo whenever official trading is configured for demo', () => {
-    expect(resolveKalshiBaseUrl({ KALSHI_USE_DEMO: 'true' }))
-      .toBe('https://demo-api.kalshi.co/trade-api/v2');
-    expect(resolveKalshiBaseUrl({ KALSHI_USE_DEMO: 'false' }))
+  it('keeps live market data independent from demo official execution', () => {
+    expect(resolveKalshiMarketDataBaseUrl({ KALSHI_USE_DEMO: 'true' }))
       .toBe('https://external-api.kalshi.com/trade-api/v2');
+    expect(resolveKalshiMarketDataBaseUrl({ KALSHI_USE_DEMO: 'true', KALSHI_MARKET_DATA_ENV: 'demo' }))
+      .toBe('https://demo-api.kalshi.co/trade-api/v2');
+    expect(resolveKalshiMarketDataBaseUrl({ KALSHI_MARKET_DATA_BASE_URL: 'https://quotes.example/v2/' }))
+      .toBe('https://quotes.example/v2');
+  });
+
+  it('normalizes Kalshi bid-only YES/NO ladders into an outcome order book', () => {
+    const yesBook = normalizeKalshiOrderBook('KXTEST', 'YES', {
+      orderbook_fp: {
+        yes_dollars: [['0.45', '100'], ['0.40', '50']],
+        no_dollars: [['0.48', '30'], ['0.42', '70']],
+      },
+    });
+
+    expect(yesBook.bids).toEqual([
+      { price: 0.45, size: 100 },
+      { price: 0.4, size: 50 },
+    ]);
+    expect(yesBook.asks).toEqual([
+      { price: 0.52, size: 30 },
+      { price: 0.58, size: 70 },
+    ]);
+
+    const noBook = normalizeKalshiOrderBook('KXTEST', 'NO', {
+      orderbook_fp: {
+        yes_dollars: [['0.45', '100']],
+        no_dollars: [['0.48', '30']],
+      },
+    });
+    expect(noBook.bids).toEqual([{ price: 0.48, size: 30 }]);
+    expect(noBook.asks).toEqual([{ price: 0.55, size: 100 }]);
   });
 
   it('does not invent sell liquidity by falling back from a missing bid to the ask', () => {

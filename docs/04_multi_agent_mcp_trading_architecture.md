@@ -236,9 +236,12 @@ For real agents, official venue data is always source of truth.
 
 The platform supports three distinct execution states for Kalshi strategies, controlled by the strategy's `agent_mode` (configured during registration) and the server's `KALSHI_USE_DEMO` environment variable:
 
-1. **Pure Paper Trading (`agent_mode = paper`)**
-   - **Behavior**: Fully simulated on the server. Does not call the Kalshi API at all.
-   - **Persistence**: Simulated orders, fills, balances, and portfolios are calculated server-side and saved directly to the database.
+1. **Live-Data Shadow Trading (`agent_mode = paper`)**
+   - **Behavior**: Reads the public Kalshi production order book and simulates a
+     local fill by walking real displayed depth with fill-or-kill semantics. It
+     never submits an authenticated Kalshi order.
+   - **Persistence**: Structured proposals, accepted/rejected decisions,
+     simulated fills, balances, and portfolios are saved server-side.
 
 2. **Official Demo Kalshi (`agent_mode = real` and `KALSHI_USE_DEMO = true`)**
    - **Behavior**: Routes actual trading commands through the official Kalshi API client, but connects to the Kalshi Demo environment (`https://demo-api.kalshi.co/trade-api/v2`).
@@ -247,6 +250,12 @@ The platform supports three distinct execution states for Kalshi strategies, con
 3. **Official Real Kalshi (`agent_mode = real` and `KALSHI_USE_DEMO = false`)**
    - **Behavior**: Routes live trades directly to the real Kalshi production API (`https://external-api.kalshi.com/trade-api/v2`). **Costs real money.**
    - **Persistence**: Signs and executes orders with production credentials, persisting transaction details and official audit trails.
+
+Public quote selection is independent: `KALSHI_MARKET_DATA_ENV=live` is the
+default and may be used together with `KALSHI_USE_DEMO=true`. Optional explicit
+overrides are `KALSHI_MARKET_DATA_BASE_URL` and
+`KALSHI_EXECUTION_BASE_URL`. There is no separate
+`KALSHI_EXECUTION_MODE`; `agent_mode` is the execution-mode source of truth.
 
 ## Supabase Data Model Additions
 

@@ -1,4 +1,4 @@
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   portfolios,
@@ -9,6 +9,7 @@ import {
   limitOrders,
   paperTradeOrders,
   portfolioSnapshots,
+  strategyDecisions,
 } from '@/lib/db/schema';
 import type {
   Portfolio,
@@ -652,6 +653,10 @@ export async function resetPortfolio(userId: string, initialBalance?: number): P
     await tx.delete(limitOrders).where(eq(limitOrders.userId, userId));
     await tx.delete(paperTradeOrders).where(eq(paperTradeOrders.userId, userId));
     await tx.delete(portfolioSnapshots).where(eq(portfolioSnapshots.userId, userId));
+    const decisionTable = await tx.execute(sql`select to_regclass('public.strategy_decisions') as name`);
+    if ((decisionTable as unknown as Array<{ name: string | null }>)[0]?.name) {
+      await tx.delete(strategyDecisions).where(eq(strategyDecisions.userId, userId));
+    }
 
     // 3. Delete all positions
     await tx.delete(positions).where(eq(positions.userId, userId));

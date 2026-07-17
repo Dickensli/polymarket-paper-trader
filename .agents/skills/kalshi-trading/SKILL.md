@@ -32,6 +32,7 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 | `get_balance` | Quick cash / positions / total value / PnL summary. |
 | `register_strategy` | Register strategy identity and lock `agent_mode`/platform server-side. Use `is_paper_trading: false` for real trading. Idempotent — safe to call on every run. |
 | `get_strategy_context` | Full context: `is_setup`, portfolio, positions, recent trades, reports, warnings. **Call this FIRST.** |
+| `get_graduation_status` | Server-computed shadow scorecard. A passing result is a notification for human review, never permission to self-enable real trading. |
 
 ### Market Data (Read-Only)
 
@@ -55,7 +56,7 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 | Tool | Purpose |
 | --- | --- |
-| `buy` | Buy contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and `amount` or `shares`. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
+| `buy` | Buy contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, `amount` or `shares`, and the complete structured `proposal` object exposed by the tool schema. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
 | `sell` | Sell contracts for the registered strategy. Requires `ticker`, `outcome`, `strategy_id`, and explicit numeric `quantity` for real trading. **Use MARKET ORDERS ONLY.** NEVER specify a limit price. |
 | `cancel_real_order` | (REAL ONLY) Cancel real order. |
 
@@ -154,6 +155,7 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 ### Phase 3 — Execute
 
 1. **Place trades**: Use `buy` / `sell` with your `strategy_id` parameter. **Use MARKET ORDERS ONLY.** You MUST NOT specify a limit price under any circumstances.
+   - For every BUY, pass honest fresh proposal fields for thesis, verified rules, source URLs, fair-probability interval, observed quote/depth/time, net edge, NAV fraction, exit, and invalidation. The server checks these against live executable depth and rejects mismatches.
 2. **Verify**: After each trade, call `portfolio` or `get_balance` to confirm the server-side state matches expectations.
 
 ### Phase 4 — Report & Persist
@@ -166,6 +168,7 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
    - **Lessons Learned**: What worked, what didn't.
    - **Next Steps**: What to prioritize on the next run.
 2. **Report naming**: Use ISO timestamp format, e.g. `2026-07-03T16:00:00.md`.
+3. **Graduation check (paper/shadow strategies)**: Call `get_graduation_status` at the end. If the server returns `shouldNotify=true`, report `GRADUATION_READY` and explicitly state that human approval is still required.
 
 ---
 

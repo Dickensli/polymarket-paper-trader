@@ -9,6 +9,7 @@ import {
   paperTradeOrders,
   portfolioSnapshots,
   strategyRuns,
+  strategyDecisions,
 } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { executeTrade, getPortfolio, TradingError } from '@/lib/trading-engine';
@@ -17,7 +18,9 @@ import { validatePaperBuyRisk } from '@/lib/paper-risk';
 // Polymarket helpers
 import { getMarket, getMidpoint } from '@/lib/polymarket';
 // Kalshi helpers
-import { getKalshiMarket, getKalshiOutcomePrice, kalshiTokenId } from '@/lib/kalshi';
+import { getKalshiMarket, getKalshiOrderBook, kalshiTokenId } from '@/lib/kalshi';
+import { simulateBuyFill, simulateBuySharesFill, simulateSellFill } from '@/lib/orderbook-simulator';
+import { tradeProposalSchema, validateTradeProposal } from '@/lib/trade-proposal';
 // Polymarket US helpers
 import { getPolymarketUsOutcomePrice, getPolymarketUsMarket, polymarketUsTokenId } from '@/lib/polymarket-us';
 
@@ -33,6 +36,9 @@ const paperTradeSchema = z.object({
   amount: z.number().positive().max(100000).optional(),
   shares: z.number().positive().optional(),
   run_id: z.string().uuid().optional(),
+  client_order_id: z.string().min(1).max(255).optional(),
+  time_in_force: z.enum(['IOC', 'FOK']).optional(),
+  proposal: tradeProposalSchema.optional(),
 }).strict().refine((order) => Boolean(order.amount) !== Boolean(order.shares), {
   message: 'Provide exactly one of amount or shares',
 });
@@ -196,6 +202,8 @@ export async function POST(request: NextRequest) {
     let marketQuestion: string;
     let tokenId: string;
     let price: number;
+    let fillDetails: Record<string, unknown> | null = null;
+    let executableDepth = 0;
 
     if (platform === 'polymarket') {
       // Polymarket International
@@ -221,6 +229,12 @@ export async function POST(request: NextRequest) {
       price = executablePrice;
     } else if (platform === 'kalshi') {
       // Kalshi
+      if (order.side === 'SELL' && !order.shares) {
+        return NextResponse.json(
+          { error: 'Kalshi shadow sells require an explicit share quantity' },
+          { status: 400 },
+        );
+      }
       const market = await getKalshiMarket(order.slug).catch(() => null);
       const marketStatus = String(market?.status ?? '').toLowerCase();
       if (!market || (marketStatus !== 'open' && marketStatus !== 'active')) {
@@ -233,18 +247,28 @@ export async function POST(request: NextRequest) {
       tokenId = kalshiTokenId(order.slug, order.outcome);
       marketQuestion = String(market.title ?? market.subtitle ?? order.slug);
 
-      const kalshiPrice = await getKalshiOutcomePrice(
-        order.slug,
-        order.outcome,
-        order.side,
-      ).catch(() => null);
-      if (kalshiPrice === null || kalshiPrice <= 0 || kalshiPrice >= 1) {
+      const orderBook = await getKalshiOrderBook(order.slug, order.outcome).catch(() => null);
+      if (!orderBook) {
         return NextResponse.json(
-          { error: 'No executable Kalshi market price is available' },
-          { status: 400 },
+          { error: 'No live Kalshi order book is available' },
+          { status: 409 },
         );
       }
-      price = kalshiPrice;
+      executableDepth = (order.side === 'BUY' ? orderBook.asks : orderBook.bids)
+        .reduce((sum, level) => sum + level.size, 0);
+      const fill = order.side === 'SELL'
+        ? simulateSellFill(orderBook, order.shares ?? 0, 0, 'FOK')
+        : order.shares
+          ? simulateBuySharesFill(orderBook, order.shares, 0, 'FOK')
+          : simulateBuyFill(orderBook, order.amount ?? 0, 0, 'FOK');
+      if (!fill.success) {
+        return NextResponse.json(
+          { error: 'Full order cannot fill against current live Kalshi depth', code: 'SHADOW_FOK_NO_FILL' },
+          { status: 409 },
+        );
+      }
+      price = fill.avgPrice;
+      fillDetails = fill as unknown as Record<string, unknown>;
     } else if (platform === 'polymarket_us') {
       // Polymarket US
       const market = await getPolymarketUsMarket(order.slug).catch(
@@ -285,7 +309,9 @@ export async function POST(request: NextRequest) {
 
     // ── Calculate shares ──────────────────────────────────────
     let shares: number;
-    if (order.shares) {
+    if (platform === 'kalshi' && fillDetails) {
+      shares = Number(fillDetails.totalShares);
+    } else if (order.shares) {
       shares = order.shares;
     } else if (order.amount) {
       shares = order.amount / price;
@@ -299,8 +325,40 @@ export async function POST(request: NextRequest) {
     // ── Enforce server-side risk ──────────────────────────────
     // Prompt rules are advisory; this guard prevents a confused agent from
     // bypassing per-trade, cumulative-market, and cash-reserve limits.
+    let acceptedDecisionId: string | null = null;
     if (order.side === 'BUY') {
       const portfolioBeforeTrade = await getPortfolio(session.user.id);
+      if (platform === 'kalshi') {
+        const quoteFacts = {
+          executable_price: price,
+          executable_depth: executableDepth,
+          requested_shares: shares,
+          requested_notional: shares * price,
+          quote_source: 'kalshi_live_orderbook_depth',
+        };
+        const validation = order.proposal
+          ? validateTradeProposal(order.proposal, {
+              executablePrice: price,
+              executableDepth,
+              requestedShares: shares,
+              requestedNotional: shares * price,
+              portfolioNav: portfolioBeforeTrade.totalValue,
+            })
+          : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
+        if (!validation.valid) {
+          await db.insert(strategyDecisions).values({
+            strategyId: strategy.id, userId: session.user.id, runId,
+            platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
+            side: order.side, proposal: order.proposal ?? {}, serverQuote: quoteFacts,
+            status: 'REJECTED', rejectionReasons: validation.reasons,
+          });
+          return NextResponse.json({
+            error: 'Structured trade proposal failed server validation',
+            code: 'PROPOSAL_REJECTED',
+            reasons: validation.reasons,
+          }, { status: 422 });
+        }
+      }
       const riskError = validatePaperBuyRisk({
         portfolio: portfolioBeforeTrade,
         marketId,
@@ -308,7 +366,26 @@ export async function POST(request: NextRequest) {
         riskConfig: strategy.riskConfig,
       });
       if (riskError) {
+        if (platform === 'kalshi') {
+          await db.insert(strategyDecisions).values({
+            strategyId: strategy.id, userId: session.user.id, runId,
+            platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
+            side: order.side, proposal: order.proposal ?? {},
+            serverQuote: { executable_price: price, executable_depth: executableDepth },
+            status: 'REJECTED', rejectionReasons: ['SERVER_RISK_REJECTED'],
+          });
+        }
         return NextResponse.json({ error: riskError }, { status: 403 });
+      }
+      if (platform === 'kalshi') {
+        const [decision] = await db.insert(strategyDecisions).values({
+          strategyId: strategy.id, userId: session.user.id, runId,
+          platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
+          side: order.side, proposal: order.proposal ?? {},
+          serverQuote: { executable_price: price, executable_depth: executableDepth, fill: fillDetails },
+          status: 'ACCEPTED', rejectionReasons: [],
+        }).returning();
+        acceptedDecisionId = decision?.id ?? null;
       }
     }
 
@@ -323,6 +400,7 @@ export async function POST(request: NextRequest) {
       price,
       idempotencyKey,
       platform,
+      slippageApplied: fillDetails ? Number(fillDetails.slippageBps ?? 0) / 10_000 : 0,
     });
 
     await db
@@ -357,13 +435,19 @@ export async function POST(request: NextRequest) {
         quantity: shares.toFixed(6),
         price: price.toFixed(6),
         notional: trade.total.toFixed(2),
-        fillModel: 'top_of_book_no_depth',
+        fillModel: platform === 'kalshi' ? 'live_orderbook_depth_fok' : 'top_of_book_no_depth',
         status: 'FILLED',
         idempotencyKey,
         request: order,
-        result: trade,
+        result: fillDetails ? { trade, shadow_fill: fillDetails } : trade,
       })
       .returning();
+
+    if (acceptedDecisionId) {
+      await db.update(strategyDecisions)
+        .set({ paperTradeOrderId: paperOrder.id })
+        .where(eq(strategyDecisions.id, acceptedDecisionId));
+    }
 
     const portfolio = await getPortfolio(session.user.id);
     await db.insert(portfolioSnapshots).values({

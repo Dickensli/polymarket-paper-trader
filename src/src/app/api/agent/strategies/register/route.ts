@@ -139,7 +139,9 @@ export async function POST(request: NextRequest) {
             const [updated] = await db.update(strategies).set({
               ...(risk_config !== undefined ? { riskConfig: risk_config } : {}),
               ...(schedule !== undefined ? { schedule } : {}),
-              ...(metadata !== undefined ? { metadata } : {}),
+              ...(metadata !== undefined ? {
+                metadata: { ...((existing.metadata as Record<string, unknown>) ?? {}), ...metadata },
+              } : {}),
               updatedAt: new Date(),
             }).where(eq(strategies.id, existing.id)).returning();
             current = updated ?? existing;
