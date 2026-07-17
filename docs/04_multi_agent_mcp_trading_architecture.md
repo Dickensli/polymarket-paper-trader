@@ -257,6 +257,62 @@ overrides are `KALSHI_MARKET_DATA_BASE_URL` and
 `KALSHI_EXECUTION_BASE_URL`. There is no separate
 `KALSHI_EXECUTION_MODE`; `agent_mode` is the execution-mode source of truth.
 
+### Recommended Commander Test Topology
+
+```dotenv
+KALSHI_USE_DEMO=true
+KALSHI_MARKET_DATA_ENV=live
+```
+
+Do not set the legacy shared `KALSHI_BASE_URL` in this topology. The two agents
+then follow different write paths while sharing production public research
+data:
+
+| Concern | `commander` | `commander_real` |
+| --- | --- | --- |
+| Registered mode | `paper` | `real` |
+| Public market and orderbook | Production/live | Production/live |
+| Portfolio source of truth | Local paper ledger | Official Kalshi Demo account |
+| BUY validation | Structured proposal + live-depth FOK simulation | Shadow graduation + structured proposal + live-depth validation |
+| Execution destination | Local database only | Authenticated Kalshi Demo API |
+| Intended test | Decision quality, sizing, slippage, displayed-liquidity feasibility | Signing, request format, official order lifecycle, cancellation, sync, reconciliation |
+
+The flow is:
+
+```mermaid
+flowchart LR
+  L["Kalshi production public market data"] --> C["commander: paper"]
+  L --> R["commander_real: real mode"]
+  C --> S["Local live-depth FOK shadow fill"]
+  S --> G["Server graduation scorecard"]
+  G -->|"passed + human approval"| R
+  R --> D["Kalshi Demo authenticated API"]
+  D --> O["Demo orders, fills, cancellation, reconciliation"]
+```
+
+Demo and production have independent orderbooks. A `commander_real` order uses
+live public data for research and server-side validation, but the actual order
+is matched only against Demo liquidity. It may remain resting or be killed even
+when the equivalent shadow order could fill against production depth. This is
+expected and must not be classified as a pricing or execution bug.
+
+### Why `commander_real` Depends on the `commander` Scorecard
+
+The dependency is a risk policy, not an API requirement. `commander` is the
+evidence-producing strategy: it submits structured predictions and accumulates
+audited results using live displayed liquidity without authenticated venue
+risk. `commander_real` is the official-execution adapter: it proves that signed
+orders, official state synchronization, cancellation, and reconciliation work.
+
+Before a new `commander_real` BUY, the server resolves the configured
+`graduation_source_strategy_id` and checks the paper strategy's minimum sample,
+executed-trade count, resolved-prediction count, positive return, maximum
+drawdown, Brier score, and policy violations. Failure blocks only new risk;
+risk-reducing orders remain available. Success returns `GRADUATION_READY`, but
+does not mutate `real_trading_enabled`. A human must still explicitly approve
+official execution, and switching `KALSHI_USE_DEMO=false` remains a separate,
+money-bearing production decision.
+
 ## Supabase Data Model Additions
 
 Existing tables are useful but not enough. Add these durable tables, either in the current public schema with careful access control or a private/internal schema if exposed API access is not needed.
