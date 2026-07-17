@@ -300,6 +300,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode. Set false to register this strategy for real Polymarket US trading.", default: true },
           platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'" },
           balance: { type: "number", description: "Starting paper balance in USD" },
+          risk_config: { type: "object", description: "Server-enforced risk ratios, e.g. max_single_trade_pct, max_market_exposure_pct, min_cash_reserve_pct" },
+          schedule: { type: "string", description: "Cron schedule recorded for strategy auditing" },
           force_enable: { type: "boolean", description: "Administrative override to re-enable a disabled strategy." },
         },
         required: ["strategy_id"],
@@ -539,11 +541,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         method: "POST",
         headers: getAgentHeaders(args),
         body: JSON.stringify({
+          ...(args as any),
+          strategy_id,
           account_id,
           is_paper_trading: (args as any).is_paper_trading !== false,
-          platform: (args as any).platform || "polymarket_us",
+          platform: "polymarket_us",
           balance: Number((args as any).balance || 10000),
-          ...(args as any), // Pass everything else!
         }),
       });
       return json({ ok: true, data: data.data ?? data });

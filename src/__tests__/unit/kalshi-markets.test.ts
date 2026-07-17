@@ -1,10 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getKalshiMarkets } from '@/lib/kalshi';
+import { getKalshiMarkets, getKalshiOutcomePriceFromMarket, resolveKalshiBaseUrl } from '@/lib/kalshi';
 
 describe('Kalshi market batch lookup', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('routes market data to demo whenever official trading is configured for demo', () => {
+    expect(resolveKalshiBaseUrl({ KALSHI_USE_DEMO: 'true' }))
+      .toBe('https://demo-api.kalshi.co/trade-api/v2');
+    expect(resolveKalshiBaseUrl({ KALSHI_USE_DEMO: 'false' }))
+      .toBe('https://external-api.kalshi.com/trade-api/v2');
+  });
+
+  it('does not invent sell liquidity by falling back from a missing bid to the ask', () => {
+    expect(getKalshiOutcomePriceFromMarket({ yes_ask_dollars: '0.75' }, 'YES', 'SELL')).toBeNull();
+    expect(getKalshiOutcomePriceFromMarket({ yes_bid_dollars: '0.70', yes_ask_dollars: '0.75' }, 'YES', 'SELL')).toBe(0.70);
   });
 
   it('uses the tickers filter instead of one request per market', async () => {

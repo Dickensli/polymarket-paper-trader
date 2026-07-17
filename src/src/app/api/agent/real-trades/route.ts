@@ -5,6 +5,8 @@ import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { officialOrderEvents, realTradeOrders, strategies } from '@/lib/db/schema';
 import { resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
+import { getKalshiMarket, getKalshiOutcomePrice } from '@/lib/kalshi';
+import { getPolymarketUsMarket, getPolymarketUsOutcomePrice } from '@/lib/polymarket-us';
 
 const realTradeSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -120,13 +122,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!order.price) {
-      return NextResponse.json(
-        { error: 'Real trading requires an explicit limit price.' },
-        { status: 400 },
-      );
+    let executionPrice = order.price;
+    if (!executionPrice) {
+      if (strategy.platform === 'kalshi') {
+        const market = await getKalshiMarket(order.slug).catch(() => null);
+        const status = String(market?.status ?? '').toLowerCase();
+        if (!market || (status !== 'open' && status !== 'active')) {
+          return NextResponse.json({ error: 'Kalshi market not found or not tradable' }, { status: 400 });
+        }
+        executionPrice = await getKalshiOutcomePrice(order.slug, order.outcome, order.side).catch(() => null) ?? undefined;
+      } else {
+        const market = await getPolymarketUsMarket(order.slug).catch(() => null);
+        if (!market || market.closed || market.active === false) {
+          return NextResponse.json({ error: 'Polymarket US market not found or not tradable' }, { status: 400 });
+        }
+        executionPrice = await getPolymarketUsOutcomePrice(order.slug, order.outcome, order.side).catch(() => null) ?? undefined;
+      }
+      if (!executionPrice || executionPrice <= 0 || executionPrice >= 1) {
+        return NextResponse.json(
+          { error: `No executable ${order.side} quote is available for this real market order` },
+          { status: 409 },
+        );
+      }
     }
-    const resolvedQuantity = resolveOfficialOrderQuantity(order);
+    const resolvedQuantity = resolveOfficialOrderQuantity({ ...order, price: executionPrice });
+    const auditedOrder = {
+      ...order,
+      price: executionPrice,
+      price_source: order.price ? 'client_limit' : 'server_executable_quote',
+    };
 
     const enabled = realTradingEnabled(strategy.metadata);
     if (!enabled) {
@@ -141,9 +165,9 @@ export async function POST(request: NextRequest) {
           marketSlugOrTicker: order.slug,
           side: order.side,
           quantity: resolvedQuantity.toFixed(6),
-          price: order.price.toFixed(6),
+          price: executionPrice.toFixed(6),
           status: 'REJECTED',
-          request: order,
+          request: auditedOrder,
           error: { code: 'REAL_TRADING_DISABLED', message: 'Strategy metadata.real_trading_enabled must be true.' },
         })
         .returning();
@@ -168,9 +192,9 @@ export async function POST(request: NextRequest) {
         marketSlugOrTicker: order.slug,
         side: order.side,
         quantity: resolvedQuantity.toFixed(6),
-        price: order.price.toFixed(6),
+        price: executionPrice.toFixed(6),
         status: 'SUBMITTING',
-        request: order,
+        request: auditedOrder,
       })
       .returning();
 
@@ -184,7 +208,7 @@ export async function POST(request: NextRequest) {
         remainingQuantity: remaining.toFixed(6), occurredAt, payload,
       }).returning();
     };
-    await writeLifecycleEvent('SUBMITTING', `local:${audit.id}`, order);
+    await writeLifecycleEvent('SUBMITTING', `local:${audit.id}`, auditedOrder);
 
     try {
       const official = await submitOfficialRealTrade({
@@ -194,7 +218,7 @@ export async function POST(request: NextRequest) {
         side: order.side,
         amount: order.amount,
         shares: order.shares,
-        price: order.price,
+        price: executionPrice,
         clientOrderId: order.client_order_id,
         timeInForce: order.time_in_force,
       });
@@ -205,7 +229,7 @@ export async function POST(request: NextRequest) {
           officialOrderId: official.officialOrderId,
           clientOrderId: official.clientOrderId,
           status: official.status,
-          request: order,
+          request: auditedOrder,
           officialResponse: {
             ...official.response,
             submitted_request: official.request,

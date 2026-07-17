@@ -12,11 +12,12 @@ import {
 } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { executeTrade, getPortfolio, TradingError } from '@/lib/trading-engine';
+import { validatePaperBuyRisk } from '@/lib/paper-risk';
 
 // Polymarket helpers
 import { getMarket, getMidpoint } from '@/lib/polymarket';
 // Kalshi helpers
-import { getKalshiOutcomePrice, kalshiTokenId } from '@/lib/kalshi';
+import { getKalshiMarket, getKalshiOutcomePrice, kalshiTokenId } from '@/lib/kalshi';
 // Polymarket US helpers
 import { getPolymarketUsOutcomePrice, getPolymarketUsMarket, polymarketUsTokenId } from '@/lib/polymarket-us';
 
@@ -31,9 +32,9 @@ const paperTradeSchema = z.object({
   side: z.enum(['BUY', 'SELL']).default('BUY'),
   amount: z.number().positive().max(100000).optional(),
   shares: z.number().positive().optional(),
-  price: z.number().min(0.001).max(0.999).optional(),
   run_id: z.string().uuid().optional(),
-  fill_model: z.string().min(1).max(50).optional(),
+}).strict().refine((order) => Boolean(order.amount) !== Boolean(order.shares), {
+  message: 'Provide exactly one of amount or shares',
 });
 
 // ---------------------------------------------------------------------------
@@ -210,36 +211,48 @@ export async function POST(request: NextRequest) {
       marketId = order.slug;
       marketQuestion = market.question || order.slug;
 
-      if (order.price) {
-        price = order.price;
-      } else {
-        const mid = await getMidpoint(order.slug).catch(() => null);
-        price = mid ?? 0.5;
+      const executablePrice = await getMidpoint(tokenId).catch(() => null);
+      if (executablePrice === null || executablePrice <= 0 || executablePrice >= 1) {
+        return NextResponse.json(
+          { error: 'No executable Polymarket market price is available' },
+          { status: 400 },
+        );
       }
+      price = executablePrice;
     } else if (platform === 'kalshi') {
       // Kalshi
+      const market = await getKalshiMarket(order.slug).catch(() => null);
+      const marketStatus = String(market?.status ?? '').toLowerCase();
+      if (!market || (marketStatus !== 'open' && marketStatus !== 'active')) {
+        return NextResponse.json(
+          { error: 'Kalshi market not found or not tradable' },
+          { status: 400 },
+        );
+      }
       marketId = order.slug;
       tokenId = kalshiTokenId(order.slug, order.outcome);
-      marketQuestion = order.slug;
+      marketQuestion = String(market.title ?? market.subtitle ?? order.slug);
 
-      if (order.price) {
-        price = order.price;
-      } else {
-        const kalshiPrice = await getKalshiOutcomePrice(
-          order.slug,
-          order.outcome,
-          order.side,
-        ).catch(() => null);
-        price = kalshiPrice ?? 0.5;
+      const kalshiPrice = await getKalshiOutcomePrice(
+        order.slug,
+        order.outcome,
+        order.side,
+      ).catch(() => null);
+      if (kalshiPrice === null || kalshiPrice <= 0 || kalshiPrice >= 1) {
+        return NextResponse.json(
+          { error: 'No executable Kalshi market price is available' },
+          { status: 400 },
+        );
       }
+      price = kalshiPrice;
     } else if (platform === 'polymarket_us') {
       // Polymarket US
       const market = await getPolymarketUsMarket(order.slug).catch(
         () => null,
       );
-      if (!market) {
+      if (!market || market.closed || market.active === false) {
         return NextResponse.json(
-          { error: 'Polymarket US market not found' },
+          { error: 'Polymarket US market not found or not tradable' },
           { status: 400 },
         );
       }
@@ -251,16 +264,18 @@ export async function POST(request: NextRequest) {
         market.description ||
         order.slug;
 
-      if (order.price) {
-        price = order.price;
-      } else {
-        const usPrice = await getPolymarketUsOutcomePrice(
-          order.slug,
-          order.outcome,
-          order.side,
-        ).catch(() => null);
-        price = usPrice ?? 0.5;
+      const usPrice = await getPolymarketUsOutcomePrice(
+        order.slug,
+        order.outcome,
+        order.side,
+      ).catch(() => null);
+      if (usPrice === null || usPrice <= 0 || usPrice >= 1) {
+        return NextResponse.json(
+          { error: 'No executable Polymarket US market price is available' },
+          { status: 400 },
+        );
       }
+      price = usPrice;
     } else {
       return NextResponse.json(
         { error: `Unsupported platform: ${platform}` },
@@ -279,6 +294,22 @@ export async function POST(request: NextRequest) {
         { error: 'Must provide either amount or shares' },
         { status: 400 },
       );
+    }
+
+    // ── Enforce server-side risk ──────────────────────────────
+    // Prompt rules are advisory; this guard prevents a confused agent from
+    // bypassing per-trade, cumulative-market, and cash-reserve limits.
+    if (order.side === 'BUY') {
+      const portfolioBeforeTrade = await getPortfolio(session.user.id);
+      const riskError = validatePaperBuyRisk({
+        portfolio: portfolioBeforeTrade,
+        marketId,
+        notional: shares * price,
+        riskConfig: strategy.riskConfig,
+      });
+      if (riskError) {
+        return NextResponse.json({ error: riskError }, { status: 403 });
+      }
     }
 
     // ── Execute trade ─────────────────────────────────────────
@@ -326,7 +357,7 @@ export async function POST(request: NextRequest) {
         quantity: shares.toFixed(6),
         price: price.toFixed(6),
         notional: trade.total.toFixed(2),
-        fillModel: order.fill_model ?? 'paper_midpoint',
+        fillModel: 'top_of_book_no_depth',
         status: 'FILLED',
         idempotencyKey,
         request: order,

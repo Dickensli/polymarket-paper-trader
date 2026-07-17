@@ -4,6 +4,10 @@ import { positions } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { getMidpoint } from '@/lib/polymarket';
 import { getKalshiOutcomePrice } from '@/lib/kalshi';
+import {
+  getPolymarketUsOutcomePrice,
+  parsePolymarketUsTokenId,
+} from '@/lib/polymarket-us';
 import { Redis } from '@upstash/redis';
 
 /**
@@ -46,7 +50,10 @@ export async function runPriceRefresh() {
   // For Polymarket: use getMidpoint (public CLOB API)
   // For Kalshi: use getKalshiOutcomePrice (public market API, no auth needed)
   const polymarketTokenIds = Array.from(new Set(
-    openPositions.filter(p => !parseKalshiPosition(p.tokenId, p.outcome)).map(p => p.tokenId)
+    openPositions
+      .filter((p) => !parseKalshiPosition(p.tokenId, p.outcome))
+      .filter((p) => p.platform !== 'polymarket_us' && !parsePolymarketUsTokenId(p.tokenId))
+      .map((p) => p.tokenId)
   ));
 
   const kalshiKeys = Array.from(new Map(
@@ -55,6 +62,19 @@ export async function runPriceRefresh() {
       if (!parsed) return [];
       const key = `${position.tokenId}:${parsed.outcome}`;
       return [[key, { storedTokenId: position.tokenId, ...parsed }] as const];
+    }),
+  ).values());
+
+  const polymarketUsKeys = Array.from(new Map(
+    openPositions.flatMap((position) => {
+      if (parseKalshiPosition(position.tokenId, position.outcome)) return [];
+      const parsed = parsePolymarketUsTokenId(position.tokenId);
+      if (!parsed && position.platform !== 'polymarket_us') return [];
+      const slug = parsed?.slug ?? position.marketId;
+      const outcome = parsed?.outcome ?? position.outcome;
+      if (!slug || (outcome !== 'YES' && outcome !== 'NO')) return [];
+      const key = `${slug}\u0000${outcome}`;
+      return [[key, { storedTokenId: position.tokenId, slug, outcome }] as const];
     }),
   ).values());
 
@@ -72,6 +92,13 @@ export async function runPriceRefresh() {
       const price = await getKalshiOutcomePrice(ticker, outcome).catch(() => null);
       return { storedTokenId, outcome, midpoint: price };
     })
+  );
+
+  const polymarketUsPrices = await Promise.all(
+    polymarketUsKeys.map(async ({ storedTokenId, slug, outcome }) => {
+      const price = await getPolymarketUsOutcomePrice(slug, outcome, 'MARK').catch(() => null);
+      return { storedTokenId, outcome, midpoint: price };
+    }),
   );
 
   // 3. Update DB and Cache — Polymarket positions
@@ -101,8 +128,18 @@ export async function runPriceRefresh() {
       .set({ currentPrice: midpoint.toFixed(6), updatedAt: new Date() })
       .where(and(eq(positions.tokenId, storedTokenId), eq(positions.outcome, outcome)));
   }
+
+  // 5. Update Polymarket US positions from the US venue, never the
+  // international Polymarket CLOB token endpoint.
+  for (const { storedTokenId, outcome, midpoint } of polymarketUsPrices) {
+    if (midpoint === null || typeof midpoint !== 'number') continue;
+    await db
+      .update(positions)
+      .set({ currentPrice: midpoint.toFixed(6), updatedAt: new Date() })
+      .where(and(eq(positions.tokenId, storedTokenId), eq(positions.outcome, outcome)));
+  }
   
-  return polymarketTokenIds.length + kalshiKeys.length;
+  return polymarketTokenIds.length + kalshiKeys.length + polymarketUsKeys.length;
 }
 
 export function startPriceRefreshJob() {

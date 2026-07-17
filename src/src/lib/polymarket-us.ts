@@ -77,6 +77,56 @@ function normalizePrice(value: unknown): number | null {
   return numeric > 1 ? numeric / 100 : numeric;
 }
 
+type PolymarketUsPricePurpose = 'BUY' | 'SELL' | 'MARK';
+
+function roundPrice(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function complementPrice(value: number | null): number | null {
+  return value === null ? null : roundPrice(1 - value);
+}
+
+/**
+ * Resolve an outcome-aware price from the venue BBO response.
+ *
+ * Polymarket US exposes one long/YES order book. A marketable NO buy crosses
+ * the YES bid (cost = 1 - bestBid), while a NO sell crosses the YES ask
+ * (proceeds = 1 - bestAsk). Treating NO as the YES price creates synthetic
+ * pairs whose cost is far below $1 and produces impossible paper profits.
+ */
+export function resolvePolymarketUsOutcomePriceFromBbo(
+  raw: unknown,
+  outcome: 'YES' | 'NO',
+  purpose: PolymarketUsPricePurpose,
+): number | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const wrapped = raw as Record<string, unknown>;
+  const bbo = (wrapped.marketData ?? wrapped) as Record<string, unknown>;
+
+  const bestBid = normalizePrice(bbo.bestBid);
+  const bestAsk = normalizePrice(bbo.bestAsk);
+
+  if (purpose === 'BUY') {
+    return outcome === 'YES' ? bestAsk : complementPrice(bestBid);
+  }
+  if (purpose === 'SELL') {
+    return outcome === 'YES' ? bestBid : complementPrice(bestAsk);
+  }
+
+  const quote = normalizePrice(outcome === 'YES' ? bbo.longQuote : bbo.shortQuote);
+  if (quote !== null) return quote;
+
+  const current = normalizePrice(bbo.currentPx);
+  if (current !== null) return outcome === 'YES' ? current : complementPrice(current);
+
+  if (bestBid !== null && bestAsk !== null) {
+    const midpoint = roundPrice((bestBid + bestAsk) / 2);
+    return outcome === 'YES' ? midpoint : complementPrice(midpoint);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Market endpoints
 // ---------------------------------------------------------------------------
@@ -237,23 +287,16 @@ export async function searchPolymarketUs(
 export async function getPolymarketUsOutcomePrice(
   slug: string,
   outcome: 'YES' | 'NO',
-  side: 'BUY' | 'SELL' = 'BUY',
+  side: PolymarketUsPricePurpose = 'BUY',
 ): Promise<number | null> {
   // Use BBO for top-of-book pricing
   const bboRaw = await getPolymarketUsMarketBBO(slug) as Record<string, unknown> | null;
   if (bboRaw) {
-    // Handle both direct shape and { marketData: { ... } } wrapper
-    const bbo = (bboRaw.marketData ?? bboRaw) as Record<string, unknown>;
-    const priceField = side === 'BUY' ? bbo.bestAsk : bbo.bestBid;
-    const price = normalizePrice(priceField);
-    if (price !== null && price < 1) return price;
-
-    // Also try currentPx as a fallback
-    if (bbo.currentPx) {
-      const px = normalizePrice(bbo.currentPx);
-      if (px !== null && px < 1) return px;
-    }
+    const price = resolvePolymarketUsOutcomePriceFromBbo(bboRaw, outcome, side);
+    if (price !== null && price > 0 && price < 1) return price;
   }
+
+  if (side === 'MARK') return null;
 
   // Fallback: try the full order book
   const bookRaw = await getPolymarketUsMarketBook(slug) as Record<string, unknown> | null;
@@ -261,15 +304,18 @@ export async function getPolymarketUsOutcomePrice(
     const book = (bookRaw.marketData ?? bookRaw) as Record<string, unknown>;
     const offers = book.offers as Array<{ px: unknown }> | undefined;
     const bids = book.bids as Array<{ px: unknown }> | undefined;
-
-    if (side === 'BUY' && offers?.length) {
-      const price = normalizePrice(offers[0].px);
-      if (price !== null && price < 1) return price;
-    }
-    if (side === 'SELL' && bids?.length) {
-      const price = normalizePrice(bids[0].px);
-      if (price !== null && price < 1) return price;
-    }
+    const bestAsk = offers
+      ?.map((level) => normalizePrice(level.px))
+      .filter((price): price is number => price !== null)
+      .sort((a, b) => a - b)[0] ?? null;
+    const bestBid = bids
+      ?.map((level) => normalizePrice(level.px))
+      .filter((price): price is number => price !== null)
+      .sort((a, b) => b - a)[0] ?? null;
+    const price = side === 'BUY'
+      ? (outcome === 'YES' ? bestAsk : complementPrice(bestBid))
+      : (outcome === 'YES' ? bestBid : complementPrice(bestAsk));
+    if (price !== null && price > 0 && price < 1) return price;
   }
 
   return null;

@@ -1,4 +1,11 @@
-const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || 'https://external-api.kalshi.com/trade-api/v2';
+export function resolveKalshiBaseUrl(env: Record<string, string | undefined> = process.env): string {
+  if (env.KALSHI_BASE_URL) return env.KALSHI_BASE_URL.replace(/\/$/, '');
+  return env.KALSHI_USE_DEMO === 'true'
+    ? 'https://demo-api.kalshi.co/trade-api/v2'
+    : 'https://external-api.kalshi.com/trade-api/v2';
+}
+
+const KALSHI_BASE_URL = resolveKalshiBaseUrl();
 
 type KalshiMarketResponse = {
   market?: Record<string, unknown>;
@@ -132,22 +139,9 @@ export function getKalshiOutcomePriceFromMarket(
 
   const prefix = outcome === 'YES' ? 'yes' : 'no';
   const preferred = side === 'BUY' ? `${prefix}_ask` : `${prefix}_bid`;
-  const alternates = [
-    preferred,
-    `${preferred}_dollars`,
-    `${prefix}_price`,
-    `${prefix}_price_dollars`,
-    `${prefix}_mid`,
-    `${prefix}_mid_dollars`,
-    `${prefix}_bid`,
-    `${prefix}_bid_dollars`,
-    `${prefix}_ask`,
-    `${prefix}_ask_dollars`,
-    outcome === 'YES' ? 'last_price' : undefined,
-    outcome === 'YES' ? 'last_price_dollars' : undefined,
-    'settlement_value_dollars',
-    'settlement_value',
-  ].filter(Boolean) as string[];
+  // Execution quotes must come from the requested side of the book. Falling
+  // back from an absent bid to the ask (or vice versa) invents liquidity.
+  const alternates = [preferred, `${preferred}_dollars`];
 
   for (const key of alternates) {
     const price = normalizePrice(market[key]);

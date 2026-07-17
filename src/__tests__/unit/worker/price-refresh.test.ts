@@ -3,11 +3,13 @@ import { runPriceRefresh } from '@/worker/jobs/price-refresh';
 import * as dbLib from '@/lib/db';
 import * as polymarketLib from '@/lib/polymarket';
 import * as kalshiLib from '@/lib/kalshi';
+import * as polymarketUsLib from '@/lib/polymarket-us';
 import { Redis } from '@upstash/redis';
 
 vi.mock('@/lib/db');
 vi.mock('@/lib/polymarket');
 vi.mock('@/lib/kalshi');
+vi.mock('@/lib/polymarket-us');
 vi.mock('@upstash/redis');
 
 describe('Price Refresh Job', () => {
@@ -97,5 +99,43 @@ describe('Price Refresh Job', () => {
 
     // 3 DB updates total (1 Polymarket + 2 Kalshi)
     expect(mockDb.update).toHaveBeenCalledTimes(3);
+  });
+
+  it('refreshes Polymarket US positions from the US venue with the stored outcome', async () => {
+    vi.spyOn(polymarketUsLib, 'parsePolymarketUsTokenId').mockImplementation((tokenId) => {
+      const match = /^polymarket_us:(.+):(YES|NO)$/.exec(tokenId);
+      return match ? { slug: match[1], outcome: match[2] as 'YES' | 'NO' } : null;
+    });
+    mockDb.query.positions.findMany.mockResolvedValue([
+      {
+        id: 'us-1',
+        platform: 'polymarket_us',
+        tokenId: 'polymarket_us:house-midterms:NO',
+        outcome: 'NO',
+      },
+      {
+        id: 'us-2',
+        platform: 'polymarket_us',
+        tokenId: 'polymarket_us:house-midterms:YES',
+        outcome: 'YES',
+      },
+    ]);
+    vi.spyOn(polymarketUsLib, 'getPolymarketUsOutcomePrice').mockImplementation(
+      async (_slug, outcome, side) => {
+        expect(side).toBe('MARK');
+        return outcome === 'NO' ? 0.82 : 0.18;
+      },
+    );
+
+    const count = await runPriceRefresh();
+
+    expect(count).toBe(2);
+    expect(polymarketUsLib.getPolymarketUsOutcomePrice).toHaveBeenCalledWith(
+      'house-midterms',
+      'NO',
+      'MARK',
+    );
+    expect(polymarketLib.getMidpoint).not.toHaveBeenCalled();
+    expect(mockDb.update).toHaveBeenCalledTimes(2);
   });
 });

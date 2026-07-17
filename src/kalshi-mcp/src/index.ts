@@ -27,7 +27,11 @@ if (whitelist.length === 0) {
 log(`[Harness] Whitelist initialized with strategies: ${JSON.stringify(whitelist)}`);
 
 const POLYTRADER_API_URL = process.env.POLYTRADER_API_URL || "http://localhost:3000/api";
-const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || "https://external-api.kalshi.com/trade-api/v2";
+const KALSHI_BASE_URL = process.env.KALSHI_BASE_URL || (
+  process.env.KALSHI_USE_DEMO === "true"
+    ? "https://demo-api.kalshi.co/trade-api/v2"
+    : "https://external-api.kalshi.com/trade-api/v2"
+);
 const AGENT_USER_ID = process.env.AGENT_USER_ID || "815c03ff-dad9-4535-a427-20422812424a";
 const AGENT_SECRET = process.env.AGENT_SECRET || "default_secret_key_123";
 
@@ -329,6 +333,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           is_paper_trading: { type: "boolean", description: "Whether to run in paper trading mode. Set false to register this strategy for real Kalshi trading.", default: true },
           platform: { type: "string", description: "Target platform: 'polymarket', 'kalshi', or 'polymarket_us'", default: "kalshi" },
           balance: { type: "number", description: "Starting paper balance in USD", default: 10000 },
+          risk_config: { type: "object", description: "Server-enforced risk ratios, e.g. max_single_trade_pct, max_market_exposure_pct, min_cash_reserve_pct" },
+          schedule: { type: "string", description: "Cron schedule recorded for strategy auditing" },
         },
         required: ["strategy_id"],
       },
@@ -424,7 +430,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     amount: (args as any).amount,
                     shares: (args as any).shares,
                     price: (args as any).price,
-                    time_in_force: (args as any).time_in_force || "GTC",
+                    time_in_force: "IOC",
                     client_order_id: idempotencyKey,
                 }),
             });
@@ -586,8 +592,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           strategy_id,
           account_id,
           is_paper_trading: (args as any).is_paper_trading !== false,
-          platform: (args as any).platform || "kalshi",
+          platform: "kalshi",
           balance: Number((args as any).balance || 10000),
+          risk_config: (args as any).risk_config,
+          schedule: (args as any).schedule,
         }),
       });
       return json({ ok: true, data: data.data ?? data });
