@@ -414,7 +414,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     side: "BUY",
                     amount: args.amount,
                     shares: args.shares,
-                    price: args.price,
+                    // price intentionally omitted — market orders only, server fetches live price
                     client_order_id: idempotencyKey,
                 }),
             });
@@ -432,7 +432,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     outcome: args.outcome || "YES",
                     side: "SELL",
                     shares: typeof quantity === "number" ? quantity : undefined,
-                    price: args.price,
+                    // price intentionally omitted — market orders only, server fetches live price
                     client_order_id: idempotencyKey,
                 }),
             });

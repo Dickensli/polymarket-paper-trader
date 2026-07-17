@@ -65,6 +65,7 @@ async function fetchKalshiMarketBatch(batch: string[]): Promise<Record<string, u
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
       cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
       const json = (await res.json()) as KalshiMarketsResponse;
@@ -88,16 +89,23 @@ function normalizePrice(value: unknown): number | null {
 }
 
 export async function getKalshiMarket(ticker: string): Promise<Record<string, unknown> | null> {
-  const res = await fetch(`${KALSHI_MARKET_DATA_BASE_URL}/markets/${encodeURIComponent(ticker)}`, {
-    headers: { Accept: 'application/json' },
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    console.warn(`[Kalshi] Failed to fetch market ${ticker}: ${res.status} ${res.statusText}`);
+  try {
+    const res = await fetch(`${KALSHI_MARKET_DATA_BASE_URL}/markets/${encodeURIComponent(ticker)}`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      console.warn(`[Kalshi] Failed to fetch market ${ticker}: ${res.status} ${res.statusText}`);
+      return null;
+    }
+    const json = (await res.json()) as KalshiMarketResponse;
+    return json.market ?? (json as Record<string, unknown>);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[Kalshi] Market fetch failed for ${ticker}: ${message}`);
     return null;
   }
-  const json = (await res.json()) as KalshiMarketResponse;
-  return json.market ?? (json as Record<string, unknown>);
 }
 
 type KalshiOrderBookResponse = {

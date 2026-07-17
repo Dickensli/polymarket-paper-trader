@@ -434,7 +434,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     strategy_id: args.strategy_id,
                     slug: args.ticker || args.slug,
                     outcome: args.outcome || "YES",
-                    side: args.side || "BUY",
+                    side: "BUY",
                     amount: args.amount,
                     shares: args.shares,
                     proposal: args.proposal,

@@ -60,4 +60,23 @@ describe('agent settled positions', () => {
       avg_price: 0.051, settlement_price: 0.07, cost_basis: 5.1, proceeds: 7, realized_pnl: 1.9,
     })]);
   });
+
+  it('builds closed records for partial sells immediately', () => {
+    const result = buildClosedStrategyPositions([
+      { id: 'buy-1', strategyId: 'strategy-a', userId: 'agent-1', marketId: 'test-market', marketQuestion: 'Test?', outcome: 'YES', side: 'BUY', quantity: 100, price: 0.10, platform: 'kalshi', createdAt: '2026-07-11T10:00:00Z' },
+      { id: 'sell-1', strategyId: 'strategy-a', userId: 'agent-1', marketId: 'test-market', marketQuestion: 'Test?', outcome: 'YES', side: 'SELL', quantity: 40, price: 0.50, platform: 'kalshi', createdAt: '2026-07-11T11:00:00Z' },
+    ], strategies);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({
+      closure_type: 'CLOSED',
+      strategy_id: 'strategy-a',
+      shares: 40,
+      avg_price: 0.10,
+      settlement_price: 0.50,
+      cost_basis: 4,
+      proceeds: 20,
+      realized_pnl: 16,
+    }));
+  });
 });
