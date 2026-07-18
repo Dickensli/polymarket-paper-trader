@@ -48,7 +48,9 @@ export function validatePaperBuyRisk(args: {
   const riskGroupId = args.riskGroupId ?? marketId;
   const existingMarketExposure = portfolio.positions
     .filter((position) => (position.riskGroupId ?? position.marketId) === riskGroupId)
-    .reduce((sum, position) => sum + position.shares * position.currentPrice, 0);
+    // Exposure is capital at risk, not the latest mark. A falling price must
+    // never create room to average down through the server-side cap.
+    .reduce((sum, position) => sum + position.shares * position.avgEntryPrice, 0);
   if (existingMarketExposure + notional > nav * limits.maxMarketExposurePct + 1e-9) {
     const scope = riskGroupId === marketId ? 'market' : 'event';
     return `Cumulative ${scope} exposure exceeds ${(limits.maxMarketExposurePct * 100).toFixed(1)}% of portfolio NAV`;

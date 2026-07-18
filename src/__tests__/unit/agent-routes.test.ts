@@ -60,6 +60,10 @@ vi.mock('@/lib/official-trading', () => ({
       : String(order.status ?? 'SUBMITTED').toUpperCase()),
 }));
 
+vi.mock('@/worker/jobs/price-refresh', () => ({
+  runPriceRefresh: vi.fn(async () => 0),
+}));
+
 type JsonBody = Record<string, unknown>;
 
 function makeRequest({
@@ -93,18 +97,32 @@ function createChain<T>(result: T) {
 function createMockDb() {
   const insertResults: unknown[] = [];
   const updateResults: unknown[] = [];
-  const insertValues = vi.fn((values: unknown) => ({
-    returning: vi.fn(async () => [insertResults.shift() ?? { id: 'inserted-id', ...values as object }]),
-  }));
+  let pendingPaperOrder: Record<string, unknown> | null = null;
+  const controls = { pendingClaimConflict: false };
+  const insertValues = vi.fn((values: unknown) => {
+    const chain: Record<string, unknown> = {};
+    chain.returning = vi.fn(async () => {
+      const isPendingClaim = (values as { status?: string })?.status === 'PENDING';
+      if (isPendingClaim) {
+        pendingPaperOrder = { id: 'pending-paper-order', ...values as object };
+        return controls.pendingClaimConflict ? [] : [pendingPaperOrder];
+      }
+      return [insertResults.shift() ?? { id: 'inserted-id', ...values as object }];
+    });
+    chain.onConflictDoNothing = vi.fn(() => chain);
+    chain.onConflictDoUpdate = vi.fn(() => chain);
+    return chain;
+  });
   const updateSet = vi.fn((values: unknown) => ({
     where: vi.fn(() => ({
-      returning: vi.fn(async () => [updateResults.shift() ?? { id: 'updated-id', ...values as object }]),
+      returning: vi.fn(async () => [updateResults.shift() ?? { id: 'updated-id', ...(pendingPaperOrder ?? {}), ...values as object }]),
     })),
   }));
   const selectResult: unknown[] = [];
   const selectResults: unknown[][] = [];
 
   return {
+    controls,
     insertResults,
     updateResults,
     selectResult,
@@ -113,8 +131,9 @@ function createMockDb() {
     updateSet,
     query: {
       agentReports: { findFirst: vi.fn() },
-      paperTradeOrders: { findFirst: vi.fn() },
-      realTradeOrders: { findFirst: vi.fn(), findMany: vi.fn() },
+      paperTradeOrders: { findFirst: vi.fn(), findMany: vi.fn(async () => []) },
+      realTradeOrders: { findFirst: vi.fn(), findMany: vi.fn(async (): Promise<unknown[]> => []) },
+      portfolioSnapshots: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
       strategies: { findFirst: vi.fn() },
       portfolios: { findFirst: vi.fn() },
       strategyRuns: { findFirst: vi.fn() },
@@ -226,6 +245,39 @@ describe('agent route handlers', () => {
     }));
   });
 
+  it('repairs a real strategy baseline from full official NAV rather than cash', async () => {
+    const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { POST } = await import('@/app/api/agent/strategies/register/route');
+    const existing = {
+      id: 'strategy-1', userId: 'user-1', strategyId: 'real-arb', agentMode: 'real',
+      platform: 'kalshi', status: 'active', startingBalance: '0.00', riskConfig: {}, schedule: null, metadata: {},
+    };
+    db.query.strategies.findFirst.mockResolvedValue(existing);
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 800, positionsValue: 400, totalValue: 1200, pnl: 0,
+      positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
+
+    const response = await POST(makeRequest({
+      body: { strategy_id: 'real-arb', account_id: 'default', is_paper_trading: false, platform: 'kalshi' },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({ startingBalance: '1200.00' }));
+  });
+
+  it('does not report degraded registration success after a database failure', async () => {
+    const { POST } = await import('@/app/api/agent/strategies/register/route');
+    db.query.strategies.findFirst.mockRejectedValue(new Error('database unavailable'));
+
+    const response = await POST(makeRequest({
+      body: { strategy_id: 'arb', account_id: 'default', is_paper_trading: true, platform: 'kalshi' },
+    }) as never);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: 'Internal server error' });
+  });
+
   it('writes, lists, and reads strategy reports through /api/agent/reports', async () => {
     const reportsRoute = await import('@/app/api/agent/reports/route');
     const reportByIdRoute = await import('@/app/api/agent/reports/[id]/route');
@@ -250,8 +302,17 @@ describe('agent route handlers', () => {
         title: 'Run',
       },
     }) as never);
-    expect(written.status).toBe(201);
-    await expect(written.json()).resolves.toMatchObject({
+    const writtenBody = await written.json();
+    expect(written.status, JSON.stringify(writtenBody)).toBe(201);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      portfolioSummary: expect.objectContaining({
+        verified: expect.objectContaining({ source: 'server_paper_ledger', unpriced_positions_count: 0 }),
+      }),
+      tradeSummary: expect.objectContaining({
+        verified: expect.objectContaining({ scope: 'strategy_recent_orders', recent_trades: [] }),
+      }),
+    }));
+    expect(writtenBody).toMatchObject({
       data: { filename: 'run.md' },
       updated: false,
     });
@@ -290,6 +351,79 @@ describe('agent route handlers', () => {
     });
     await expect(read.json()).resolves.toMatchObject({
       data: { filename: 'run.md', content: '# Report' },
+    });
+  });
+
+  it('stores official verified portfolio and run-scoped orders for real reports', async () => {
+    const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { POST } = await import('@/app/api/agent/reports/route');
+    const runId = '123e4567-e89b-42d3-a456-426614174000';
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'commander_real', agentMode: 'real', platform: 'kalshi',
+      startingBalance: '1000.00',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue({
+      id: runId, strategyId: 'strategy-1', status: 'running', startedAt: new Date(),
+    });
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    db.query.realTradeOrders.findMany.mockResolvedValue([{ id: 'official-order', runId, status: 'EXECUTED' }]);
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1050, positionsValue: 50, totalValue: 1100, pnl: 75,
+      unpricedPositionsCount: 0, positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
+
+    const response = await POST(makeRequest({
+      body: { strategy_id: 'commander_real', filename: 'real.md', content: '# Real', run_id: runId },
+    }) as never);
+
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(201);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      portfolioSummary: expect.objectContaining({
+        verified: expect.objectContaining({ source: 'official_venue', total_value: 1100, pnl: 100 }),
+      }),
+      tradeSummary: expect.objectContaining({
+        verified: expect.objectContaining({ source: 'official_order_ledger', scope: 'run', run_id: runId }),
+      }),
+    }));
+  });
+
+  it('rejects a report run_id that is not owned by the strategy', async () => {
+    const { POST } = await import('@/app/api/agent/reports/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'arb', agentMode: 'paper', platform: 'polymarket_us',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+
+    const response = await POST(makeRequest({
+      body: {
+        strategy_id: 'arb', filename: 'bad-run.md', content: '# Bad run',
+        run_id: '123e4567-e89b-42d3-a456-426614174000',
+      },
+    }) as never);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'run_id does not belong to this strategy',
+    });
+  });
+
+  it('returns totalPnL in the real portfolio shape consumed by MCP clients', async () => {
+    const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { GET } = await import('@/app/api/polymarket-us/portfolio/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', agentMode: 'real', platform: 'polymarket_us', startingBalance: '1000.00',
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 900, positionsValue: 150, totalValue: 1050, pnl: 25,
+      positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { totalValue: 1050, totalPnL: 50, totalPnLPercent: 5 },
     });
   });
 
@@ -368,12 +502,73 @@ describe('agent route handlers', () => {
     });
   });
 
+  it('starts a server-audited strategy run when MCP context bootstraps a cycle', async () => {
+    const { GET } = await import('@/app/api/agent/context/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'high_freq_retro', agentMode: 'paper', platform: 'polymarket_us',
+      status: 'active', startingBalance: '10000.00', riskConfig: {}, schedule: '*/15 * * * *',
+    });
+    db.query.portfolios.findFirst.mockResolvedValue({ balance: '10000.00', initialBalance: '10000.00' });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.selectResults.push([], [], []);
+    db.insertResults.push({ id: 'run-1', status: 'running' });
+
+    const response = await GET(makeRequest({
+      url: 'https://example.test/api/agent/context?strategy_id=high_freq_retro&start_run=true&trigger_id=smith%3Ahigh_freq_retro',
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      strategyId: 'strategy-1',
+      triggerId: 'smith:high_freq_retro',
+      status: 'running',
+    }));
+    await expect(response.json()).resolves.toMatchObject({ run_id: 'run-1' });
+  });
+
+  it('attaches a report to the active run and marks the run completed', async () => {
+    const { POST } = await import('@/app/api/agent/reports/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'high_freq_retro', agentMode: 'paper', platform: 'polymarket_us',
+      startingBalance: '10000.00',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue({
+      id: 'run-1', strategyId: 'strategy-1', status: 'running', startedAt: new Date(),
+    });
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    db.query.paperTradeOrders.findMany.mockResolvedValue([]);
+    db.insertResults.push({
+      id: 'report-1', strategyName: 'high_freq_retro', filename: 'run.md',
+      content: '# Run', portfolioSummary: {}, tradeSummary: {}, createdAt: new Date(),
+    });
+
+    const response = await POST(makeRequest({
+      body: { strategy_id: 'high_freq_retro', filename: 'run.md', content: '# Run' },
+    }) as never);
+
+    expect(response.status).toBe(201);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-1',
+      tradeSummary: expect.objectContaining({
+        verified: expect.objectContaining({ scope: 'run', run_id: 'run-1' }),
+      }),
+    }));
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'completed',
+      summary: 'Saved report run.md',
+    }));
+  });
+
   it('returns existing paper order for duplicate idempotency key', async () => {
     const { POST } = await import('@/app/api/agent/paper-trades/route');
 
     db.query.paperTradeOrders.findFirst.mockResolvedValue({
       id: 'paper-order-1',
       idempotencyKey: 'idem-1',
+      status: 'FILLED',
+    });
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'arb', agentMode: 'paper', platform: 'kalshi', status: 'active',
     });
 
     const response = await POST(makeRequest({
@@ -385,6 +580,38 @@ describe('agent route handlers', () => {
     await expect(response.json()).resolves.toMatchObject({
       data: { idempotencyKey: 'idem-1' },
       message: 'Returned existing paper order (idempotent)',
+    });
+  });
+
+  it('lets only the database idempotency claimant execute a concurrent paper order', async () => {
+    const { executeTrade } = await import('@/lib/trading-engine');
+    const { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook } = await import('@/lib/polymarket-us');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.controls.pendingClaimConflict = true;
+    db.query.paperTradeOrders.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'winner', idempotencyKey: 'race-key', status: 'PENDING' });
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'arb', agentMode: 'paper', platform: 'polymarket_us', status: 'active',
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    vi.mocked(getPolymarketUsMarket).mockResolvedValue({ slug: 'market', closed: false, active: true } as never);
+    vi.mocked(getPolymarketUsOutcomeOrderBook).mockResolvedValue({
+      market: 'market', assetId: 'market:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.4, size: 100 }], asks: [{ price: 0.5, size: 100 }],
+    });
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'race-key' },
+      body: { strategy_id: 'arb', slug: 'market', outcome: 'YES', side: 'BUY', amount: 10 },
+    }) as never);
+
+    expect(response.status).toBe(202);
+    expect(executeTrade).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      data: { idempotencyKey: 'race-key', status: 'PENDING' },
     });
   });
 
@@ -478,7 +705,7 @@ describe('agent route handlers', () => {
       outcome: 'YES', side: 'BUY', shares: 36.666667, price: 0.272727, total: 10,
       timestamp: '2026-07-17T00:00:00.000Z',
     });
-    db.insertResults.push({ id: 'paper-us', platform: 'polymarket_us', fillModel: 'polymarket_us_orderbook_depth_fok' });
+    db.insertResults.push({ id: 'decision-us', status: 'ACCEPTED' });
 
     const response = await POST(makeRequest({
       headers: { 'x-idempotency-key': 'pmus-depth' },
@@ -493,7 +720,47 @@ describe('agent route handlers', () => {
     }));
     expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
       fillModel: 'polymarket_us_orderbook_depth_fok',
+      status: 'PENDING',
+    }));
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'polymarket_us',
+      status: 'ACCEPTED',
+      rejectionReasons: [],
+    }));
+    expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
       result: expect.objectContaining({ shadow_fill: expect.objectContaining({ levelsFilled: 2 }) }),
+    }));
+  });
+
+  it('records Polymarket US server-risk rejections in the decision ledger', async () => {
+    const { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook } = await import('@/lib/polymarket-us');
+    const { POST } = await import('@/app/api/agent/paper-trades/route');
+
+    db.query.paperTradeOrders.findFirst.mockResolvedValue(null);
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'hft', agentMode: 'paper', platform: 'polymarket_us',
+      status: 'active', riskConfig: { max_single_trade_pct: 0.05 },
+    });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.query.agentReports.findFirst.mockResolvedValue(null);
+    vi.mocked(getPolymarketUsMarket).mockResolvedValue({
+      slug: 'oversized', title: 'Oversized', eventSlug: 'event-1', closed: false, active: true,
+    } as never);
+    vi.mocked(getPolymarketUsOutcomeOrderBook).mockResolvedValue({
+      market: 'oversized', assetId: 'oversized:YES', timestamp: new Date().toISOString(), bids: [],
+      asks: [{ price: 0.5, size: 2_000 }],
+    });
+
+    const response = await POST(makeRequest({
+      headers: { 'x-idempotency-key': 'pmus-risk-reject' },
+      body: { strategy_id: 'hft', slug: 'oversized', outcome: 'YES', side: 'BUY', amount: 600 },
+    }) as never);
+
+    expect(response.status).toBe(403);
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'polymarket_us',
+      status: 'REJECTED',
+      rejectionReasons: ['SERVER_RISK_REJECTED'],
     }));
   });
 
@@ -628,6 +895,7 @@ describe('agent route handlers', () => {
   });
 
   it('rejects disabled real trading while persisting a real trade audit row', async () => {
+    const { getKalshiMarket, getKalshiOrderBook } = await import('@/lib/kalshi');
     const { POST } = await import('@/app/api/agent/real-trades/route');
 
     db.query.strategies.findFirst.mockResolvedValue({
@@ -643,6 +911,11 @@ describe('agent route handlers', () => {
       status: 'REJECTED',
       error: { code: 'REAL_TRADING_DISABLED' },
     });
+    vi.mocked(getKalshiMarket).mockResolvedValue({ status: 'active' });
+    vi.mocked(getKalshiOrderBook).mockResolvedValue({
+      market: 'KXTEST', assetId: 'kalshi:KXTEST:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.24, size: 100 }], asks: [{ price: 0.25, size: 100 }],
+    });
 
     const response = await POST(makeRequest({
       body: {
@@ -651,7 +924,6 @@ describe('agent route handlers', () => {
         outcome: 'YES',
         side: 'BUY',
         amount: 10,
-        price: 0.25,
       },
     }) as never);
 
@@ -689,7 +961,10 @@ describe('agent route handlers', () => {
       market: 'KXTEST', assetId: 'kalshi:KXTEST:YES', timestamp: new Date().toISOString(),
       bids: [{ price: 0.24, size: 100 }], asks: [{ price: 0.25, size: 100 }],
     });
-    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({ totalValue: 1000 } as never);
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1000, positionsValue: 0, totalValue: 1000, pnl: 0,
+      positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
     vi.mocked(submitOfficialRealTrade).mockResolvedValue({
       officialOrderId: 'official-1',
       clientOrderId: 'client-1',
@@ -747,6 +1022,72 @@ describe('agent route handlers', () => {
     });
   });
 
+  it('rejects an enabled real BUY that exceeds the server risk configuration', async () => {
+    const { submitOfficialRealTrade, getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { getKalshiMarket, getKalshiOrderBook } = await import('@/lib/kalshi');
+    const { POST } = await import('@/app/api/agent/real-trades/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'real-arb', agentMode: 'real', platform: 'kalshi',
+      status: 'active', startingBalance: '1000.00', metadata: { real_trading_enabled: true },
+      riskConfig: { max_single_trade_pct: 0.01, max_market_exposure_pct: 0.05, min_cash_reserve_pct: 0.3 },
+    });
+    vi.mocked(getKalshiMarket).mockResolvedValue({ status: 'active', event_ticker: 'EVENT' });
+    vi.mocked(getKalshiOrderBook).mockResolvedValue({
+      market: 'KXTEST', assetId: 'kalshi:KXTEST:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.24, size: 100 }], asks: [{ price: 0.25, size: 100 }],
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1000, positionsValue: 0, totalValue: 1000, pnl: 0,
+      positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
+    db.insertResults.push({ id: 'risk-rejection', status: 'REJECTED' });
+
+    const response = await POST(makeRequest({
+      body: { strategy_id: 'real-arb', slug: 'KXTEST', outcome: 'YES', side: 'BUY', shares: 50 },
+    }) as never);
+
+    expect(response.status).toBe(403);
+    expect(submitOfficialRealTrade).not.toHaveBeenCalled();
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'REJECTED',
+      error: expect.objectContaining({ code: 'SERVER_RISK_REJECTED' }),
+    }));
+    await expect(response.json()).resolves.toMatchObject({ code: 'SERVER_RISK_REJECTED' });
+  });
+
+  it('requires a structured proposal for Polymarket US real BUYs', async () => {
+    const { submitOfficialRealTrade, getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook } = await import('@/lib/polymarket-us');
+    const { POST } = await import('@/app/api/agent/real-trades/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'real-us', agentMode: 'real', platform: 'polymarket_us',
+      status: 'active', startingBalance: '1000.00', metadata: { real_trading_enabled: true },
+      riskConfig: { max_single_trade_pct: 0.05, max_market_exposure_pct: 0.1, min_cash_reserve_pct: 0.2 },
+    });
+    vi.mocked(getPolymarketUsMarket).mockResolvedValue({
+      slug: 'market', eventSlug: 'event', closed: false, active: true,
+    } as never);
+    vi.mocked(getPolymarketUsOutcomeOrderBook).mockResolvedValue({
+      market: 'market', assetId: 'market:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.24, size: 100 }], asks: [{ price: 0.25, size: 100 }],
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1000, positionsValue: 0, totalValue: 1000, pnl: 0,
+      positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
+
+    const response = await POST(makeRequest({
+      body: { strategy_id: 'real-us', slug: 'market', outcome: 'YES', side: 'BUY', amount: 10 },
+    }) as never);
+
+    expect(response.status).toBe(422);
+    expect(submitOfficialRealTrade).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'PROPOSAL_REJECTED', reasons: ['MISSING_STRUCTURED_PROPOSAL'],
+    });
+  });
+
   it('cancels real orders through the official client and writes official snapshot', async () => {
     const {
       cancelOfficialRealOrder,
@@ -763,6 +1104,7 @@ describe('agent route handlers', () => {
       officialOrderId: 'official-1',
       marketSlugOrTicker: 'KXTEST',
     });
+    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', startingBalance: '1000.00' });
     db.updateResults.push(
       { id: 'real-order-1', status: 'CANCEL_SUBMITTING' },
       { id: 'real-order-1', status: 'CANCELLED' },

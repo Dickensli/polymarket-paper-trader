@@ -9,6 +9,7 @@ import {
   agentReports,
   portfolioSnapshots,
   realTradeOrders,
+  strategyRuns,
 } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { kalshiOrderQuantity, normalizeKalshiOrderStatus } from '@/lib/official-trading';
@@ -59,6 +60,46 @@ export async function GET(request: NextRequest) {
     });
 
     const is_setup = !!strategy;
+
+    // MCP agents opt into a server-audited run at bootstrap. The schedule on
+    // the strategy row is metadata only; this run ledger is what lets us tell
+    // a completed no-trade cycle from an agent that disappeared mid-run.
+    let runId: string | null = null;
+    if (strategy && request.nextUrl.searchParams.get('start_run') === 'true') {
+      const triggerId = (request.nextUrl.searchParams.get('trigger_id') || 'mcp-context-bootstrap').slice(0, 255);
+      const running = await db.query.strategyRuns.findFirst({
+        where: and(
+          eq(strategyRuns.strategyId, strategy.id),
+          eq(strategyRuns.status, 'running'),
+        ),
+        orderBy: [desc(strategyRuns.startedAt)],
+      });
+      const staleBefore = Date.now() - 10 * 60 * 1000;
+      if (running && running.startedAt.getTime() >= staleBefore) {
+        runId = running.id;
+      } else {
+        if (running) {
+          await db.update(strategyRuns).set({
+            status: 'failed',
+            finishedAt: new Date(),
+            error: 'Agent run was superseded without a saved completion report.',
+          }).where(eq(strategyRuns.id, running.id));
+        }
+        const [createdRun] = await db.insert(strategyRuns).values({
+          strategyId: strategy.id,
+          userId: session.user.id,
+          triggerId,
+          status: 'running',
+          inputContext: {
+            source: 'get_strategy_context',
+            platform: strategy.platform,
+            agent_mode: strategy.agentMode,
+            schedule: strategy.schedule,
+          },
+        }).returning();
+        runId = createdRun?.id ?? null;
+      }
+    }
 
     // ── 2. Portfolio ───────────────────────────────────────────
     const portfolio = await db.query.portfolios.findFirst({
@@ -320,6 +361,7 @@ export async function GET(request: NextRequest) {
       recent_trades: tradeHistory,
       open_orders: openOrders,
       recent_reports: recentReports,
+      run_id: runId,
       warnings,
     });
   } catch (err) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { portfolioSnapshots, realTradeOrders } from '@/lib/db/schema';
+import { portfolioSnapshots, realTradeOrders, strategies } from '@/lib/db/schema';
 import {
   cancelOfficialRealOrder,
   getOfficialPortfolioSnapshot,
@@ -60,6 +60,12 @@ export async function POST(
     if (!order || order.userId !== session.user.id) {
       return NextResponse.json({ error: 'Real order not found' }, { status: 404 });
     }
+    const strategy = await db.query.strategies.findFirst({
+      where: eq(strategies.id, order.strategyId),
+    });
+    if (!strategy) {
+      return NextResponse.json({ error: 'Strategy for real order not found' }, { status: 409 });
+    }
 
     if (order.platform === 'polymarket') {
       return NextResponse.json(
@@ -111,7 +117,7 @@ export async function POST(
           cash: officialSnapshot.cash.toFixed(2),
           positionsValue: officialSnapshot.positionsValue.toFixed(2),
           totalValue: officialSnapshot.totalValue.toFixed(2),
-          pnl: officialSnapshot.pnl.toFixed(6),
+          pnl: (officialSnapshot.totalValue - Number(strategy.startingBalance || 0)).toFixed(6),
           positions: officialSnapshot.positions,
           orders: officialSnapshot.orders,
         })

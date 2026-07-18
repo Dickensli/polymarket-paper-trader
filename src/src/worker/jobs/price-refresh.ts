@@ -1,14 +1,15 @@
 import cron from 'node-cron';
 import { getDb } from '@/lib/db';
 import { positions } from '@/lib/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { getMidpoint } from '@/lib/polymarket';
-import { getKalshiOutcomePrice } from '@/lib/kalshi';
+import { getKalshiOrderBook } from '@/lib/kalshi';
 import {
-  getPolymarketUsOutcomePrice,
+  getPolymarketUsOutcomeOrderBook,
   parsePolymarketUsTokenId,
 } from '@/lib/polymarket-us';
 import { Redis } from '@upstash/redis';
+import { simulateSellFill } from '@/lib/orderbook-simulator';
 
 /**
  * Detect whether a tokenId is a Kalshi ticker.
@@ -56,27 +57,27 @@ export async function runPriceRefresh() {
       .map((p) => p.tokenId)
   ));
 
-  const kalshiKeys = Array.from(new Map(
-    openPositions.flatMap((position) => {
+  const kalshiKeys = openPositions.flatMap((position) => {
       const parsed = parseKalshiPosition(position.tokenId, position.outcome);
       if (!parsed) return [];
-      const key = `${position.tokenId}:${parsed.outcome}`;
-      return [[key, { storedTokenId: position.tokenId, ...parsed }] as const];
-    }),
-  ).values());
+      return [{ positionId: position.id, storedTokenId: position.tokenId, shares: Number(position.shares), ...parsed }];
+    });
 
-  const polymarketUsKeys = Array.from(new Map(
-    openPositions.flatMap((position) => {
+  const polymarketUsKeys = openPositions.flatMap((position) => {
       if (parseKalshiPosition(position.tokenId, position.outcome)) return [];
       const parsed = parsePolymarketUsTokenId(position.tokenId);
       if (!parsed && position.platform !== 'polymarket_us') return [];
       const slug = parsed?.slug ?? position.marketId;
       const outcome = parsed?.outcome ?? position.outcome;
       if (!slug || (outcome !== 'YES' && outcome !== 'NO')) return [];
-      const key = `${slug}\u0000${outcome}`;
-      return [[key, { storedTokenId: position.tokenId, slug, outcome }] as const];
-    }),
-  ).values());
+      return [{
+        positionId: position.id,
+        storedTokenId: position.tokenId,
+        shares: Number(position.shares),
+        slug,
+        outcome,
+      }];
+    });
 
   // Fetch Polymarket prices
   const polyPrices = await Promise.all(
@@ -88,18 +89,22 @@ export async function runPriceRefresh() {
 
   // Fetch Kalshi prices (public API, no API key needed)
   const kalshiPrices = await Promise.all(
-    kalshiKeys.map(async ({ storedTokenId, ticker, outcome }) => {
-      // Mark an existing long at executable liquidation value, never at the
-      // higher BUY ask. This keeps paper NAV and graduation conservative.
-      const price = await getKalshiOutcomePrice(ticker, outcome, 'SELL').catch(() => null);
-      return { storedTokenId, outcome, midpoint: price };
+    kalshiKeys.map(async ({ positionId, ticker, outcome, shares }) => {
+      const book = await getKalshiOrderBook(ticker, outcome).catch(() => null);
+      if (!book) return { positionId, midpoint: null };
+      const fill = simulateSellFill(book, shares, 0, 'FOK');
+      // A reachable book with insufficient full depth has zero conservative
+      // liquidation value; a missing book leaves the old mark to become stale.
+      return { positionId, midpoint: fill.success ? fill.avgPrice : 0 };
     })
   );
 
   const polymarketUsPrices = await Promise.all(
-    polymarketUsKeys.map(async ({ storedTokenId, slug, outcome }) => {
-      const price = await getPolymarketUsOutcomePrice(slug, outcome, 'MARK').catch(() => null);
-      return { storedTokenId, outcome, midpoint: price };
+    polymarketUsKeys.map(async ({ positionId, slug, outcome, shares }) => {
+      const book = await getPolymarketUsOutcomeOrderBook(slug, outcome).catch(() => null);
+      if (!book) return { positionId, midpoint: null };
+      const fill = simulateSellFill(book, shares, 0, 'FOK');
+      return { positionId, midpoint: fill.success ? fill.avgPrice : 0 };
     }),
   );
 
@@ -118,31 +123,23 @@ export async function runPriceRefresh() {
   }
 
   // 4. Update DB and Cache — Kalshi positions
-  for (const { storedTokenId, outcome, midpoint } of kalshiPrices) {
+  for (const { positionId, midpoint } of kalshiPrices) {
     if (midpoint === null || typeof midpoint !== 'number') continue;
-
-    if (redis) {
-      await redis.set(`price:${storedTokenId}:${outcome}`, midpoint, { ex: 30 }).catch(() => {});
-    }
 
     await db
       .update(positions)
       .set({ currentPrice: midpoint.toFixed(6), updatedAt: new Date() })
-      .where(and(eq(positions.tokenId, storedTokenId), eq(positions.outcome, outcome)));
+      .where(eq(positions.id, positionId));
   }
 
   // 5. Update Polymarket US positions from the US venue, never the
   // international Polymarket CLOB token endpoint.
-  for (const { storedTokenId, outcome, midpoint } of polymarketUsPrices) {
+  for (const { positionId, midpoint } of polymarketUsPrices) {
     if (midpoint === null || typeof midpoint !== 'number') continue;
-
-    if (redis) {
-      await redis.set(`price:${storedTokenId}:${outcome}`, midpoint, { ex: 30 }).catch(() => {});
-    }
     await db
       .update(positions)
       .set({ currentPrice: midpoint.toFixed(6), updatedAt: new Date() })
-      .where(and(eq(positions.tokenId, storedTokenId), eq(positions.outcome, outcome)));
+      .where(eq(positions.id, positionId));
   }
   
   return polymarketTokenIds.length + kalshiKeys.length + polymarketUsKeys.length;

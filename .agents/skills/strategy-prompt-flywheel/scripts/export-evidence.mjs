@@ -89,11 +89,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -116,11 +114,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -147,11 +143,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -176,11 +170,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -198,11 +190,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -220,11 +210,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -247,11 +235,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -274,11 +260,9 @@ try {
       select id,
              greatest(
                ${requestedSince}::timestamptz,
-               coalesce(
-                 nullif(metadata->>'performance_baseline_at', '')::timestamptz,
-                 nullif(metadata->>'last_destructive_reset_at', '')::timestamptz,
-                 created_at
-               )
+               coalesce(nullif(metadata->>'performance_baseline_at', '')::timestamptz, created_at),
+               coalesce(nullif(metadata->>'last_destructive_reset_at', '')::timestamptz, created_at),
+               created_at
              ) as effective_since
       from strategies
       where id in ${sql(strategyIds)}
@@ -312,9 +296,12 @@ try {
   const snapshotsByStrategy = new Map(latestSnapshotRows.map((row) => [row.strategy_id, row]));
 
   const strategies = strategyRows.map((strategy) => {
-    const baselineAt = strategy.metadata?.performance_baseline_at
-      ?? strategy.metadata?.last_destructive_reset_at
-      ?? strategy.created_at;
+    const baselineCandidates = [
+      strategy.created_at,
+      strategy.metadata?.performance_baseline_at,
+      strategy.metadata?.last_destructive_reset_at,
+    ].map((value) => new Date(value).getTime()).filter(Number.isFinite);
+    const baselineAt = new Date(Math.max(...baselineCandidates));
     const effectiveSince = new Date(Math.max(requestedSince.getTime(), new Date(baselineAt).getTime()));
     const count = reportCountsByStrategy.get(strategy.id);
     const reportCount = count?.report_count ?? 0;

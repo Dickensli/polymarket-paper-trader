@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateStrategyGraduation } from '@/lib/strategy-graduation';
+import { evaluateStrategyGraduation, isPolicyViolationDecision } from '@/lib/strategy-graduation';
 
 describe('shadow graduation scorecard', () => {
   it('graduates only after every server-side criterion passes', () => {
@@ -30,5 +30,11 @@ describe('shadow graduation scorecard', () => {
     expect(result.graduated).toBe(false);
     expect(result.shouldNotify).toBe(false);
     expect(result.unmetRequirements).toHaveLength(7);
+  });
+
+  it('does not treat ordinary proposal validation failures as policy violations', () => {
+    expect(isPolicyViolationDecision({ status: 'REJECTED', rejectionReasons: ['PRICE_MISMATCH'] })).toBe(false);
+    expect(isPolicyViolationDecision({ status: 'REJECTED', rejectionReasons: ['SERVER_RISK_REJECTED'] })).toBe(true);
+    expect(isPolicyViolationDecision({ status: 'ACCEPTED', rejectionReasons: ['SERVER_RISK_REJECTED'] })).toBe(false);
   });
 });

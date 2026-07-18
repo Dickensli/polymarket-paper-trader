@@ -98,16 +98,6 @@ export async function POST(request: NextRequest) {
       slippageApplied: t.slippageApplied,
     });
 
-    const existingOrder = await db.query.paperTradeOrders.findFirst({
-      where: eq(paperTradeOrders.idempotencyKey, idempotencyKey),
-    });
-    if (existingOrder) {
-      return NextResponse.json(
-        { data: sanitizePaperOrder(existingOrder), message: 'Returned existing paper order (idempotent)' },
-        { status: 200 },
-      );
-    }
-
     let body: unknown;
     try {
       body = await request.json();
@@ -156,6 +146,20 @@ export async function POST(request: NextRequest) {
             'This endpoint is for paper trading only. Use /api/agent/real-trades for real trading.',
         },
         { status: 400 },
+      );
+    }
+
+    const existingOrder = await db.query.paperTradeOrders.findFirst({
+      where: and(
+        eq(paperTradeOrders.strategyId, strategy.id),
+        eq(paperTradeOrders.userId, session.user.id),
+        eq(paperTradeOrders.idempotencyKey, idempotencyKey),
+      ),
+    });
+    if (existingOrder) {
+      return NextResponse.json(
+        { data: sanitizePaperOrder(existingOrder), message: 'Returned existing paper order (idempotent)' },
+        { status: existingOrder.status === 'PENDING' ? 202 : 200 },
       );
     }
 
@@ -342,6 +346,58 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const fillModel = platform === 'kalshi'
+      ? 'live_orderbook_depth_fok'
+      : platform === 'polymarket_us'
+        ? 'polymarket_us_orderbook_depth_fok'
+        : 'paper_midpoint';
+    const pendingValues = {
+      strategyId: strategy.id,
+      userId: session.user.id,
+      runId,
+      reportId: currentReport?.id ?? null,
+      platform,
+      marketId,
+      marketSlug: order.slug,
+      outcome: order.outcome,
+      side: order.side,
+      quantity: shares.toFixed(6),
+      price: price.toFixed(6),
+      notional: (shares * price).toFixed(2),
+      fillModel,
+      status: 'PENDING' as const,
+      idempotencyKey,
+      request: order,
+      result: {},
+    };
+    const [claimedOrder] = await db.insert(paperTradeOrders)
+      .values(pendingValues)
+      .onConflictDoNothing({
+        target: [paperTradeOrders.strategyId, paperTradeOrders.idempotencyKey],
+      })
+      .returning();
+    if (!claimedOrder) {
+      const concurrentOrder = await db.query.paperTradeOrders.findFirst({
+        where: and(
+          eq(paperTradeOrders.strategyId, strategy.id),
+          eq(paperTradeOrders.userId, session.user.id),
+          eq(paperTradeOrders.idempotencyKey, idempotencyKey),
+        ),
+      });
+      if (!concurrentOrder) throw new Error('Idempotency claim conflict could not be resolved');
+      return NextResponse.json(
+        { data: sanitizePaperOrder(concurrentOrder), message: 'Returned concurrent paper order (idempotent)' },
+        { status: concurrentOrder.status === 'PENDING' ? 202 : 200 },
+      );
+    }
+
+    const rejectClaim = async (code: string, message: string) => {
+      await db.update(paperTradeOrders).set({
+        status: 'REJECTED',
+        result: { error: { code, message } },
+      }).where(eq(paperTradeOrders.id, claimedOrder.id));
+    };
+
     // ── Enforce server-side risk ──────────────────────────────
     // Prompt rules are advisory; this guard prevents a confused agent from
     // bypassing per-trade, cumulative-market, and cash-reserve limits.
@@ -366,6 +422,7 @@ export async function POST(request: NextRequest) {
             })
           : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
         if (!validation.valid) {
+          await rejectClaim('PROPOSAL_REJECTED', validation.reasons.join(', '));
           await db.insert(strategyDecisions).values({
             strategyId: strategy.id, userId: session.user.id, runId,
             platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
@@ -387,43 +444,49 @@ export async function POST(request: NextRequest) {
         riskConfig: strategy.riskConfig,
       });
       if (riskError) {
-        if (platform === 'kalshi') {
-          await db.insert(strategyDecisions).values({
-            strategyId: strategy.id, userId: session.user.id, runId,
-            platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
-            side: order.side, proposal: order.proposal ?? {},
-            serverQuote: { executable_price: price, executable_depth: executableDepth },
-            status: 'REJECTED', rejectionReasons: ['SERVER_RISK_REJECTED'],
-          });
-        }
-        return NextResponse.json({ error: riskError }, { status: 403 });
-      }
-      if (platform === 'kalshi') {
-        const [decision] = await db.insert(strategyDecisions).values({
+        await rejectClaim('SERVER_RISK_REJECTED', riskError);
+        await db.insert(strategyDecisions).values({
           strategyId: strategy.id, userId: session.user.id, runId,
           platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
           side: order.side, proposal: order.proposal ?? {},
-          serverQuote: { executable_price: price, executable_depth: executableDepth, fill: fillDetails },
-          status: 'ACCEPTED', rejectionReasons: [],
-        }).returning();
-        acceptedDecisionId = decision?.id ?? null;
+          serverQuote: { executable_price: price, executable_depth: executableDepth },
+          status: 'REJECTED', rejectionReasons: ['SERVER_RISK_REJECTED'],
+        });
+        return NextResponse.json({ error: riskError }, { status: 403 });
       }
+      const [decision] = await db.insert(strategyDecisions).values({
+        strategyId: strategy.id, userId: session.user.id, runId,
+        platform, agentMode: strategy.agentMode, marketId, outcome: order.outcome,
+        side: order.side, proposal: order.proposal ?? {},
+        serverQuote: { executable_price: price, executable_depth: executableDepth, fill: fillDetails },
+        status: 'ACCEPTED', rejectionReasons: [],
+      }).returning();
+      acceptedDecisionId = decision?.id ?? null;
     }
 
     // ── Execute trade ─────────────────────────────────────────
-    const trade = await executeTrade(session.user.id, {
-      marketId,
-      riskGroupId,
-      marketQuestion,
-      tokenId,
-      outcome: order.outcome,
-      side: order.side,
-      shares,
-      price,
-      idempotencyKey,
-      platform,
-      slippageApplied: fillDetails ? Number(fillDetails.slippageBps ?? 0) / 10_000 : 0,
-    });
+    let trade;
+    try {
+      trade = await executeTrade(session.user.id, {
+        marketId,
+        riskGroupId,
+        marketQuestion,
+        tokenId,
+        outcome: order.outcome,
+        side: order.side,
+        shares,
+        price,
+        idempotencyKey,
+        platform,
+        slippageApplied: fillDetails ? Number(fillDetails.slippageBps ?? 0) / 10_000 : 0,
+      });
+    } catch (error) {
+      await rejectClaim(
+        error instanceof TradingError ? error.code : 'PAPER_EXECUTION_FAILED',
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
 
     await db
       .update(paperTrades)
@@ -442,31 +505,16 @@ export async function POST(request: NextRequest) {
       .where(eq(paperTrades.id, trade.id));
 
     const [paperOrder] = await db
-      .insert(paperTradeOrders)
-      .values({
-        strategyId: strategy.id,
-        userId: session.user.id,
-        runId,
-        reportId: currentReport?.id ?? null,
+      .update(paperTradeOrders)
+      .set({
         paperTradeId: trade.id,
-        platform,
-        marketId,
-        marketSlug: order.slug,
-        outcome: order.outcome,
-        side: order.side,
         quantity: shares.toFixed(6),
         price: price.toFixed(6),
         notional: trade.total.toFixed(2),
-        fillModel: platform === 'kalshi'
-          ? 'live_orderbook_depth_fok'
-          : platform === 'polymarket_us'
-            ? 'polymarket_us_orderbook_depth_fok'
-            : 'paper_midpoint',
         status: 'FILLED',
-        idempotencyKey,
-        request: order,
         result: fillDetails ? { trade, shadow_fill: fillDetails } : trade,
       })
+      .where(eq(paperTradeOrders.id, claimedOrder.id))
       .returning();
 
     if (acceptedDecisionId) {

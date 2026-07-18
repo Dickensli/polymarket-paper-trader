@@ -21,6 +21,15 @@ describe('strategy performance pricing quality', () => {
       { ticker: 'PRICED', pricing_status: 'priced' },
       { ticker: 'NO-BOOK', pricing_status: 'unpriced' },
     ])).toBe(1);
+    expect(countSnapshotUnpricedPositions([
+      { ticker: 'LEGACY-WITHOUT-QUALITY' },
+      { ticker: 'CAMEL', pricingStatus: 'priced' },
+    ])).toBe(1);
     expect(countSnapshotUnpricedPositions(null)).toBe(0);
+  });
+
+  it('treats a fresh zero mark as unpriced', () => {
+    const now = new Date('2026-07-17T22:00:00Z');
+    expect(countUnpricedPositions([{ currentPrice: '0', updatedAt: now }], now)).toBe(1);
   });
 });

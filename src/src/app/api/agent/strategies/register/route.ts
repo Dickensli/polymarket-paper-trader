@@ -108,7 +108,9 @@ export async function POST(request: NextRequest) {
           const { getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
           const venue = platform === 'polymarket_us' ? 'polymarket_us' : 'kalshi';
           const officialSnapshot = await getOfficialPortfolioSnapshot(venue);
-          finalBalance = officialSnapshot.cash;
+          // A real strategy starts from full account equity. Using cash alone
+          // would misclassify pre-existing position value as future profit.
+          finalBalance = officialSnapshot.totalValue;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.warn('[Register Strategy] Failed to fetch real initial balance:', message);
@@ -231,20 +233,10 @@ export async function POST(request: NextRequest) {
       }, { status: 201 });
 
     } catch (dbErr) {
-      console.warn('[Register Route] Database transaction failed, returning degraded success for agent:', dbErr);
-      return NextResponse.json({
-        registered: true,
-        is_new: true,
-        degraded: true,
-        strategy: {
-          strategyId: strategy_id,
-          platform: platform,
-          status: 'active',
-          startingBalance: String(balance),
-          agentMode: is_paper_trading ? 'paper' : 'real',
-        },
-        message: 'Strategy registered in degraded mode (Database offline).'
-      });
+      // Never claim registration succeeded when its durable identity and risk
+      // configuration were not committed.
+      console.error('[Register Route] Database transaction failed:', dbErr);
+      throw dbErr;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

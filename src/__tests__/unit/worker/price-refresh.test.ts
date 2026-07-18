@@ -76,19 +76,19 @@ describe('Price Refresh Job', () => {
 
   it('fetches prices via Kalshi public API for KX-prefixed tickers', async () => {
     mockDb.query.positions.findMany.mockResolvedValue([
-      { id: '1', tokenId: 'KXBTC15M-26JUL091115-15:NO', outcome: 'NO' },
-      { id: '2', tokenId: 'kalshi:KXBTCD-26JUL0914-T62999.99:YES', outcome: 'YES' },
+      { id: '1', tokenId: 'KXBTC15M-26JUL091115-15:NO', outcome: 'NO', shares: '10' },
+      { id: '2', tokenId: 'kalshi:KXBTCD-26JUL0914-T62999.99:YES', outcome: 'YES', shares: '10' },
       { id: '3', tokenId: 'polyTokenA', outcome: 'YES' }, // Polymarket position
     ]);
 
     vi.spyOn(polymarketLib, 'getMidpoint').mockResolvedValue(0.50);
-    vi.spyOn(kalshiLib, 'getKalshiOutcomePrice').mockImplementation(
-      async (ticker, outcome) => {
-        if (ticker === 'KXBTC15M-26JUL091115-15' && outcome === 'NO') return 0.25;
-        if (ticker === 'KXBTCD-26JUL0914-T62999.99' && outcome === 'YES') return 0.60;
-        return null;
-      }
-    );
+    vi.spyOn(kalshiLib, 'getKalshiOrderBook').mockImplementation(async (ticker, outcome) => ({
+      market: ticker,
+      assetId: `kalshi:${ticker}:${outcome}`,
+      timestamp: new Date().toISOString(),
+      bids: [{ price: outcome === 'NO' ? 0.25 : 0.60, size: 10 }],
+      asks: [],
+    }));
 
     const count = await runPriceRefresh();
     
@@ -100,9 +100,9 @@ describe('Price Refresh Job', () => {
     expect(polymarketLib.getMidpoint).toHaveBeenCalledWith('polyTokenA');
 
     // Kalshi called twice (one per unique ticker:outcome)
-    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledTimes(2);
-    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledWith('KXBTC15M-26JUL091115-15', 'NO', 'SELL');
-    expect(kalshiLib.getKalshiOutcomePrice).toHaveBeenCalledWith('KXBTCD-26JUL0914-T62999.99', 'YES', 'SELL');
+    expect(kalshiLib.getKalshiOrderBook).toHaveBeenCalledTimes(2);
+    expect(kalshiLib.getKalshiOrderBook).toHaveBeenCalledWith('KXBTC15M-26JUL091115-15', 'NO');
+    expect(kalshiLib.getKalshiOrderBook).toHaveBeenCalledWith('KXBTCD-26JUL0914-T62999.99', 'YES');
 
     // 3 DB updates total (1 Polymarket + 2 Kalshi)
     expect(mockDb.update).toHaveBeenCalledTimes(3);
@@ -119,30 +119,47 @@ describe('Price Refresh Job', () => {
         platform: 'polymarket_us',
         tokenId: 'polymarket_us:house-midterms:NO',
         outcome: 'NO',
+        shares: '10',
       },
       {
         id: 'us-2',
         platform: 'polymarket_us',
         tokenId: 'polymarket_us:house-midterms:YES',
         outcome: 'YES',
+        shares: '10',
       },
     ]);
-    vi.spyOn(polymarketUsLib, 'getPolymarketUsOutcomePrice').mockImplementation(
-      async (_slug, outcome, side) => {
-        expect(side).toBe('MARK');
-        return outcome === 'NO' ? 0.82 : 0.18;
-      },
-    );
+    vi.spyOn(polymarketUsLib, 'getPolymarketUsOutcomeOrderBook').mockImplementation(async (slug, outcome) => ({
+      market: slug,
+      assetId: `${slug}:${outcome}`,
+      timestamp: new Date().toISOString(),
+      bids: [{ price: outcome === 'NO' ? 0.82 : 0.18, size: 10 }],
+      asks: [],
+    }));
 
     const count = await runPriceRefresh();
 
     expect(count).toBe(2);
-    expect(polymarketUsLib.getPolymarketUsOutcomePrice).toHaveBeenCalledWith(
+    expect(polymarketUsLib.getPolymarketUsOutcomeOrderBook).toHaveBeenCalledWith(
       'house-midterms',
       'NO',
-      'MARK',
     );
     expect(polymarketLib.getMidpoint).not.toHaveBeenCalled();
     expect(mockDb.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks a position at zero when full displayed sell depth is insufficient', async () => {
+    mockDb.query.positions.findMany.mockResolvedValue([
+      { id: 'us-thin', platform: 'polymarket_us', tokenId: 'polymarket_us:thin:YES', outcome: 'YES', shares: '10' },
+    ]);
+    vi.spyOn(polymarketUsLib, 'parsePolymarketUsTokenId').mockReturnValue({ slug: 'thin', outcome: 'YES' });
+    vi.spyOn(polymarketUsLib, 'getPolymarketUsOutcomeOrderBook').mockResolvedValue({
+      market: 'thin', assetId: 'thin:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.4, size: 2 }], asks: [],
+    });
+
+    await runPriceRefresh();
+
+    expect(mockDb.set).toHaveBeenCalledWith(expect.objectContaining({ currentPrice: '0.000000' }));
   });
 });

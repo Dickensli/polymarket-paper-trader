@@ -1,6 +1,6 @@
 import { randomUUID, constants, sign as cryptoSign } from 'crypto';
 import { readFileSync } from 'fs';
-import { getPolymarketUsClient } from '@/lib/polymarket-us';
+import { getPolymarketUsClient, getPolymarketUsMarket } from '@/lib/polymarket-us';
 
 type Platform = 'kalshi' | 'polymarket_us';
 type Outcome = 'YES' | 'NO';
@@ -432,8 +432,10 @@ async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<Offic
   const positionsWithPricingQuality = positionRows.map((position) => {
     const row = position as Record<string, unknown>;
     const ticker = String(row.ticker ?? row.market_ticker ?? '');
+    const market = executionMarkets.get(ticker);
     return {
       ...row,
+      risk_group_id: market?.event_ticker ?? market?.eventTicker ?? ticker,
       pricing_status: unpricedTickerSet.has(ticker) ? 'unpriced' : 'priced',
     };
   });
@@ -552,15 +554,23 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const fillRows = activityRows.filter((row) => row && typeof row === 'object' && String((row as Record<string, unknown>).type) === 'ACTIVITY_TYPE_TRADE');
   const positionsValue = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).cashValue), 0);
   const pnl = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).realized), 0);
-  const positionsWithPricingQuality = positionRows.map((row) => {
+  const positionsWithPricingQuality = await Promise.all(positionRows.map(async (row) => {
     const record = row as Record<string, unknown>;
     const cashValue = (row as Record<string, unknown>).cashValue;
     const rawValue = cashValue && typeof cashValue === 'object' && 'value' in cashValue
       ? (cashValue as Record<string, unknown>).value
       : cashValue;
     const unpriced = rawValue == null || !Number.isFinite(Number(rawValue));
-    return { ...record, pricing_status: unpriced ? 'unpriced' : 'priced' };
-  });
+    const marketSlug = String(
+      record.marketSlug ?? record.market_slug ?? record.marketId ?? record.market_id ?? record.slug ?? '',
+    );
+    const market = marketSlug ? await getPolymarketUsMarket(marketSlug).catch(() => null) : null;
+    return {
+      ...record,
+      risk_group_id: record.eventSlug ?? record.event_slug ?? market?.eventSlug ?? marketSlug,
+      pricing_status: unpriced ? 'unpriced' : 'priced',
+    };
+  }));
   const unpricedPositionsCount = positionsWithPricingQuality
     .filter((row) => row.pricing_status === 'unpriced').length;
   return {

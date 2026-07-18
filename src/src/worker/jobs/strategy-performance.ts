@@ -37,16 +37,20 @@ export function countUnpricedPositions(
 ) {
   const cutoff = now.getTime() - maxAgeMs;
   return rows.filter((row) => (
-    !Number.isFinite(Number(row.currentPrice)) || row.updatedAt.getTime() < cutoff
+    !Number.isFinite(Number(row.currentPrice))
+    || Number(row.currentPrice) <= 0
+    || row.updatedAt.getTime() < cutoff
   )).length;
 }
 
 export function countSnapshotUnpricedPositions(value: unknown) {
   if (!Array.isArray(value)) return 0;
-  return value.filter((row) => (
-    row && typeof row === 'object'
-    && (row as Record<string, unknown>).pricing_status === 'unpriced'
-  )).length;
+  return value.filter((row) => {
+    if (!row || typeof row !== 'object') return true;
+    const record = row as Record<string, unknown>;
+    const status = record.pricing_status ?? record.pricingStatus;
+    return status !== 'priced';
+  }).length;
 }
 
 function bucketDate(date: Date, bucket: Bucket) {
@@ -184,7 +188,8 @@ export async function runStrategyPerformanceCalculation(now = new Date()) {
           && positionBelongsToPlatform(row, strategy.platform)
         ));
         const positionsValue = relevantPositions.reduce((sum, row) => sum + Number(row.shares) * Number(row.currentPrice), 0);
-        const pricingUpdatedAt = relevantPositions.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
+        // Portfolio pricing is only as fresh as its oldest open-position mark.
+        const pricingUpdatedAt = relevantPositions.reduce<Date | null>((oldest, row) => !oldest || row.updatedAt < oldest ? row.updatedAt : oldest, null);
         point = {
           strategyId: strategy.id,
           cash: Number(portfolio.balance),

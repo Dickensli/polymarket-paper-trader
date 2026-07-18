@@ -50,3 +50,14 @@ describe('MCP verified report routing', () => {
     expect(source).toContain('return postVerifiedReport(request)');
   });
 });
+
+describe('Polymarket US MCP sell-all resolution', () => {
+  for (const path of ['polymarket-us-mcp/src/index.ts', 'polymarket-us-mcp/build/index.js']) {
+    it(`${path} resolves ALL against the open portfolio before submitting`, () => {
+      const source = readRepoFile(path);
+      expect(source).toContain('No matching open position was found for this sell request');
+      expect(source).toContain('/polymarket-us/portfolio');
+      expect(source).not.toContain('shares: typeof quantity === "number" ? quantity : undefined');
+    });
+  }
+});

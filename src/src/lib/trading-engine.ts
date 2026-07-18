@@ -153,6 +153,12 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
     const cost = roundTo(shares * avgEntryPrice, 2);
     const unrealizedPnL = roundTo(value - cost, 2);
     const unrealizedPnLPercent = cost > 0 ? roundTo((unrealizedPnL / cost) * 100, 2) : 0;
+    const pricingUpdatedAt = pos.updatedAt.toISOString();
+    const pricingStatus = Number.isFinite(currentPrice)
+      && currentPrice > 0
+      && Date.now() - pos.updatedAt.getTime() <= 10 * 60 * 1000
+      ? 'priced' as const
+      : 'unpriced' as const;
 
     return {
       id: pos.id,
@@ -168,6 +174,8 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
       unrealizedPnLPercent,
       realizedPnL: Number(pos.realizedPnl) || 0,
       createdAt: pos.createdAt.toISOString(),
+      pricingStatus,
+      pricingUpdatedAt,
     };
   });
 

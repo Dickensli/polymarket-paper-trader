@@ -49,4 +49,22 @@ describe('paper trading server-side risk guard', () => {
       riskConfig: { max_trade_pct: 0.2, max_market_exposure_pct: 0.2 },
     })).toContain('Cumulative event exposure');
   });
+
+  it('does not create averaging-down capacity when the current mark falls', () => {
+    const markedDown: Portfolio = {
+      ...portfolio,
+      positions: [{
+        ...portfolio.positions[0],
+        shares: 200,
+        avgEntryPrice: 0.5,
+        currentPrice: 0.1,
+      }],
+    };
+    expect(validatePaperBuyRisk({
+      portfolio: markedDown,
+      marketId: 'same-market',
+      notional: 101,
+      riskConfig: { max_trade_pct: 1, max_market_exposure_pct: 0.2 },
+    })).toContain('Cumulative market exposure');
+  });
 });

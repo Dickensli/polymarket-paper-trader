@@ -8,6 +8,7 @@ import Resend from 'next-auth/providers/resend';
 import { eq } from 'drizzle-orm';
 import { normalizePlatform } from '@/lib/platform';
 import { NextResponse } from 'next/server';
+import { isValidAgentSecret } from '@/lib/agent-auth';
 
 export function getDeterministicUuid(userId: string, accountName: string): string {
   const hash = crypto.createHash('sha256').update(`${userId}:${accountName}`).digest('hex');
@@ -175,17 +176,15 @@ export const auth = async (...args: any[]) => {
     const isProd = process.env.NODE_ENV === 'production';
     const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
 
-    const matchReal = !!(agentSecret && expectedSecret && agentSecret === expectedSecret);
-    const matchMigration = agentSecret === 'jetski_migration_2024';
+    const matchReal = isValidAgentSecret(agentSecret, expectedSecret);
 
     console.log('[Auth Debug] Matching:', {
       matchReal,
-      matchMigration,
       expectedExists: !!expectedSecret,
       envSecretExists: !!process.env.AGENT_SECRET
     });
 
-    if (matchReal || matchMigration) {
+    if (matchReal) {
       const strategyHeader = reqHeaders.get('x-agent-strategy-id');
       if (!strategyHeader || strategyHeader === 'default') {
         console.log('[Auth] Rejecting agent request: x-agent-strategy-id header is missing or cannot be "default".');
@@ -240,8 +239,10 @@ export const auth = async (...args: any[]) => {
           };
         }
       } catch (dbErr) {
-        // Only log warning at runtime, suppressed in production logs to avoid noise
+        // Authentication must fail closed when registration state cannot be
+        // verified. Otherwise a database outage becomes an authorization bypass.
         if (!isProd) console.warn('[Auth] Database sync failed during agent auth:', dbErr);
+        return null;
       }
 
       return {

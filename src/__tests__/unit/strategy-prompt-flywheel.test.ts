@@ -35,6 +35,8 @@ describe('strategy prompt flywheel skill', () => {
   it('keeps the evidence exporter read-only and reset-aware', () => {
     expect(exporter).toContain('set default_transaction_read_only = on');
     expect(exporter).toContain("metadata->>'performance_baseline_at'");
+    expect(exporter).toContain("coalesce(nullif(metadata->>'last_destructive_reset_at'");
+    expect(exporter).toContain('Math.max(...baselineCandidates)');
     expect(exporter).not.toMatch(/\b(insert into|update strategies|delete from|drop table|truncate)\b/i);
   });
 });

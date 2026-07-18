@@ -185,6 +185,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           amount: { type: "number", description: "Dollar amount to spend." },
           shares: { type: "number", description: "Optional exact shares to buy." },
           price: { type: "number", description: "DO NOT USE. Market orders only." },
+          proposal: {
+            type: "object",
+            description: "Required for real-mode BUYs: server-validated research, quote, edge, depth, and sizing facts.",
+            properties: {
+              thesis: { type: "string" },
+              rules_verified: { type: "boolean", const: true },
+              source_urls: { type: "array", items: { type: "string", format: "uri" }, minItems: 1 },
+              fair_probability: { type: "number", minimum: 0.001, maximum: 0.999 },
+              confidence_low: { type: "number", minimum: 0, maximum: 1 },
+              confidence_high: { type: "number", minimum: 0, maximum: 1 },
+              quote_observed_at: { type: "string", format: "date-time" },
+              observed_price: { type: "number", minimum: 0.001, maximum: 0.999 },
+              available_depth: { type: "number", exclusiveMinimum: 0 },
+              net_edge: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+              proposed_nav_pct: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+              exit_condition: { type: "string" },
+              invalidation_condition: { type: "string" },
+            },
+          },
           ...accountProps,
         },
         required: ["slug", "strategy_id"],
@@ -420,17 +439,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return json({ ok: true, data: data.data ?? data });
     }
     case "buy": {
+      const buyArgs = (args ?? {}) as Record<string, unknown>;
       const idempotencyKey = generateIdempotencyKey();
       const data = await callPolyTrader("/agent/trades", {
         method: "POST",
         headers: getAgentHeaders(args, idempotencyKey),
         body: JSON.stringify({
-          strategy_id: (args as any).strategy_id,
-          slug: (args as any).slug,
-          outcome: (args as any).outcome || "YES",
+          strategy_id: buyArgs.strategy_id,
+          slug: buyArgs.slug,
+          outcome: buyArgs.outcome || "YES",
           side: "BUY",
-          amount: (args as any).amount,
-          shares: (args as any).shares,
+          amount: buyArgs.amount,
+          shares: buyArgs.shares,
+          proposal: buyArgs.proposal,
           // price intentionally omitted — market orders only, server fetches live price
           client_order_id: idempotencyKey,
         }),
@@ -438,17 +459,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return json({ ok: true, data: data.data ?? data, idempotency_key: idempotencyKey });
     }
     case "sell": {
+      const sellArgs = (args ?? {}) as Record<string, unknown>;
       const idempotencyKey = generateIdempotencyKey();
-      const quantity = (args as any).quantity || "ALL";
+      const quantity = sellArgs.quantity || "ALL";
+      let slug = typeof sellArgs.slug === "string" ? sellArgs.slug : undefined;
+      let outcome = String(sellArgs.outcome || "YES").toUpperCase() as "YES" | "NO";
+      let shares = typeof quantity === "number" ? quantity : undefined;
+      if (shares === undefined || !slug || sellArgs.positionId) {
+        const portfolioResponse = await callPolyTrader("/polymarket-us/portfolio", {
+          headers: getAgentHeaders(args),
+        });
+        const portfolio = portfolioResponse.data ?? portfolioResponse;
+        const positions: Record<string, unknown>[] = Array.isArray(portfolio.positions)
+          ? portfolio.positions.filter((candidate: unknown): candidate is Record<string, unknown> => Boolean(candidate && typeof candidate === "object"))
+          : [];
+        const position = positions.find((candidate) => {
+          if (sellArgs.positionId) return String(candidate.id ?? candidate.positionId ?? "") === String(sellArgs.positionId);
+          const candidateSlug = String(candidate.marketId ?? candidate.marketSlug ?? candidate.market_slug ?? candidate.slug ?? "");
+          const candidateOutcome = String(candidate.outcome ?? candidate.outcomeSide ?? "YES").toUpperCase();
+          return candidateSlug === String(slug ?? "") && candidateOutcome === outcome;
+        });
+        if (!position) throw new Error("No matching open position was found for this sell request");
+        slug = slug || String(position.marketId ?? position.marketSlug ?? position.market_slug ?? position.slug ?? "");
+        outcome = String(position.outcome ?? position.outcomeSide ?? outcome).toUpperCase() as "YES" | "NO";
+        shares = shares ?? Number(position.shares ?? position.quantity ?? position.position_fp ?? position.position);
+      }
+      const resolvedShares = Number(shares);
+      if (!slug || !Number.isFinite(resolvedShares) || resolvedShares <= 0) {
+        throw new Error("Unable to resolve a positive share quantity and market slug for sell");
+      }
       const data = await callPolyTrader("/agent/trades", {
         method: "POST",
         headers: getAgentHeaders(args, idempotencyKey),
         body: JSON.stringify({
-          strategy_id: (args as any).strategy_id,
-          slug: (args as any).slug,
-          outcome: (args as any).outcome || "YES",
+          strategy_id: sellArgs.strategy_id,
+          slug,
+          outcome,
           side: "SELL",
-          shares: typeof quantity === "number" ? quantity : undefined,
+          shares: resolvedShares,
           // price intentionally omitted — market orders only, server fetches live price
           client_order_id: idempotencyKey,
         }),
@@ -555,7 +603,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const strategy_id = String((args as any).strategy_id);
       if (!strategy_id) throw new Error("Missing required field: strategy_id");
       const data = await callPolyTrader(
-        `/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`,
+        `/agent/context?strategy_id=${encodeURIComponent(strategy_id)}&start_run=true&trigger_id=${encodeURIComponent(`smith:${strategy_id}`)}`,
         { headers: getAgentHeaders(args) },
       );
       return json({ ok: true, data: data.data ?? data });

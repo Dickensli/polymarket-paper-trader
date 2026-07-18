@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq, gte } from 'drizzle-orm';
 import { auth, resolveTargetUserId } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { officialOrderEvents, realTradeOrders, strategies, strategyDecisions } from '@/lib/db/schema';
-import { resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
+import { officialOrderEvents, portfolioSnapshots, realTradeOrders, strategies, strategyDecisions } from '@/lib/db/schema';
+import { getOfficialPortfolioSnapshot, resolveOfficialOrderQuantity, submitOfficialRealTrade } from '@/lib/official-trading';
 import { getKalshiMarket, getKalshiOrderBook, getKalshiOutcomePrice } from '@/lib/kalshi';
-import { getPolymarketUsMarket, getPolymarketUsOutcomePrice } from '@/lib/polymarket-us';
+import { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook, getPolymarketUsOutcomePrice } from '@/lib/polymarket-us';
 import { simulateBuyFill, simulateBuySharesFill } from '@/lib/orderbook-simulator';
 import { tradeProposalSchema, validateTradeProposal } from '@/lib/trade-proposal';
 import { getStrategyGraduation } from '@/lib/strategy-graduation';
+import { calculateOfficialRiskGroupExposure, validateRealBuyRisk } from '@/lib/real-risk';
 
 const realTradeSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -76,9 +77,15 @@ export async function POST(request: NextRequest) {
     }
 
     const order = parsed.data;
-    if (!order.amount && !order.shares) {
+    if (order.price !== undefined) {
       return NextResponse.json(
-        { error: 'Must provide either amount or shares' },
+        { error: 'Caller-supplied prices are not allowed; real orders use a fresh server executable quote' },
+        { status: 400 },
+      );
+    }
+    if (Boolean(order.amount) === Boolean(order.shares)) {
+      return NextResponse.json(
+        { error: 'Provide exactly one of amount or shares' },
         { status: 400 },
       );
     }
@@ -117,7 +124,7 @@ export async function POST(request: NextRequest) {
           marketSlugOrTicker: order.slug,
           side: order.side,
           quantity: order.shares?.toFixed(6) ?? null,
-          price: order.price?.toFixed(6) ?? null,
+          price: null,
           status: 'REJECTED',
           request: order,
           error: { code: 'UNSUPPORTED_PLATFORM', message: 'Polymarket International real trading is out of scope.' },
@@ -130,9 +137,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let executionPrice = order.price;
+    let executionPrice: number | undefined;
     let executableDepth = 0;
     let shadowFill: Record<string, unknown> | null = null;
+    let riskGroupId = order.slug;
     if (!executionPrice) {
       if (strategy.platform === 'kalshi') {
         const market = await getKalshiMarket(order.slug).catch(() => null);
@@ -140,6 +148,7 @@ export async function POST(request: NextRequest) {
         if (!market || (status !== 'open' && status !== 'active')) {
           return NextResponse.json({ error: 'Kalshi market not found or not tradable' }, { status: 400 });
         }
+        riskGroupId = String(market.event_ticker ?? market.eventTicker ?? order.slug);
         if (order.side === 'BUY') {
           const book = await getKalshiOrderBook(order.slug, order.outcome).catch(() => null);
           if (book) {
@@ -160,7 +169,22 @@ export async function POST(request: NextRequest) {
         if (!market || market.closed || market.active === false) {
           return NextResponse.json({ error: 'Polymarket US market not found or not tradable' }, { status: 400 });
         }
-        executionPrice = await getPolymarketUsOutcomePrice(order.slug, order.outcome, order.side).catch(() => null) ?? undefined;
+        riskGroupId = String(market.eventSlug ?? order.slug);
+        if (order.side === 'BUY') {
+          const book = await getPolymarketUsOutcomeOrderBook(order.slug, order.outcome).catch(() => null);
+          if (book) {
+            executableDepth = book.asks.reduce((sum, level) => sum + level.size, 0);
+            const fill = order.shares
+              ? simulateBuySharesFill(book, order.shares, 0, 'FOK')
+              : simulateBuyFill(book, order.amount ?? 0, 0, 'FOK');
+            if (fill.success) {
+              executionPrice = fill.avgPrice;
+              shadowFill = fill as unknown as Record<string, unknown>;
+            }
+          }
+        } else {
+          executionPrice = await getPolymarketUsOutcomePrice(order.slug, order.outcome, order.side).catch(() => null) ?? undefined;
+        }
       }
       if (!executionPrice || executionPrice <= 0 || executionPrice >= 1) {
         return NextResponse.json(
@@ -173,7 +197,7 @@ export async function POST(request: NextRequest) {
     const auditedOrder = {
       ...order,
       price: executionPrice,
-      price_source: order.price ? 'client_limit' : 'server_executable_quote',
+      price_source: 'server_executable_quote',
     };
 
     const enabled = realTradingEnabled(strategy.metadata);
@@ -206,18 +230,18 @@ export async function POST(request: NextRequest) {
     }
 
     const metadata = strategyMetadata(strategy.metadata);
-    if (strategy.platform === 'kalshi' && order.side === 'BUY' && metadata.require_shadow_graduation === true) {
+    if (order.side === 'BUY' && metadata.require_shadow_graduation === true) {
       const accountId = request.headers.get('x-agent-account-id');
       const sourceStrategyId = String(metadata.graduation_source_strategy_id ?? '');
       const sourceUserId = accountId && sourceStrategyId
-        ? resolveTargetUserId(accountId, sourceStrategyId, 'kalshi')
+        ? resolveTargetUserId(accountId, sourceStrategyId, strategy.platform)
         : null;
       const sourceStrategy = sourceUserId ? await db.query.strategies.findFirst({
         where: and(
           eq(strategies.userId, sourceUserId),
           eq(strategies.strategyId, sourceStrategyId),
           eq(strategies.agentMode, 'paper'),
-          eq(strategies.platform, 'kalshi'),
+          eq(strategies.platform, strategy.platform),
         ),
       }) : null;
       const graduation = sourceStrategy ? await getStrategyGraduation(sourceStrategy) : null;
@@ -238,9 +262,70 @@ export async function POST(request: NextRequest) {
     }
 
     let acceptedDecisionId: string | null = null;
-    if (strategy.platform === 'kalshi' && order.side === 'BUY') {
-      const officialSnapshot = await import('@/lib/official-trading')
-        .then(({ getOfficialPortfolioSnapshot }) => getOfficialPortfolioSnapshot('kalshi'));
+    if (order.side === 'BUY') {
+      const officialSnapshot = await getOfficialPortfolioSnapshot(strategy.platform as 'kalshi' | 'polymarket_us');
+      const dayStart = new Date();
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const [snapshots, dailyOrders] = await Promise.all([
+        db.query.portfolioSnapshots.findMany({
+          where: eq(portfolioSnapshots.strategyId, strategy.id),
+          orderBy: [asc(portfolioSnapshots.capturedAt)],
+        }),
+        db.query.realTradeOrders.findMany({
+          where: and(
+            eq(realTradeOrders.strategyId, strategy.id),
+            gte(realTradeOrders.createdAt, dayStart),
+          ),
+        }),
+      ]);
+      const validNavs = snapshots.map((snapshot) => Number(snapshot.totalValue)).filter(Number.isFinite);
+      const todayNavs = snapshots
+        .filter((snapshot) => snapshot.capturedAt >= dayStart)
+        .map((snapshot) => Number(snapshot.totalValue))
+        .filter(Number.isFinite);
+      const dailyStartNav = todayNavs[0] ?? officialSnapshot.totalValue;
+      const peakNav = Math.max(Number(strategy.startingBalance || 0), officialSnapshot.totalValue, ...validNavs);
+      const dailyBuyTrades = dailyOrders.filter((candidate) => (
+        candidate.side === 'BUY'
+        && !['REJECTED', 'ERROR', 'CANCELLED', 'CANCELED'].includes(String(candidate.status).toUpperCase())
+      )).length;
+      const riskError = validateRealBuyRisk({
+        nav: officialSnapshot.totalValue,
+        cash: officialSnapshot.cash,
+        notional: resolvedQuantity * executionPrice,
+        existingRiskGroupExposure: calculateOfficialRiskGroupExposure(
+          officialSnapshot.positions,
+          riskGroupId,
+          order.slug,
+        ),
+        dailyStartNav,
+        peakNav,
+        dailyBuyTrades,
+        riskConfig: strategy.riskConfig,
+      });
+      if (riskError) {
+        const [audit] = await db.insert(realTradeOrders).values({
+          strategyId: strategy.id, userId: session.user.id, runId: order.run_id ?? null,
+          platform: strategy.platform, clientOrderId: order.client_order_id ?? null,
+          marketSlugOrTicker: order.slug, side: order.side,
+          quantity: resolvedQuantity.toFixed(6), price: executionPrice.toFixed(6),
+          status: 'REJECTED', request: auditedOrder,
+          error: { code: 'SERVER_RISK_REJECTED', message: riskError },
+        }).returning();
+        await db.insert(strategyDecisions).values({
+          strategyId: strategy.id, userId: session.user.id, runId: order.run_id ?? null,
+          platform: strategy.platform, agentMode: strategy.agentMode, marketId: order.slug,
+          outcome: order.outcome, side: order.side, proposal: order.proposal ?? {},
+          serverQuote: { executable_price: executionPrice, risk_group_id: riskGroupId },
+          status: 'REJECTED', rejectionReasons: ['SERVER_RISK_REJECTED'],
+        });
+        return NextResponse.json({
+          error: riskError,
+          code: 'SERVER_RISK_REJECTED',
+          audit: sanitizeRealOrder(audit),
+        }, { status: 403 });
+      }
+
       const validation = order.proposal
         ? validateTradeProposal(order.proposal, {
             executablePrice: executionPrice,

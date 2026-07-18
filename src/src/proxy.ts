@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { isValidAgentSecret } from "@/lib/agent-auth";
 
 // Initialize Redis only if UPSTASH_REDIS_REST_URL is available
 const redis = process.env.UPSTASH_REDIS_REST_URL
@@ -42,7 +43,7 @@ export default async function proxy(request: NextRequest) {
   const agentSecret = request.headers.get("x-agent-secret");
   const isProd = process.env.NODE_ENV === "production";
   const expectedSecret = process.env.AGENT_SECRET || (isProd ? undefined : "default_secret_key_123");
-  const isAgentRequest = !!(agentSecret && expectedSecret && agentSecret === expectedSecret) || agentSecret === 'jetski_migration_2024';
+  const isAgentRequest = isValidAgentSecret(agentSecret, expectedSecret);
 
   // 1. Edge Authentication Filter
   if ((isTradeRoute || isPortfolioRoute || isUserRoute) && !sessionToken && !isAgentRequest) {

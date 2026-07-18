@@ -199,6 +199,8 @@ export interface Position {
   unrealizedPnLPercent: number;
   realizedPnL: number;
   createdAt: string;
+  pricingStatus?: 'priced' | 'unpriced';
+  pricingUpdatedAt?: string;
 }
 
 export interface Trade {

@@ -30,6 +30,7 @@ export async function GET() {
           positions: realPortfolio.positions,
           tradeHistory: realPortfolio.fills,
           totalValue: realPortfolio.totalValue,
+          totalPnL,
           totalPnLPercent: calculatePnLPercent(totalPnL, Number(strategy.startingBalance)),
           raw: realPortfolio.raw,
         }

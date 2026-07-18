@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { and, desc, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { agentReports, getDb, strategies } from '@/lib/db';
+import { paperTradeOrders, realTradeOrders, strategyRuns } from '@/lib/db/schema';
 import { getPortfolio } from '@/lib/trading-engine';
+import { getOfficialPortfolioSnapshot } from '@/lib/official-trading';
+import { runPriceRefresh } from '@/worker/jobs/price-refresh';
 
 const reportSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -140,6 +143,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const activeRun = report.run_id
+      ? await db.query.strategyRuns.findFirst({
+          where: and(
+            eq(strategyRuns.id, report.run_id),
+            eq(strategyRuns.strategyId, strategy.id),
+          ),
+        })
+      : await db.query.strategyRuns.findFirst({
+          where: and(
+            eq(strategyRuns.strategyId, strategy.id),
+            eq(strategyRuns.status, 'running'),
+          ),
+          orderBy: [desc(strategyRuns.startedAt)],
+        });
+    if (report.run_id && !activeRun) {
+      return NextResponse.json(
+        { error: 'run_id does not belong to this strategy' },
+        { status: 400 },
+      );
+    }
+    const effectiveRunId = activeRun?.id ?? null;
+
     const existing = await db.query.agentReports.findFirst({
       where: and(
         eq(agentReports.userId, session.user.id),
@@ -152,7 +177,22 @@ export async function POST(request: NextRequest) {
     let verifiedPortfolio: Record<string, unknown> = { source: 'unavailable', verified_at: verifiedAt.toISOString() };
     let verifiedTrades: Record<string, unknown> = { source: 'unavailable', verified_at: verifiedAt.toISOString() };
     if (strategy.agentMode === 'paper') {
+      await runPriceRefresh();
       const portfolio = await getPortfolio(session.user.id);
+      const verifiedOrderRows = await db.query.paperTradeOrders.findMany({
+        where: effectiveRunId
+          ? and(
+              eq(paperTradeOrders.strategyId, strategy.id),
+              eq(paperTradeOrders.runId, effectiveRunId),
+            )
+          : eq(paperTradeOrders.strategyId, strategy.id),
+        orderBy: [desc(paperTradeOrders.createdAt)],
+        limit: 25,
+      });
+      const unpricedPositions = portfolio.positions.filter((position) => position.pricingStatus !== 'priced');
+      const pricingTimes = portfolio.positions
+        .map((position) => position.pricingUpdatedAt)
+        .filter((value): value is string => Boolean(value));
       verifiedPortfolio = {
         source: 'server_paper_ledger',
         verified_at: verifiedAt.toISOString(),
@@ -161,17 +201,61 @@ export async function POST(request: NextRequest) {
         total_value: portfolio.totalValue,
         pnl: portfolio.totalPnL,
         pnl_percent: portfolio.totalPnLPercent,
+        unpriced_positions_count: unpricedPositions.length,
+        pricing_updated_at: pricingTimes.length > 0
+          ? pricingTimes.reduce((oldest, value) => value < oldest ? value : oldest)
+          : null,
       };
       verifiedTrades = {
         source: 'server_paper_ledger',
         verified_at: verifiedAt.toISOString(),
-        recent_trades: portfolio.tradeHistory.slice(0, 25),
+        scope: effectiveRunId ? 'run' : 'strategy_recent_orders',
+        run_id: effectiveRunId,
+        recent_trades: verifiedOrderRows,
       };
+    } else if (strategy.platform === 'kalshi' || strategy.platform === 'polymarket_us') {
+      try {
+        const official = await getOfficialPortfolioSnapshot(strategy.platform);
+        const verifiedOrderRows = await db.query.realTradeOrders.findMany({
+          where: effectiveRunId
+            ? and(
+                eq(realTradeOrders.strategyId, strategy.id),
+                eq(realTradeOrders.runId, effectiveRunId),
+              )
+            : eq(realTradeOrders.strategyId, strategy.id),
+          orderBy: [desc(realTradeOrders.createdAt)],
+          limit: 25,
+        });
+        const pnl = official.totalValue - Number(strategy.startingBalance || 0);
+        verifiedPortfolio = {
+          source: 'official_venue',
+          verified_at: verifiedAt.toISOString(),
+          cash: official.cash,
+          positions_value: official.positionsValue,
+          total_value: official.totalValue,
+          pnl,
+          pnl_percent: Number(strategy.startingBalance) > 0
+            ? (pnl / Number(strategy.startingBalance)) * 100
+            : 0,
+          unpriced_positions_count: official.unpricedPositionsCount ?? 0,
+        };
+        verifiedTrades = {
+          source: 'official_order_ledger',
+          verified_at: verifiedAt.toISOString(),
+          scope: effectiveRunId ? 'run' : 'strategy_recent_orders',
+          run_id: effectiveRunId,
+          recent_trades: verifiedOrderRows,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        verifiedPortfolio = { ...verifiedPortfolio, error: message };
+        verifiedTrades = { ...verifiedTrades, error: message };
+      }
     }
 
     const values = {
       strategyId: strategy.id,
-      runId: report.run_id ?? null,
+      runId: effectiveRunId,
       userId: session.user.id,
       strategyName: report.strategy_id,
       filename: report.filename,
@@ -202,16 +286,30 @@ export async function POST(request: NextRequest) {
       created_at: r.createdAt,
     });
 
+    const completeRun = async () => {
+      if (!effectiveRunId) return;
+      await db.update(strategyRuns).set({
+        status: 'completed',
+        finishedAt: verifiedAt,
+        summary: `Saved report ${report.filename}`,
+      }).where(and(
+        eq(strategyRuns.id, effectiveRunId),
+        eq(strategyRuns.strategyId, strategy.id),
+      ));
+    };
+
     if (existing) {
       const [updated] = await db
         .update(agentReports)
         .set(values)
         .where(eq(agentReports.id, existing.id))
         .returning();
+      await completeRun();
       return NextResponse.json({ data: sanitizeAgentReport(updated), updated: true });
     }
 
     const [created] = await db.insert(agentReports).values(values).returning();
+    await completeRun();
     return NextResponse.json({ data: sanitizeAgentReport(created), updated: false }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

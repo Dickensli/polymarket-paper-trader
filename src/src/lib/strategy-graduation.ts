@@ -28,6 +28,20 @@ export const DEFAULT_GRADUATION_CRITERIA: GraduationCriteria = {
   maxPolicyViolations: 0,
 };
 
+const POLICY_VIOLATION_REASONS = new Set([
+  'POLICY_VIOLATION',
+  'SERVER_RISK_REJECTED',
+  'RISK_LIMIT_EXCEEDED',
+]);
+
+export function isPolicyViolationDecision(decision: {
+  status: string;
+  rejectionReasons?: unknown;
+}): boolean {
+  if (decision.status !== 'REJECTED' || !Array.isArray(decision.rejectionReasons)) return false;
+  return decision.rejectionReasons.some((reason) => POLICY_VIOLATION_REASONS.has(String(reason)));
+}
+
 export function evaluateStrategyGraduation(
   metrics: GraduationMetrics,
   criteria: GraduationCriteria = DEFAULT_GRADUATION_CRITERIA,
@@ -106,6 +120,6 @@ export async function getStrategyGraduation(
     brierScore: brierTerms.length > 0
       ? brierTerms.reduce((sum, value) => sum + value, 0) / brierTerms.length
       : null,
-    policyViolations: decisions.filter((decision) => decision.status === 'REJECTED').length,
+    policyViolations: decisions.filter(isPolicyViolationDecision).length,
   });
 }

@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
           cash: officialSnapshot.cash.toFixed(2),
           positionsValue: officialSnapshot.positionsValue.toFixed(2),
           totalValue: officialSnapshot.totalValue.toFixed(2),
-          pnl: officialSnapshot.pnl.toFixed(6),
+          pnl: (officialSnapshot.totalValue - Number(strategy.startingBalance || 0)).toFixed(6),
           positions: officialSnapshot.positions,
           orders: officialSnapshot.orders,
         });
