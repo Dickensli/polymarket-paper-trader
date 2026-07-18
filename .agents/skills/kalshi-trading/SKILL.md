@@ -38,13 +38,14 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 
 | Tool | Purpose |
 | --- | --- |
-| `search_markets` | Full-text search across Kalshi markets. |
+| `list_series` | **Start here.** Discover series tickers by `category` (e.g. 'Economics', 'Politics'). Use `include_volume=true` to prioritize liquid series. |
+| `search_markets` | Search/list markets. **Always set `mve_filter='exclude'`** to filter out multivariate/esports noise. Prefer `series_ticker` over free-text `search`. Use `min_close_ts`/`max_close_ts` to find near-expiry markets. |
 | `get_market` | Detailed market data by ticker. |
-| `get_event` | Event-level data including nested markets. |
-| `search_events` | Search events by keyword. |
+| `get_event` | Event-level data. **Use `with_nested_markets=true`** to include all markets in a single call. |
+| `search_events` | Search events by keyword, `series_ticker`, or `tickers`. Supports `with_nested_markets` and `min_close_ts`. |
 | `get_orderbook` | Live order book (asks/bids). **Note:** one word — `get_orderbook`, NOT `get_order_book`. |
 | `get_candlesticks` | Historical price candlestick data for a market. |
-| `get_public_trades` | Public trade history on a market. |
+| `get_public_trades` | Public trade history. Use `min_ts` to filter to recent trades only. |
 
 ### Trading
 
@@ -93,6 +94,13 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 **Key rule**: After every trade, re-read `portfolio` or `get_balance` to confirm actual state. Never rely on your own running tallies — the server is the source of truth.
 
+### Anti-Hallucination Rules
+
+- **NEVER cite a statistic without a source URL.** If web search returns a number, include the exact URL. If you cannot find a source, state "unverified".
+- **For already-published economic data** (CPI, jobs, GDP): The ONLY authoritative source is the `get_market` settlement data or the official government source URL. NEVER trust your own interpretation of web search snippets for specific numbers.
+- **Cross-validate critical data:** If a web search says "CPI was X%", verify against at least one additional source before basing a trade on it.
+- **When reporting numbers in reports:** Always specify whether a number is (a) from an MCP tool response, (b) from a web search URL, or (c) your own calculation. Mark (c) explicitly as "Agent-computed, verify independently".
+
 ---
 
 ## Risk Management
@@ -132,6 +140,16 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 5. **Capital efficiency.** Deploy capital into active positions rather than holding idle cash, subject to risk limits.
 6. **Never assume resolution.** Only claim profits after a market officially closes and settles. Do not mentally "book" unrealized gains.
 
+### Edge Verification Checklist
+
+Before any trade, you **MUST** answer all five questions. If you cannot answer any of them, you do NOT have edge.
+
+1. **What is my information?** State the specific data source, its timestamp, and whether it is already public knowledge.
+2. **Why hasn't the market already priced this?** If your source is a public web search result, **assume the market HAS priced it.** You need a concrete reason why the market is wrong (e.g. stale liquidity on a low-volume market, event-specific mispricing, structural arb gap).
+3. **What is my confidence interval?** Express as a probability range, not a point estimate. If your 80% CI spans more than 3 market buckets, you do NOT have edge on any individual bucket.
+4. **What is my base rate?** For binary events: what fraction of similar events resolved YES historically? If you can't answer, your edge is zero.
+5. **How would I know I'm wrong?** Define the specific data point or price level that would invalidate your thesis BEFORE entering.
+
 ---
 
 ## Session Lifecycle
@@ -147,10 +165,16 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 ### Phase 2 — Research & Decide
 
-1. **Scan markets**: Use `search_markets`, `search_events` to find opportunities.
-2. **Evaluate**: Use `get_market`, `get_orderbook`, `get_candlesticks`, `get_public_trades` to assess pricing, liquidity, and trends.
-3. **External research**: Use any available public web search tool (e.g. `search_web`) for news, polls, and statistics relevant to your thesis. **Do NOT use internal codebase search or internal wikis.**
-4. **Apply strategy rules**: Apply strategy-specific logic within the risk limits above.
+1. **Discover series**: Call `list_series(category="Economics", include_volume=true)` (or relevant category) to see available series tickers and their liquidity. Prioritize series with higher volume.
+2. **Scan markets**: Use `search_markets` with `series_ticker` AND **`mve_filter='exclude'`** for precise, clean results. **Always set `mve_filter='exclude'`** — without it, results are polluted by multivariate esports contracts. Use `search_events(series_ticker=..., with_nested_markets=true)` to browse events with all their markets in one call.
+3. **Market type preference** (strongest edge → weakest):
+   - **Binary event markets** (Yes/No outcomes, e.g. "Will X happen?") — AI can aggregate public information effectively.
+   - **Multi-leg arbitrage** (all outcomes sum < 1.0) — structural, risk-free edge.
+   - **Short-duration momentum** (e.g. 15-minute crypto hit-price) — price action signals are actionable.
+   - ⚠️ **Precise numeric ranges** (e.g. "CPI between X and Y", "S&P 500 at 7537-7562") — **avoid unless edge is overwhelming**. These require predicting a continuous variable's exact bucket, which AI cannot do reliably.
+4. **Evaluate**: Use `get_market`, `get_orderbook`, `get_candlesticks`, `get_public_trades` to assess pricing, liquidity, and trends.
+5. **External research**: Use any available public web search tool (e.g. `search_web`) for news, polls, and statistics relevant to your thesis. **Do NOT use internal codebase search or internal wikis.**
+6. **Apply strategy rules**: Apply strategy-specific logic within the risk limits above.
 
 ### Phase 3 — Execute
 
@@ -165,10 +189,20 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
    - **Trades Executed**: What you bought/sold and why.
    - **Market Observations**: Key insights from research.
    - **Risk Audit**: Are you within all risk limits? Any concentrated exposures?
+   - **Loss Review** (mandatory for any losing position — see below).
    - **Lessons Learned**: What worked, what didn't.
    - **Next Steps**: What to prioritize on the next run.
 2. **Report naming**: Use ISO timestamp format, e.g. `2026-07-03T16:00:00.md`.
 3. **Graduation check (paper/shadow strategies)**: Call `get_graduation_status` at the end. If the server returns `shouldNotify=true`, report `GRADUATION_READY` and explicitly state that human approval is still required.
+
+### Mandatory Loss Review
+
+For **every position that lost money** (settled at zero or sold at a loss), your report MUST include:
+
+1. **Root cause**: Was this (a) bad thesis, (b) bad timing, (c) bad sizing, or (d) unforeseeable event?
+2. **Was the edge real?** Re-evaluate your original edge estimate honestly. If it relied on "consensus forecast differs from market price", acknowledge that this is NOT real edge — consensus is already priced in.
+3. **Actionable lesson**: State ONE specific, concrete change to your process. "Use wider tails" is NOT actionable. "Stop trading precise CPI buckets because my CI spans 5+ buckets" IS actionable.
+4. **Future filter**: Define a market-type or condition you will AVOID in future sessions based on this loss. Carry this forward to the Next Steps section.
 
 ---
 

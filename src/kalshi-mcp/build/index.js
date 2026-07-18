@@ -128,12 +128,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "search_markets",
-            description: "Search/list Kalshi markets through the PolyTrader Kalshi proxy API.",
+            description: "Search/list Kalshi markets. Prefer series_ticker or event_ticker for precise filtering; use search only when the series ticker is unknown. Always set mve_filter='exclude' unless you specifically need multivariate/combo markets.",
             inputSchema: {
                 type: "object",
                 properties: {
-                    search: { type: "string" },
+                    search: { type: "string", description: "Full-text keyword search. Noisy — prefer series_ticker when possible." },
+                    series_ticker: { type: "string", description: "Filter by series ticker (e.g. KXFED, KXCPI, KXINX, KXBTC). Preferred over text search for precision." },
+                    event_ticker: { type: "string", description: "Filter by event ticker." },
+                    tickers: { type: "string", description: "Comma-separated list of specific market tickers to fetch." },
                     status: { type: "string", description: "Filter by status: unopened, open, closed, settled" },
+                    mve_filter: { type: "string", enum: ["exclude", "only"], description: "'exclude' removes multivariate/esports combo markets (recommended). 'only' returns only MVE markets." },
+                    min_close_ts: { type: "number", description: "Filter markets closing after this Unix timestamp (seconds). Find near-expiry markets." },
+                    max_close_ts: { type: "number", description: "Filter markets closing before this Unix timestamp (seconds)." },
                     limit: { type: "number" },
                     cursor: { type: "string" },
                 },
@@ -217,23 +223,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "get_event",
-            description: "Get details of a Kalshi event (which contains multiple markets).",
+            description: "Get details of a Kalshi event (which contains multiple markets). Use with_nested_markets=true to include all markets in a single call.",
             inputSchema: {
                 type: "object",
                 properties: {
                     event_ticker: { type: "string", description: "Event ticker." },
+                    with_nested_markets: { type: "boolean", description: "If true, include all markets within the event response. Saves extra API calls. Default false." },
                 },
                 required: ["event_ticker"],
             },
         },
         {
             name: "search_events",
-            description: "Search/list Kalshi events.",
+            description: "Search/list Kalshi events. Use series_ticker for structured discovery. Excludes multivariate events by default — use GET /events/multivariate for those.",
             inputSchema: {
                 type: "object",
                 properties: {
-                    status: { type: "string", description: "Filter by event status." },
+                    search: { type: "string", description: "Full-text keyword search for events." },
+                    status: { type: "string", description: "Filter by event status: unopened, open, closed, settled." },
                     series_ticker: { type: "string", description: "Filter by series ticker." },
+                    tickers: { type: "string", description: "Comma-separated list of specific event tickers to fetch." },
+                    with_nested_markets: { type: "boolean", description: "If true, include all markets within each event. Default false." },
+                    min_close_ts: { type: "number", description: "Filter events with markets closing after this Unix timestamp." },
+                    limit: { type: "number", description: "Max results to return (max 200)." },
+                    cursor: { type: "string", description: "Pagination cursor." },
+                },
+            },
+        },
+        {
+            name: "list_series",
+            description: "List available Kalshi series. Use this to discover series tickers (e.g. KXFED, KXCPI, KXINX) before searching for markets. Filter by category for targeted discovery.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    category: { type: "string", description: "Filter by category name (e.g. 'Economics', 'Politics', 'Crypto', 'Weather')." },
+                    tags: { type: "string", description: "Filter by tags." },
+                    include_volume: { type: "boolean", description: "If true, includes total volume traded across all events in each series. Helps prioritize liquid markets." },
+                    include_product_metadata: { type: "boolean", description: "If true, includes settlement source info." },
                     limit: { type: "number", description: "Max results to return." },
                     cursor: { type: "string", description: "Pagination cursor." },
                 },
@@ -241,12 +267,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "get_public_trades",
-            description: "Get recent public trades for a Kalshi market.",
+            description: "Get recent public trades for a Kalshi market. Use min_ts to filter to recent activity.",
             inputSchema: {
                 type: "object",
                 properties: {
                     ticker: { type: "string", description: "Market ticker to filter trades." },
-                    limit: { type: "number", description: "Max results to return." },
+                    min_ts: { type: "number", description: "Filter trades after this Unix timestamp (seconds). Useful for recent activity." },
+                    max_ts: { type: "number", description: "Filter trades before this Unix timestamp (seconds)." },
+                    limit: { type: "number", description: "Max results to return (max 1000)." },
                     cursor: { type: "string", description: "Pagination cursor." },
                 },
             },
@@ -405,7 +433,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         case "search_markets": {
             const params = new URLSearchParams();
-            for (const key of ["search", "status", "limit", "cursor"]) {
+            for (const key of ["search", "series_ticker", "event_ticker", "tickers", "status", "mve_filter", "min_close_ts", "max_close_ts", "limit", "cursor"]) {
                 let value = args[key];
                 if (value !== undefined) {
                     if (key === "status" && String(value).toLowerCase() === "active") {
@@ -512,14 +540,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         case "get_event": {
             const eventTicker = encodeURIComponent(String(args.event_ticker));
-            const url = `${KALSHI_BASE_URL}/events/${eventTicker}`;
+            const params = new URLSearchParams();
+            if (args.with_nested_markets !== undefined)
+                params.set("with_nested_markets", String(args.with_nested_markets));
+            const url = `${KALSHI_BASE_URL}/events/${eventTicker}?${params.toString()}`;
             const res = await fetch(url, { headers: { Accept: "application/json" } });
             const data = await res.json();
             return json({ ok: true, data });
         }
         case "search_events": {
             const params = new URLSearchParams();
-            for (const key of ["status", "series_ticker", "limit", "cursor"]) {
+            for (const key of ["search", "status", "series_ticker", "tickers", "with_nested_markets", "min_close_ts", "limit", "cursor"]) {
                 const value = args[key];
                 if (value !== undefined)
                     params.set(key, String(value));
@@ -529,9 +560,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const data = await res.json();
             return json({ ok: true, data });
         }
+        case "list_series": {
+            const params = new URLSearchParams();
+            for (const key of ["category", "tags", "include_volume", "include_product_metadata", "limit", "cursor"]) {
+                const value = args[key];
+                if (value !== undefined)
+                    params.set(key, String(value));
+            }
+            const url = `${KALSHI_BASE_URL}/series?${params.toString()}`;
+            const res = await fetch(url, { headers: { Accept: "application/json" } });
+            const data = await res.json();
+            return json({ ok: true, data });
+        }
         case "get_public_trades": {
             const params = new URLSearchParams();
-            for (const key of ["ticker", "limit", "cursor"]) {
+            for (const key of ["ticker", "min_ts", "max_ts", "limit", "cursor"]) {
                 const value = args[key];
                 if (value !== undefined)
                     params.set(key, String(value));
