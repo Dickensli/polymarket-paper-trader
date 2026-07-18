@@ -216,12 +216,18 @@ export function getKalshiOutcomePriceFromMarket(
   outcome: 'YES' | 'NO',
   side: 'BUY' | 'SELL' = 'BUY',
 ): number | null {
+  const status = String(market.status ?? '').toLowerCase();
   // Handle settled/finalized markets
-  if (market.status === 'finalized' || market.status === 'settled') {
+  if (status === 'finalized' || status === 'settled') {
     const result = String(market.result).toLowerCase();
     if (result === 'yes') return outcome === 'YES' ? 1 : 0;
     if (result === 'no') return outcome === 'NO' ? 1 : 0;
   }
+
+  // A closed market can spend time waiting for the venue's authoritative
+  // result. Its empty book often exposes a synthetic zero bid, which is not
+  // an executable liquidation price and must not erase paper NAV.
+  if (status === 'closed') return null;
 
   const prefix = outcome === 'YES' ? 'yes' : 'no';
   const preferred = side === 'BUY' ? `${prefix}_ask` : `${prefix}_bid`;

@@ -3,6 +3,7 @@ import { runResolutionCheck } from '@/worker/jobs/resolution-handler';
 import * as dbLib from '@/lib/db';
 import * as polymarketLib from '@/lib/polymarket';
 import * as polymarketUsLib from '@/lib/polymarket-us';
+import { ledgerEntries, paperTrades } from '@/lib/db/schema';
 
 vi.mock('@/lib/db');
 vi.mock('@/lib/polymarket');
@@ -10,8 +11,12 @@ vi.mock('@/lib/polymarket-us');
 
 describe('Resolution Handler Job', () => {
   let mockDb: {
-    query: { positions: { findMany: ReturnType<typeof vi.fn> } };
+    query: {
+      positions: { findMany: ReturnType<typeof vi.fn> };
+      paperTrades: { findFirst: ReturnType<typeof vi.fn> };
+    };
     transaction: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -21,8 +26,14 @@ describe('Resolution Handler Job', () => {
       query: {
         positions: {
           findMany: vi.fn()
-        }
+        },
+        paperTrades: {
+          findFirst: vi.fn().mockResolvedValue(null),
+        },
       },
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      })),
       transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           update: vi.fn().mockReturnThis(),
@@ -91,5 +102,51 @@ describe('Resolution Handler Job', () => {
     await expect(runResolutionCheck()).resolves.toBe(1);
     expect(polymarketUsLib.getPolymarketUsMarketSettlement).toHaveBeenCalledWith('usa-market');
     expect(polymarketLib.getMarket).not.toHaveBeenCalled();
+  });
+
+  it('attributes settlement trades and writes balanced cash ledger entries', async () => {
+    const inserts: Array<{ table: unknown; values: unknown }> = [];
+    mockDb.query.positions.findMany.mockResolvedValue([
+      {
+        id: 'pos-ledger', userId: 'user-1', portfolioId: 'portfolio-1',
+        platform: 'polymarket', marketId: 'market-ledger', marketQuestion: 'Resolved?',
+        tokenId: 'token-yes', outcome: 'YES', shares: '10', avgEntryPrice: '0.4', realizedPnl: '0',
+      },
+    ]);
+    mockDb.query.paperTrades.findFirst.mockResolvedValue({ strategyId: 'strategy-1' });
+    vi.spyOn(polymarketLib, 'getMarket').mockResolvedValue({
+      id: 'market-ledger', closed: true, tokenIds: ['token-yes', 'token-no'], outcomePrices: [1, 0],
+    } as unknown as Awaited<ReturnType<typeof polymarketLib.getMarket>>);
+    mockDb.transaction.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => {
+      const updateChain = {
+        set: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue(undefined),
+      };
+      const tx = {
+        update: vi.fn(() => updateChain),
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn(() => ({ for: vi.fn().mockResolvedValue([{ balance: '100.00' }]) })),
+          })),
+        })),
+        insert: vi.fn((table: unknown) => ({
+          values: vi.fn((values: unknown) => {
+            inserts.push({ table, values });
+            return Promise.resolve();
+          }),
+        })),
+      };
+      await cb(tx);
+    });
+
+    await expect(runResolutionCheck()).resolves.toBe(1);
+
+    const settlementTrade = inserts.find((entry) => entry.table === paperTrades)?.values as Record<string, unknown>;
+    expect(settlementTrade).toMatchObject({ strategyId: 'strategy-1', totalCost: '10.00' });
+    const settlementLedger = inserts.find((entry) => entry.table === ledgerEntries)?.values as Array<Record<string, unknown>>;
+    expect(settlementLedger).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountType: 'CASH', amount: '10.000000', balanceAfter: '110.000000' }),
+      expect.objectContaining({ accountType: 'POSITION', amount: '-10.000000' }),
+    ]));
   });
 });

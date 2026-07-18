@@ -53,6 +53,15 @@ describe('Kalshi market batch lookup', () => {
     expect(getKalshiOutcomePriceFromMarket({ yes_bid_dollars: '0.70', yes_ask_dollars: '0.75' }, 'YES', 'SELL')).toBe(0.70);
   });
 
+  it('does not mark a closed but unfinalized market at a zero bid', () => {
+    expect(getKalshiOutcomePriceFromMarket({
+      status: 'closed',
+      result: '',
+      yes_bid_dollars: '0.00',
+      yes_ask_dollars: '1.00',
+    }, 'YES', 'SELL')).toBeNull();
+  });
+
   it('uses the tickers filter instead of one request per market', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

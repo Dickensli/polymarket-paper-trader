@@ -1,7 +1,8 @@
 import cron from 'node-cron';
+import { randomUUID } from 'node:crypto';
 import { getDb } from '@/lib/db';
-import { positions, portfolios, paperTrades } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { ledgerEntries, positions, portfolios, paperTrades } from '@/lib/db/schema';
+import { eq, and, desc, isNotNull } from 'drizzle-orm';
 import { getMarket } from '@/lib/polymarket';
 import { getKalshiMarket } from '@/lib/kalshi';
 import { getPolymarketUsMarketSettlement } from '@/lib/polymarket-us';
@@ -67,6 +68,19 @@ async function settlePosition(
   const pnl = (exitPrice - avgEntry) * sharesNum;
   const totalRealizedPnl = prevRealizedPnl + pnl;
   const proceeds = sharesNum * exitPrice;
+  const settledAt = new Date();
+  const settlementTradeId = randomUUID();
+  const sourceTrade = await db.query.paperTrades.findFirst({
+    where: and(
+      eq(paperTrades.userId, pos.userId),
+      eq(paperTrades.portfolioId, pos.portfolioId),
+      eq(paperTrades.marketId, pos.marketId),
+      eq(paperTrades.tokenId, pos.tokenId),
+      eq(paperTrades.outcome, pos.outcome as 'YES' | 'NO'),
+      isNotNull(paperTrades.strategyId),
+    ),
+    orderBy: [desc(paperTrades.executedAt)],
+  });
 
   await db.transaction(async (tx) => {
     // Close position
@@ -76,30 +90,32 @@ async function settlePosition(
         isOpen: false,
         currentPrice: exitPrice.toFixed(6),
         realizedPnl: totalRealizedPnl.toFixed(6),
-        closedAt: new Date(),
+        closedAt: settledAt,
         closeReason: settlementType === 'VOIDED' ? 'VOIDED' : 'SETTLED',
-        resolvedAt: new Date(),
-        updatedAt: new Date(),
+        resolvedAt: settledAt,
+        updatedAt: settledAt,
       })
       .where(eq(positions.id, pos.id));
 
-    // Credit portfolio with proceeds (if any)
+    const [portfolio] = await tx
+      .select()
+      .from(portfolios)
+      .where(eq(portfolios.id, pos.portfolioId))
+      .for('update');
+    if (!portfolio) throw new Error(`Portfolio ${pos.portfolioId} not found during settlement`);
+    const newBalance = Number(portfolio.balance) + proceeds;
+
+    // Credit portfolio with proceeds (if any).
     if (proceeds > 0) {
-      const [portfolio] = await tx
-        .select()
-        .from(portfolios)
-        .where(eq(portfolios.id, pos.portfolioId))
-        .for('update');
-      if (portfolio) {
-        const newBalance = Number(portfolio.balance) + proceeds;
-        await tx
-          .update(portfolios)
-          .set({ balance: newBalance.toFixed(2), updatedAt: new Date() })
-          .where(eq(portfolios.id, portfolio.id));
-      }
+      await tx
+        .update(portfolios)
+        .set({ balance: newBalance.toFixed(2), updatedAt: settledAt })
+        .where(eq(portfolios.id, portfolio.id));
     }
 
     await tx.insert(paperTrades).values({
+      id: settlementTradeId,
+      strategyId: sourceTrade?.strategyId ?? null,
       userId: pos.userId,
       portfolioId: pos.portfolioId,
       marketId: pos.marketId,
@@ -113,7 +129,35 @@ async function settlePosition(
       status: 'FILLED',
       platform: inferPositionPlatform(pos),
       idempotencyKey: `resolve_${pos.id}_${Date.now()}`,
+      metadata: {
+        source: 'resolution_handler',
+        settlement_type: settlementType,
+        strategy_id: sourceTrade?.strategyId ?? null,
+      },
+      executedAt: settledAt,
+      createdAt: settledAt,
     });
+
+    await tx.insert(ledgerEntries).values([
+      {
+        userId: pos.userId,
+        tradeId: settlementTradeId,
+        accountType: 'CASH',
+        amount: proceeds.toFixed(6),
+        balanceAfter: newBalance.toFixed(6),
+        description: `${settlementType} settlement proceeds for ${pos.marketQuestion ?? pos.marketId}`,
+        createdAt: settledAt,
+      },
+      {
+        userId: pos.userId,
+        tradeId: settlementTradeId,
+        accountType: 'POSITION',
+        amount: (-proceeds).toFixed(6),
+        balanceAfter: null,
+        description: `${settlementType} position settlement for ${pos.marketQuestion ?? pos.marketId}`,
+        createdAt: settledAt,
+      },
+    ]);
   });
 }
 

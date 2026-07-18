@@ -2,8 +2,6 @@ import { and, asc, desc, eq, gte, inArray, lt } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   portfolioSnapshots,
-  portfolios,
-  positions,
   strategies,
   strategyCapitalFlows,
   strategyPerformanceSnapshots,
@@ -18,6 +16,7 @@ import { positionBelongsToPlatform } from '@/lib/position-platform';
 
 const HOURLY_RETENTION_DAYS = 30;
 const DAILY_RETENTION_DAYS = 365 * 3;
+const MAX_POSITION_PRICE_AGE_MS = 10 * 60 * 1000;
 
 type Bucket = 'HOURLY' | 'DAILY';
 type StrategyRow = typeof strategies.$inferSelect;
@@ -28,7 +27,19 @@ type SourcePoint = {
   nav: number;
   capturedAt: Date;
   pricingUpdatedAt: Date | null;
+  unpricedPositionsCount: number;
 };
+
+export function countUnpricedPositions(
+  rows: Array<{ currentPrice: string | number; updatedAt: Date }>,
+  now: Date,
+  maxAgeMs = MAX_POSITION_PRICE_AGE_MS,
+) {
+  const cutoff = now.getTime() - maxAgeMs;
+  return rows.filter((row) => (
+    !Number.isFinite(Number(row.currentPrice)) || row.updatedAt.getTime() < cutoff
+  )).length;
+}
 
 function bucketDate(date: Date, bucket: Bucket) {
   const result = new Date(date);
@@ -111,7 +122,7 @@ async function upsertPerformancePoint(
     twrPct: twrPct.toFixed(6),
     mwrPct: mwrPct?.toFixed(6) ?? null,
     netExternalFlow: bucketFlow.toFixed(6),
-    unpricedPositionsCount: 0,
+    unpricedPositionsCount: point.unpricedPositionsCount,
     pricingUpdatedAt: point.pricingUpdatedAt,
     capturedAt: point.capturedAt,
   };
@@ -165,7 +176,15 @@ export async function runStrategyPerformanceCalculation(now = new Date()) {
         ));
         const positionsValue = relevantPositions.reduce((sum, row) => sum + Number(row.shares) * Number(row.currentPrice), 0);
         const pricingUpdatedAt = relevantPositions.reduce<Date | null>((latest, row) => !latest || row.updatedAt > latest ? row.updatedAt : latest, null);
-        point = { strategyId: strategy.id, cash: Number(portfolio.balance), positionsValue, nav: Number(portfolio.balance) + positionsValue, capturedAt: now, pricingUpdatedAt };
+        point = {
+          strategyId: strategy.id,
+          cash: Number(portfolio.balance),
+          positionsValue,
+          nav: Number(portfolio.balance) + positionsValue,
+          capturedAt: now,
+          pricingUpdatedAt,
+          unpricedPositionsCount: countUnpricedPositions(relevantPositions, now),
+        };
       }
     }
     if (!point) {
@@ -173,6 +192,7 @@ export async function runStrategyPerformanceCalculation(now = new Date()) {
       if (snapshot) point = {
         strategyId: strategy.id, cash: Number(snapshot.cash), positionsValue: Number(snapshot.positionsValue),
         nav: Number(snapshot.totalValue), capturedAt: now, pricingUpdatedAt: snapshot.capturedAt,
+        unpricedPositionsCount: 0,
       };
     }
     if (!point) continue;
@@ -215,6 +235,7 @@ export async function backfillStrategyPerformanceFromPortfolioSnapshots(since = 
         await upsertPerformancePoint(db, strategy, bucket, {
           strategyId: strategy.id, cash: Number(snapshot.cash), positionsValue: Number(snapshot.positionsValue),
           nav: Number(snapshot.totalValue), capturedAt: snapshot.capturedAt, pricingUpdatedAt: snapshot.capturedAt,
+          unpricedPositionsCount: 0,
         }, flows);
         written += 1;
       }

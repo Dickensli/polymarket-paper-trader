@@ -568,7 +568,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!strategy_id || strategy_id === "undefined" || !content || !filename) {
         throw new Error("Missing required fields: strategy_id/account, content, filename");
       }
-      const data = await callPolyTrader("/reports", {
+      const data = await callPolyTrader("/agent/reports", {
         method: "POST",
         headers: getAgentHeaders(args),
         body: JSON.stringify({ strategy_id, content, filename }),
@@ -580,7 +580,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!strategy_id || strategy_id === "undefined") throw new Error("Missing required field: account");
       const limit = Number((args as any).limit || 3);
       const data = await callPolyTrader(
-        `/reports?strategy_id=${encodeURIComponent(strategy_id)}&limit=${limit}`,
+        `/agent/reports?strategy_id=${encodeURIComponent(strategy_id)}&limit=${limit}`,
         { headers: getAgentHeaders(args) },
       );
       return json({ ok: true, data: data.data ?? data });
@@ -590,7 +590,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const filename = String((args as any).filename);
       if (!strategy_id || strategy_id === "undefined" || !filename) throw new Error("Missing required fields: account, filename");
       const data = await callPolyTrader(
-        `/reports/${encodeURIComponent(filename)}?strategy_id=${encodeURIComponent(strategy_id)}`,
+        `/agent/reports?strategy_id=${encodeURIComponent(strategy_id)}&filename=${encodeURIComponent(filename)}`,
         { headers: getAgentHeaders(args) },
       );
       return json({ ok: true, data: data.data ?? data });
