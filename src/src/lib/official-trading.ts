@@ -39,6 +39,7 @@ export type OfficialPortfolioSnapshot = {
   positionsValue: number;
   totalValue: number;
   pnl: number;
+  unpricedPositionsCount?: number;
   positions: unknown[];
   orders: unknown[];
   fills: unknown[];
@@ -427,13 +428,23 @@ async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<Offic
   }));
   const { positionsValue, pnl, unpricedTickers } = summarizeKalshiPositions(positionRows, executionMarkets);
   const totalValue = cash + positionsValue;
+  const unpricedTickerSet = new Set(unpricedTickers);
+  const positionsWithPricingQuality = positionRows.map((position) => {
+    const row = position as Record<string, unknown>;
+    const ticker = String(row.ticker ?? row.market_ticker ?? '');
+    return {
+      ...row,
+      pricing_status: unpricedTickerSet.has(ticker) ? 'unpriced' : 'priced',
+    };
+  });
 
   return {
     cash,
     positionsValue,
     totalValue,
     pnl,
-    positions: positionRows,
+    unpricedPositionsCount: unpricedTickers.length,
+    positions: positionsWithPricingQuality,
     orders: orderRows,
     fills: fillRows,
     settlements: settlementRows,
@@ -541,12 +552,24 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const fillRows = activityRows.filter((row) => row && typeof row === 'object' && String((row as Record<string, unknown>).type) === 'ACTIVITY_TYPE_TRADE');
   const positionsValue = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).cashValue), 0);
   const pnl = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).realized), 0);
+  const positionsWithPricingQuality = positionRows.map((row) => {
+    const record = row as Record<string, unknown>;
+    const cashValue = (row as Record<string, unknown>).cashValue;
+    const rawValue = cashValue && typeof cashValue === 'object' && 'value' in cashValue
+      ? (cashValue as Record<string, unknown>).value
+      : cashValue;
+    const unpriced = rawValue == null || !Number.isFinite(Number(rawValue));
+    return { ...record, pricing_status: unpriced ? 'unpriced' : 'priced' };
+  });
+  const unpricedPositionsCount = positionsWithPricingQuality
+    .filter((row) => row.pricing_status === 'unpriced').length;
   return {
     cash,
     positionsValue,
     totalValue: cash + positionsValue,
     pnl,
-    positions: positionRows,
+    unpricedPositionsCount,
+    positions: positionsWithPricingQuality,
     orders: orderRows,
     fills: fillRows,
     activity: activityRows,

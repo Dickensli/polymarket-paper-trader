@@ -62,12 +62,6 @@ async function settlePosition(
   settlementType: 'RESOLVED' | 'VOIDED',
 ) {
   const db = getDb();
-  const sharesNum = Number(pos.shares);
-  const avgEntry = Number(pos.avgEntryPrice);
-  const prevRealizedPnl = Number(pos.realizedPnl) || 0;
-  const pnl = (exitPrice - avgEntry) * sharesNum;
-  const totalRealizedPnl = prevRealizedPnl + pnl;
-  const proceeds = sharesNum * exitPrice;
   const settledAt = new Date();
   const settlementTradeId = randomUUID();
   const sourceTrade = await db.query.paperTrades.findFirst({
@@ -82,27 +76,45 @@ async function settlePosition(
     orderBy: [desc(paperTrades.executedAt)],
   });
 
-  await db.transaction(async (tx) => {
-    // Close position
-    await tx
+  return db.transaction(async (tx) => {
+    // Atomically claim the open position. Overlapping cron/user-triggered
+    // resolution runs may scan the same row, but only one may close it and
+    // continue to the cash/ledger writes below.
+    const [claimedPosition] = await tx
       .update(positions)
       .set({
         isOpen: false,
-        currentPrice: exitPrice.toFixed(6),
-        realizedPnl: totalRealizedPnl.toFixed(6),
         closedAt: settledAt,
         closeReason: settlementType === 'VOIDED' ? 'VOIDED' : 'SETTLED',
         resolvedAt: settledAt,
         updatedAt: settledAt,
       })
-      .where(eq(positions.id, pos.id));
+      .where(and(eq(positions.id, pos.id), eq(positions.isOpen, true)))
+      .returning();
+    if (!claimedPosition) return false;
+    const settledPosition = claimedPosition as OpenPosition;
+    const sharesNum = Number(settledPosition.shares);
+    const avgEntry = Number(settledPosition.avgEntryPrice);
+    const prevRealizedPnl = Number(settledPosition.realizedPnl) || 0;
+    const pnl = (exitPrice - avgEntry) * sharesNum;
+    const totalRealizedPnl = prevRealizedPnl + pnl;
+    const proceeds = sharesNum * exitPrice;
+
+    await tx
+      .update(positions)
+      .set({
+        currentPrice: exitPrice.toFixed(6),
+        realizedPnl: totalRealizedPnl.toFixed(6),
+        updatedAt: settledAt,
+      })
+      .where(eq(positions.id, settledPosition.id));
 
     const [portfolio] = await tx
       .select()
       .from(portfolios)
-      .where(eq(portfolios.id, pos.portfolioId))
+      .where(eq(portfolios.id, settledPosition.portfolioId))
       .for('update');
-    if (!portfolio) throw new Error(`Portfolio ${pos.portfolioId} not found during settlement`);
+    if (!portfolio) throw new Error(`Portfolio ${settledPosition.portfolioId} not found during settlement`);
     const newBalance = Number(portfolio.balance) + proceeds;
 
     // Credit portfolio with proceeds (if any).
@@ -116,19 +128,19 @@ async function settlePosition(
     await tx.insert(paperTrades).values({
       id: settlementTradeId,
       strategyId: sourceTrade?.strategyId ?? null,
-      userId: pos.userId,
-      portfolioId: pos.portfolioId,
-      marketId: pos.marketId,
-      marketQuestion: pos.marketQuestion,
-      tokenId: pos.tokenId,
-      outcome: pos.outcome as 'YES' | 'NO',
+      userId: settledPosition.userId,
+      portfolioId: settledPosition.portfolioId,
+      marketId: settledPosition.marketId,
+      marketQuestion: settledPosition.marketQuestion,
+      tokenId: settledPosition.tokenId,
+      outcome: settledPosition.outcome as 'YES' | 'NO',
       action: 'SELL',
-      shares: pos.shares,
+      shares: settledPosition.shares,
       pricePerShare: exitPrice.toFixed(6),
       totalCost: proceeds.toFixed(2),
       status: 'FILLED',
-      platform: inferPositionPlatform(pos),
-      idempotencyKey: `resolve_${pos.id}_${Date.now()}`,
+      platform: inferPositionPlatform(settledPosition),
+      idempotencyKey: `resolve_${settledPosition.id}`,
       metadata: {
         source: 'resolution_handler',
         settlement_type: settlementType,
@@ -140,24 +152,25 @@ async function settlePosition(
 
     await tx.insert(ledgerEntries).values([
       {
-        userId: pos.userId,
+        userId: settledPosition.userId,
         tradeId: settlementTradeId,
         accountType: 'CASH',
         amount: proceeds.toFixed(6),
         balanceAfter: newBalance.toFixed(6),
-        description: `${settlementType} settlement proceeds for ${pos.marketQuestion ?? pos.marketId}`,
+        description: `${settlementType} settlement proceeds for ${settledPosition.marketQuestion ?? settledPosition.marketId}`,
         createdAt: settledAt,
       },
       {
-        userId: pos.userId,
+        userId: settledPosition.userId,
         tradeId: settlementTradeId,
         accountType: 'POSITION',
         amount: (-proceeds).toFixed(6),
         balanceAfter: null,
-        description: `${settlementType} position settlement for ${pos.marketQuestion ?? pos.marketId}`,
+        description: `${settlementType} position settlement for ${settledPosition.marketQuestion ?? settledPosition.marketId}`,
         createdAt: settledAt,
       },
     ]);
+    return true;
   });
 }
 
@@ -197,16 +210,17 @@ async function settleOpenPositions(openPositions: OpenPosition[]): Promise<numbe
       for (const position of marketPositions) {
         try {
           if (resolution.type === 'voided') {
-            await settlePosition(position, Number(position.avgEntryPrice), 'VOIDED');
+            const settled = await settlePosition(position, Number(position.avgEntryPrice), 'VOIDED');
+            if (settled) resolvedCount += 1;
           } else {
             const exitPrice = resolution.type === 'priced'
               ? (position.outcome.toUpperCase() === 'NO' ? 1 - resolution.yesPrice : resolution.yesPrice)
               : (platform === 'kalshi'
                   ? Number(position.outcome.toUpperCase() === resolution.winningTokenId)
                   : Number(position.tokenId === resolution.winningTokenId));
-            await settlePosition(position, exitPrice, 'RESOLVED');
+            const settled = await settlePosition(position, exitPrice, 'RESOLVED');
+            if (settled) resolvedCount += 1;
           }
-          resolvedCount += 1;
         } catch (error) {
           console.error(`[Resolution] Error settling position ${position.id}:`, error);
         }

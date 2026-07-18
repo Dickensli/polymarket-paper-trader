@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { countUnpricedPositions } from '@/worker/jobs/strategy-performance';
+import {
+  countUnpricedPositions,
+  countSnapshotUnpricedPositions,
+} from '@/worker/jobs/strategy-performance';
 
 describe('strategy performance pricing quality', () => {
   it('counts stale open-position marks as unpriced', () => {
@@ -11,5 +14,13 @@ describe('strategy performance pricing quality', () => {
     ];
 
     expect(countUnpricedPositions(positions, now)).toBe(1);
+  });
+
+  it('counts persisted snapshot pricing-quality markers', () => {
+    expect(countSnapshotUnpricedPositions([
+      { ticker: 'PRICED', pricing_status: 'priced' },
+      { ticker: 'NO-BOOK', pricing_status: 'unpriced' },
+    ])).toBe(1);
+    expect(countSnapshotUnpricedPositions(null)).toBe(0);
   });
 });

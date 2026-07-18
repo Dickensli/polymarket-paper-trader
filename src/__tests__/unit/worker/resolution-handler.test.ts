@@ -32,20 +32,30 @@ describe('Resolution Handler Job', () => {
         },
       },
       update: vi.fn(() => ({
-        set: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({ returning: vi.fn().mockResolvedValue([]) })),
+        })),
       })),
       transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
-        const tx = {
-          update: vi.fn().mockReturnThis(),
+        const updateChain = {
           set: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
+          returning: vi.fn().mockResolvedValue([{
+            id: 'settled-position', userId: 'user-1', portfolioId: 'portfolio-1',
+            marketId: 'market-1', tokenId: 'token-1', outcome: 'YES',
+            shares: '10', avgEntryPrice: '0.5', realizedPnl: '0',
+          }]),
+        };
+        const tx = {
+          update: vi.fn(() => updateChain),
           insert: vi.fn().mockReturnThis(),
           values: vi.fn().mockReturnThis(),
           select: vi.fn().mockReturnThis(),
           from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
           for: vi.fn().mockResolvedValue([{ balance: '100.00' }])
         };
-        await cb(tx);
+        return cb(tx);
       })
     };
 
@@ -91,6 +101,40 @@ describe('Resolution Handler Job', () => {
     expect(mockDb.transaction).toHaveBeenCalledTimes(2);
   });
 
+  it('does not credit or record a position already settled by another worker', async () => {
+    const inserts: unknown[] = [];
+    mockDb.query.positions.findMany.mockResolvedValue([
+      {
+        id: 'pos-race', userId: 'user-1', portfolioId: 'portfolio-1',
+        marketId: 'market-race', tokenId: 'token-yes', outcome: 'YES',
+        shares: '10', avgEntryPrice: '0.4', realizedPnl: '0',
+      },
+    ]);
+    vi.spyOn(polymarketLib, 'getMarket').mockResolvedValue({
+      id: 'market-race', closed: true, tokenIds: ['token-yes', 'token-no'], outcomePrices: [1, 0],
+    } as unknown as Awaited<ReturnType<typeof polymarketLib.getMarket>>);
+    mockDb.transaction.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => {
+      const updateChain = {
+        set: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        returning: vi.fn().mockResolvedValue([]),
+      };
+      const tx = {
+        update: vi.fn(() => updateChain),
+        insert: vi.fn((table: unknown) => ({
+          values: vi.fn((values: unknown) => {
+            inserts.push({ table, values });
+            return Promise.resolve();
+          }),
+        })),
+      };
+      return cb(tx);
+    });
+
+    await expect(runResolutionCheck()).resolves.toBe(0);
+    expect(inserts).toEqual([]);
+  });
+
   it('uses the Polymarket US settlement price for US positions', async () => {
     mockDb.query.positions.findMany.mockResolvedValue([
       { id: 'pos-us', platform: 'polymarket_us', marketId: 'usa-market', outcome: 'YES', tokenId: 'polymarket_us:usa-market:YES', shares: '4', avgEntryPrice: '0.4', realizedPnl: '0', portfolioId: 'port1', userId: 'user1' },
@@ -120,7 +164,12 @@ describe('Resolution Handler Job', () => {
     mockDb.transaction.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => {
       const updateChain = {
         set: vi.fn().mockReturnThis(),
-        where: vi.fn().mockResolvedValue(undefined),
+        where: vi.fn().mockReturnThis(),
+        returning: vi.fn().mockResolvedValue([{
+          id: 'pos-ledger', userId: 'user-1', portfolioId: 'portfolio-1',
+          platform: 'polymarket', marketId: 'market-ledger', marketQuestion: 'Resolved?',
+          tokenId: 'token-yes', outcome: 'YES', shares: '10', avgEntryPrice: '0.4', realizedPnl: '0',
+        }]),
       };
       const tx = {
         update: vi.fn(() => updateChain),
@@ -136,7 +185,7 @@ describe('Resolution Handler Job', () => {
           }),
         })),
       };
-      await cb(tx);
+      return cb(tx);
     });
 
     await expect(runResolutionCheck()).resolves.toBe(1);

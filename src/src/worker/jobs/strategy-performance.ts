@@ -41,6 +41,14 @@ export function countUnpricedPositions(
   )).length;
 }
 
+export function countSnapshotUnpricedPositions(value: unknown) {
+  if (!Array.isArray(value)) return 0;
+  return value.filter((row) => (
+    row && typeof row === 'object'
+    && (row as Record<string, unknown>).pricing_status === 'unpriced'
+  )).length;
+}
+
 function bucketDate(date: Date, bucket: Bucket) {
   const result = new Date(date);
   if (bucket === 'HOURLY') result.setUTCMinutes(0, 0, 0);
@@ -147,6 +155,7 @@ export async function runStrategyPerformanceCalculation(now = new Date()) {
       cash: portfolioSnapshots.cash,
       positionsValue: portfolioSnapshots.positionsValue,
       totalValue: portfolioSnapshots.totalValue,
+      positions: portfolioSnapshots.positions,
       capturedAt: portfolioSnapshots.capturedAt,
     }).from(portfolioSnapshots)
       .where(inArray(portfolioSnapshots.strategyId, strategyIds))
@@ -192,7 +201,7 @@ export async function runStrategyPerformanceCalculation(now = new Date()) {
       if (snapshot) point = {
         strategyId: strategy.id, cash: Number(snapshot.cash), positionsValue: Number(snapshot.positionsValue),
         nav: Number(snapshot.totalValue), capturedAt: now, pricingUpdatedAt: snapshot.capturedAt,
-        unpricedPositionsCount: 0,
+        unpricedPositionsCount: countSnapshotUnpricedPositions(snapshot.positions),
       };
     }
     if (!point) continue;
@@ -216,6 +225,7 @@ export async function backfillStrategyPerformanceFromPortfolioSnapshots(since = 
     db.select({
       strategyId: portfolioSnapshots.strategyId, cash: portfolioSnapshots.cash,
       positionsValue: portfolioSnapshots.positionsValue, totalValue: portfolioSnapshots.totalValue,
+      positions: portfolioSnapshots.positions,
       capturedAt: portfolioSnapshots.capturedAt,
     }).from(portfolioSnapshots).where(and(
       inArray(portfolioSnapshots.strategyId, strategyIds),
@@ -235,7 +245,7 @@ export async function backfillStrategyPerformanceFromPortfolioSnapshots(since = 
         await upsertPerformancePoint(db, strategy, bucket, {
           strategyId: strategy.id, cash: Number(snapshot.cash), positionsValue: Number(snapshot.positionsValue),
           nav: Number(snapshot.totalValue), capturedAt: snapshot.capturedAt, pricingUpdatedAt: snapshot.capturedAt,
-          unpricedPositionsCount: 0,
+          unpricedPositionsCount: countSnapshotUnpricedPositions(snapshot.positions),
         }, flows);
         written += 1;
       }

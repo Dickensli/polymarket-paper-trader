@@ -66,7 +66,11 @@ describe('real account sync job', () => {
       positionsValue: 50,
       totalValue: 1050,
       pnl: 10,
-      positions: [],
+      unpricedPositionsCount: 2,
+      positions: [
+        { ticker: 'PRICED', pricing_status: 'priced' },
+        { ticker: 'NO-BOOK', pricing_status: 'unpriced' },
+      ],
       orders: [{
         order_id: 'official-1', status: 'resting', initial_count_fp: '10.00',
         fill_count_fp: '4.00', remaining_count_fp: '6.00', last_update_time: '2026-07-13T01:00:00Z',
@@ -85,6 +89,11 @@ describe('real account sync job', () => {
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledTimes(1);
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi', expect.any(Object));
     expect(insertValues).toHaveBeenCalledTimes(2);
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      positions: expect.arrayContaining([
+        expect.objectContaining({ ticker: 'NO-BOOK', pricing_status: 'unpriced' }),
+      ]),
+    }));
     expect(ledgerOnConflictDoUpdate).toHaveBeenCalledTimes(2);
     expect(db.execute).toHaveBeenCalledTimes(2);
     expect(onConflictDoUpdate).toHaveBeenCalledTimes(3);
