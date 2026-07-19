@@ -106,21 +106,31 @@ export function normalizeKalshiSettlement(row: Record<string, unknown>) {
 
 export function normalizePolymarketUsFill(row: Record<string, unknown>) {
   const trade = row.trade && typeof row.trade === 'object' ? row.trade as Record<string, unknown> : row;
-  const outcomeText = firstText(trade, ['outcomeSide', 'outcome_side', 'outcome']);
-  const sideText = firstText(trade, ['action', 'side']);
+  const order = trade.order && typeof trade.order === 'object' ? trade.order as Record<string, unknown>
+    : row.order && typeof row.order === 'object' ? row.order as Record<string, unknown>
+      : {};
+  const intent = firstText(order, ['intent']);
+  const outcomeText = firstText(trade, ['outcomeSide', 'outcome_side', 'outcome'])
+    ?? firstText(order, ['outcomeSide', 'outcome_side', 'outcome'])
+    ?? (intent ? (intent.includes('SHORT') ? 'NO' : 'YES') : null);
+  const sideText = firstText(trade, ['action', 'side'])
+    ?? firstText(order, ['action', 'side'])
+    ?? (intent ? (intent.includes('SELL') ? 'SELL' : 'BUY') : null);
+  const rawPrice = objectNumber(trade.lastPx ?? trade.price ?? trade.averagePrice ?? trade.average_price);
+  const outcomePrice = intent?.includes('SHORT') ? 1 - rawPrice : rawPrice;
   return {
     platform: 'polymarket_us' as const,
     officialFillId: requiredText(firstText(trade, ['id', 'fillId', 'fill_id']), 'fill id'),
     officialTradeId: firstText(trade, ['tradeId', 'trade_id', 'id']),
-    officialOrderId: firstText(trade, ['orderId', 'order_id']),
-    marketId: requiredText(firstText(trade, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'market'),
+    officialOrderId: firstText(trade, ['orderId', 'order_id']) ?? firstText(order, ['id', 'orderId', 'order_id']),
+    marketId: requiredText(firstText(trade, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']) ?? firstText(order, ['marketSlug', 'market_slug', 'slug', 'marketId', 'market_id']), 'market'),
     outcome: outcomeText ? (outcomeText.toUpperCase().includes('NO') ? 'NO' : 'YES') as 'YES' | 'NO' : null,
     side: sideText ? (sideText.toUpperCase().includes('SELL') ? 'SELL' : 'BUY') as 'BUY' | 'SELL' : null,
-    quantity: number(trade.quantity ?? trade.qty ?? trade.filledQuantity ?? trade.filled_quantity),
-    price: objectNumber(trade.price ?? trade.averagePrice ?? trade.average_price),
-    fee: objectNumber(trade.fee ?? trade.feeAmount ?? trade.fee_amount),
+    quantity: number(trade.lastShares ?? trade.quantity ?? trade.qty ?? trade.filledQuantity ?? trade.filled_quantity),
+    price: outcomePrice,
+    fee: objectNumber(trade.commissionNotionalCollected ?? trade.fee ?? trade.feeAmount ?? trade.fee_amount),
     isTaker: typeof trade.isAggressor === 'boolean' ? trade.isAggressor : typeof trade.isTaker === 'boolean' ? trade.isTaker : typeof trade.is_taker === 'boolean' ? trade.is_taker : null,
-    filledAt: timestamp(trade.createTime ?? trade.updateTime ?? trade.createdAt ?? trade.created_at ?? trade.timestamp, 'fill time'), payload: row,
+    filledAt: timestamp(trade.transactTime ?? trade.createTime ?? trade.updateTime ?? trade.createdAt ?? trade.created_at ?? trade.timestamp, 'fill time'), payload: row,
   };
 }
 

@@ -39,4 +39,23 @@ describe('real trading server-side risk guard', () => {
       { ticker: 'OTHER', risk_group_id: 'OTHER', position_cost_dollars: 999 },
     ], 'EVENT', 'MKT-NEW')).toBe(350);
   });
+
+  it('allows stricter agent limits but never lets an agent loosen server ceilings', () => {
+    expect(resolveRealRiskLimits({
+      max_single_trade_pct: 1,
+      max_market_exposure_pct: 1,
+      min_cash_reserve_pct: 0,
+      max_daily_loss_pct: 1,
+      max_drawdown_pct: 1,
+      max_daily_trades: 999,
+    })).toEqual({
+      maxTradePct: 0.02,
+      maxRiskGroupExposurePct: 0.05,
+      minCashReservePct: 0.30,
+      maxDailyLossPct: 0.02,
+      maxDrawdownPct: 0.05,
+      maxDailyBuyTrades: 3,
+    });
+    expect(resolveRealRiskLimits({ max_single_trade_pct: 0.01 }).maxTradePct).toBe(0.01);
+  });
 });

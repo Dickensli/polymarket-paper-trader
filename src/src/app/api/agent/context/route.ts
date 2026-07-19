@@ -11,7 +11,7 @@ import {
   realTradeOrders,
   strategyRuns,
 } from '@/lib/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, ne } from 'drizzle-orm';
 import { kalshiOrderQuantity, normalizeKalshiOrderStatus } from '@/lib/official-trading';
 import { enrichOpenOrdersWithMarkets } from '@/lib/agent-market-context';
 
@@ -60,6 +60,23 @@ export async function GET(request: NextRequest) {
     });
 
     const is_setup = !!strategy;
+
+    if (strategy?.agentMode === 'real') {
+      const competingRealStrategy = await db.query.strategies.findFirst({
+        where: and(
+          eq(strategies.platform, strategy.platform),
+          eq(strategies.agentMode, 'real'),
+          eq(strategies.status, 'active'),
+          ne(strategies.id, strategy.id),
+        ),
+      });
+      if (competingRealStrategy && competingRealStrategy.id !== strategy.id) {
+        return NextResponse.json({
+          error: 'This deployment uses one shared official venue account. Multiple active real strategies cannot be attributed safely.',
+          code: 'SHARED_ACCOUNT_STRATEGY_AMBIGUITY',
+        }, { status: 409 });
+      }
+    }
 
     // MCP agents opt into a server-audited run at bootstrap. The schedule on
     // the strategy row is metadata only; this run ledger is what lets us tell

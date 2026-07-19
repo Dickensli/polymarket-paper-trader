@@ -25,6 +25,7 @@ export interface ProposalServerFacts {
   requestedShares: number;
   requestedNotional: number;
   portfolioNav: number;
+  minimumNetEdge?: number;
 }
 
 export function validateTradeProposal(
@@ -52,6 +53,9 @@ export function validateTradeProposal(
   const serverEdge = proposal.fair_probability - facts.executablePrice;
   if (proposal.net_edge > serverEdge + 0.005) {
     reasons.push('EDGE_EXAGGERATED');
+  }
+  if (serverEdge < (facts.minimumNetEdge ?? 0) - 1e-9) {
+    reasons.push('EDGE_BELOW_MINIMUM');
   }
   const serverNavPct = facts.portfolioNav > 0 ? facts.requestedNotional / facts.portfolioNav : 1;
   if (Math.abs(proposal.proposed_nav_pct - serverNavPct) > 0.01) {

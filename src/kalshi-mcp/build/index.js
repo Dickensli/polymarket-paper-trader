@@ -69,6 +69,17 @@ async function callPolyTrader(path, init = {}) {
     }
     return body;
 }
+async function callKalshiPublic(path) {
+    const res = await fetch(`${KALSHI_BASE_URL}${path}`, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+    });
+    const text = await res.text();
+    const body = text ? JSON.parse(text) : {};
+    if (!res.ok)
+        throw new Error(`Kalshi public API ${res.status}: ${text}`);
+    return body;
+}
 function json(data) {
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
@@ -100,6 +111,10 @@ function requireDestructiveResetConfirmation(args) {
         throw new Error("init_account is destructive and requires confirm_destructive_reset=true. " +
             "Use portfolio/get_balance for normal account inspection.");
     }
+    const resetSecret = process.env.AGENT_RESET_SECRET;
+    if (!resetSecret || args.reset_authorization !== resetSecret) {
+        throw new Error("init_account requires a valid, human-issued reset_authorization token.");
+    }
 }
 const server = new Server({ name: "kalshi-paper-trader-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -116,9 +131,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                         description: "Must be true to confirm wiping all paper trades, positions, and ledger entries.",
                     },
                     reset_reason: { type: "string", description: "Human-readable reason for the destructive reset." },
+                    reset_authorization: { type: "string", description: "Short-lived human-issued authorization matching the server reset secret." },
                     ...accountProps,
                 },
-                required: ["strategy_id", "confirm_destructive_reset"],
+                required: ["strategy_id", "confirm_destructive_reset", "reset_reason", "reset_authorization"],
             },
         },
         {
@@ -211,14 +227,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "get_orderbook",
-            description: "Get the current order book (bids) for a Kalshi market.",
+            description: "Get an outcome-normalized executable order book for a Kalshi market.",
             inputSchema: {
                 type: "object",
                 properties: {
                     ticker: { type: "string", description: "Market ticker." },
-                    depth: { type: "number", description: "Order book depth." },
+                    outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome book to normalize." },
                 },
-                required: ["ticker"],
+                required: ["ticker", "outcome"],
             },
         },
         {
@@ -343,7 +359,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     balance: { type: "number", description: "Starting balance (default 10000)" },
                     ...accountProps,
                 },
-                required: ["trades"],
+                required: ["strategy_id", "trades"],
             },
         },
         // ── Agent Strategy ─────────────────────────────────────────────
@@ -359,7 +375,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     balance: { type: "number", description: "Starting paper balance in USD", default: 10000 },
                     risk_config: { type: "object", description: "Server-enforced risk ratios, e.g. max_single_trade_pct, max_market_exposure_pct, min_cash_reserve_pct" },
                     schedule: { type: "string", description: "Cron schedule recorded for strategy auditing" },
-                    metadata: { type: "object", description: "Server-side strategy controls such as shadow graduation requirements." },
                 },
                 required: ["strategy_id"],
             },
@@ -396,7 +411,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     order_id: { type: "string", description: "Local real_trade_orders UUID" },
                     strategy_id: { type: "string", description: "Registered strategy name" },
                 },
-                required: ["order_id"],
+                required: ["order_id", "strategy_id"],
             },
         },
     ],
@@ -530,22 +545,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         case "get_orderbook": {
             const ticker = encodeURIComponent(String(args.ticker));
-            const params = new URLSearchParams();
-            if (args.depth !== undefined)
-                params.set("depth", String(args.depth));
-            const url = `${KALSHI_BASE_URL}/markets/${ticker}/orderbook?${params.toString()}`;
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            const data = await res.json();
-            return json({ ok: true, data });
+            const outcome = encodeURIComponent(String(args.outcome));
+            const data = await callPolyTrader(`/kalshi/markets/${ticker}/orderbook?outcome=${outcome}`, {
+                headers: getPublicHeaders(),
+            });
+            return json({ ok: true, data: data.data ?? data });
         }
         case "get_event": {
             const eventTicker = encodeURIComponent(String(args.event_ticker));
             const params = new URLSearchParams();
             if (args.with_nested_markets !== undefined)
                 params.set("with_nested_markets", String(args.with_nested_markets));
-            const url = `${KALSHI_BASE_URL}/events/${eventTicker}?${params.toString()}`;
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            const data = await res.json();
+            const data = await callKalshiPublic(`/events/${eventTicker}?${params.toString()}`);
             return json({ ok: true, data });
         }
         case "search_events": {
@@ -555,9 +566,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (value !== undefined)
                     params.set(key, String(value));
             }
-            const url = `${KALSHI_BASE_URL}/events?${params.toString()}`;
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            const data = await res.json();
+            const data = await callKalshiPublic(`/events?${params.toString()}`);
             return json({ ok: true, data });
         }
         case "list_series": {
@@ -567,9 +576,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (value !== undefined)
                     params.set(key, String(value));
             }
-            const url = `${KALSHI_BASE_URL}/series?${params.toString()}`;
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            const data = await res.json();
+            const data = await callKalshiPublic(`/series?${params.toString()}`);
             return json({ ok: true, data });
         }
         case "get_public_trades": {
@@ -579,9 +586,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (value !== undefined)
                     params.set(key, String(value));
             }
-            const url = `${KALSHI_BASE_URL}/markets/trades?${params.toString()}`;
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            const data = await res.json();
+            const data = await callKalshiPublic(`/markets/trades?${params.toString()}`);
             return json({ ok: true, data });
         }
         // ── Agent Reports (Retro) ──────────────────────────────────────
@@ -649,7 +654,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     balance: Number(args.balance || 10000),
                     risk_config: args.risk_config,
                     schedule: args.schedule,
-                    metadata: args.metadata,
                 }),
             });
             return json({ ok: true, data: data.data ?? data });
@@ -658,7 +662,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const strategy_id = String(args.strategy_id);
             if (!strategy_id)
                 throw new Error("Missing required field: strategy_id");
-            const data = await callPolyTrader(`/agent/context?strategy_id=${encodeURIComponent(strategy_id)}`, { headers: getAgentHeaders(args) });
+            const data = await callPolyTrader(`/agent/context?strategy_id=${encodeURIComponent(strategy_id)}&start_run=true&trigger_id=${encodeURIComponent(`smith:${strategy_id}`)}`, { headers: getAgentHeaders(args) });
             return json({ ok: true, data: data.data ?? data });
         }
         case "get_graduation_status": {

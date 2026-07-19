@@ -33,7 +33,7 @@ When direct database export is unavailable, use the venue MCP registered for the
 3. `read_report` for the selected filenames
 4. `portfolio`, `history`, and `stats`
 
-Pass the exact registered `account`, `agent_user_id`, and strategy ID on every state-touching call. This fallback is read-only for the flywheel: do not call `buy`, `sell`, `save_report`, `register_strategy`, or `init_account`.
+Pass the exact registered `strategy_id` on every state-touching call. Account identity is injected by each venue MCP deployment; only pass an `account_id` when that specific `register_strategy` schema exposes it. This fallback is read-only for the flywheel: do not call `buy`, `sell`, `save_report`, `register_strategy`, or `init_account`.
 
 ## Prompt ownership map
 

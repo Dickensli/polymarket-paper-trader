@@ -10,6 +10,7 @@ import {
 } from '@/lib/polymarket-us';
 import { Redis } from '@upstash/redis';
 import { simulateSellFill } from '@/lib/orderbook-simulator';
+import { resolvePaperFeeRateBps } from '@/lib/paper-fees';
 
 /**
  * Detect whether a tokenId is a Kalshi ticker.
@@ -92,7 +93,7 @@ export async function runPriceRefresh() {
     kalshiKeys.map(async ({ positionId, ticker, outcome, shares }) => {
       const book = await getKalshiOrderBook(ticker, outcome).catch(() => null);
       if (!book) return { positionId, midpoint: null };
-      const fill = simulateSellFill(book, shares, 0, 'FOK');
+      const fill = simulateSellFill(book, shares, resolvePaperFeeRateBps('kalshi', {}), 'FOK');
       // A reachable book with insufficient full depth has zero conservative
       // liquidation value; a missing book leaves the old mark to become stale.
       return { positionId, midpoint: fill.success ? fill.avgPrice : 0 };
@@ -103,7 +104,7 @@ export async function runPriceRefresh() {
     polymarketUsKeys.map(async ({ positionId, slug, outcome, shares }) => {
       const book = await getPolymarketUsOutcomeOrderBook(slug, outcome).catch(() => null);
       if (!book) return { positionId, midpoint: null };
-      const fill = simulateSellFill(book, shares, 0, 'FOK');
+      const fill = simulateSellFill(book, shares, resolvePaperFeeRateBps('polymarket_us', {}), 'FOK');
       return { positionId, midpoint: fill.success ? fill.avgPrice : 0 };
     }),
   );

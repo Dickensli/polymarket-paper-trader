@@ -57,4 +57,18 @@ describe('structured trade proposal gate', () => {
       'NAV_PERCENT_MISMATCH',
     ]));
   });
+
+  it('rejects a server-computed edge below the configured minimum', () => {
+    const parsed = tradeProposalSchema.parse({ ...proposal, fair_probability: 0.52, net_edge: 0.01 });
+    const result = validateTradeProposal(parsed, {
+      now: new Date('2026-07-16T12:02:00.000Z'),
+      executablePrice: 0.51,
+      executableDepth: 100,
+      requestedShares: 20,
+      requestedNotional: 10.2,
+      portfolioNav: 500,
+      minimumNetEdge: 0.02,
+    });
+    expect(result.reasons).toContain('EDGE_BELOW_MINIMUM');
+  });
 });

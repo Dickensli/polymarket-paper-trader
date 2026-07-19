@@ -46,6 +46,17 @@ describe('official trading ledger normalization', () => {
   it('normalizes Polymarket US orders, fills, and settlement activity', () => {
     expect(normalizePolymarketUsOrderEvent({ id: 'o1', state: 'partially_filled', quantity: 10, filledQuantity: 4, updatedAt: '2026-01-01T00:00:00Z' })).toMatchObject({ officialOrderId: 'o1', status: 'PARTIALLY_FILLED', remainingQuantity: 6 });
     expect(normalizePolymarketUsFill({ id: 'f1', orderId: 'o1', marketSlug: 'btc-up', outcomeSide: 'YES', action: 'BUY', quantity: 4, price: { value: '0.55' }, fee: { value: '0.02' }, createdAt: '2026-01-01T00:01:00Z' })).toMatchObject({ officialFillId: 'f1', quantity: 4, price: 0.55, fee: 0.02 });
+    expect(normalizePolymarketUsFill({
+      id: 'execution-1',
+      order: {
+        id: 'order-2', marketSlug: 'btc-down', intent: 'ORDER_INTENT_BUY_SHORT',
+      },
+      lastShares: '3.5', lastPx: { value: '0.62' },
+      commissionNotionalCollected: { value: '0.03' }, transactTime: '2026-01-01T00:02:00Z',
+    })).toMatchObject({
+      officialFillId: 'execution-1', officialOrderId: 'order-2', marketId: 'btc-down',
+      outcome: 'NO', side: 'BUY', quantity: 3.5, price: 0.38, fee: 0.03,
+    });
     expect(normalizePolymarketUsSettlement({ id: 's1', type: 'SETTLEMENT', marketSlug: 'btc-up', outcome: 'YES', quantity: 4, revenue: { value: '4' }, fee: { value: '0' }, createdAt: '2026-01-02T00:00:00Z' })).toMatchObject({ settlementKey: 'polymarket_us:s1', marketId: 'btc-up', revenue: 4 });
     expect(normalizePolymarketUsSettlement({ id: 'x', type: 'DEPOSIT' })).toBeNull();
   });

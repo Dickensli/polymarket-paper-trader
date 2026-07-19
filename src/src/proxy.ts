@@ -31,8 +31,17 @@ export default async function proxy(request: NextRequest) {
 
   const isApiRoute = pathname.startsWith("/api");
   const isAuthRoute = pathname.startsWith("/api/auth");
-  const isTradeRoute = pathname.startsWith("/api/trade");
-  const isPortfolioRoute = pathname.startsWith("/api/portfolio");
+  const isTradeRoute = [
+    "/api/trade",
+    "/api/agent/trades",
+    "/api/agent/paper-trades",
+    "/api/agent/real-trades",
+    "/api/kalshi/trade",
+    "/api/polymarket-us/trade",
+  ].some((prefix) => pathname.startsWith(prefix));
+  const isPortfolioRoute = pathname.startsWith("/api/portfolio")
+    || pathname.startsWith("/api/kalshi/portfolio")
+    || pathname.startsWith("/api/polymarket-us/portfolio");
   const isUserRoute = pathname.startsWith("/api/user");
 
   // Check for NextAuth session cookie (works for both HTTP and HTTPS deployments)

@@ -26,6 +26,20 @@ describe('MCP destructive reset guard', () => {
     expect(source).toContain('required:');
     expect(source).toContain('requireDestructiveResetConfirmation');
   });
+
+  for (const path of [
+    'kalshi-mcp/src/index.ts',
+    'kalshi-mcp/build/index.js',
+    'polymarket-us-mcp/src/index.ts',
+    'polymarket-us-mcp/build/index.js',
+  ]) {
+    it(`${path} also requires server-verified human reset authorization`, () => {
+      const source = readRepoFile(path);
+      expect(source).toContain('AGENT_RESET_SECRET');
+      expect(source).toContain('reset_authorization');
+      expect(source).toContain('human-issued reset_authorization token');
+    });
+  }
 });
 
 describe('MCP verified report routing', () => {

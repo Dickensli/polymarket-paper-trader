@@ -55,7 +55,7 @@ describe('real account sync job', () => {
     db.query.officialSettlements.findMany.mockResolvedValue([]);
   });
 
-  it('fetches one private snapshot for two strategies sharing a Kalshi key', async () => {
+  it('syncs one shared official account but refuses to duplicate its NAV across strategies', async () => {
     db.query.realTradeOrders.findMany.mockResolvedValue([{ id: 'audit-1', officialOrderId: 'official-1', strategyId: 'strategy-1', userId: 'user-1' }]);
     db.query.strategies.findMany.mockResolvedValue([
       { id: 'strategy-1', userId: 'user-1', platform: 'kalshi', agentMode: 'real' },
@@ -83,24 +83,19 @@ describe('real account sync job', () => {
 
     await expect(runRealAccountSync()).resolves.toMatchObject({
       accounts_synced: 1,
-      strategies_synced: 2,
-      errors: [],
+      strategies_synced: 0,
+      errors: [{
+        platform: 'kalshi',
+        message: expect.stringContaining('cannot be attributed safely'),
+      }],
     });
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledTimes(1);
     expect(getOfficialPortfolioSnapshot).toHaveBeenCalledWith('kalshi', expect.any(Object));
-    expect(insertValues).toHaveBeenCalledTimes(2);
-    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({
-      positions: expect.arrayContaining([
-        expect.objectContaining({ ticker: 'NO-BOOK', pricing_status: 'unpriced' }),
-      ]),
-    }));
+    expect(insertValues).not.toHaveBeenCalled();
     expect(ledgerOnConflictDoUpdate).toHaveBeenCalledTimes(2);
     expect(db.execute).toHaveBeenCalledTimes(2);
     expect(onConflictDoUpdate).toHaveBeenCalledTimes(3);
-    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'PARTIALLY_FILLED',
-      quantity: '10.000000',
-    }));
+    expect(updateSet).not.toHaveBeenCalled();
   });
 
   it('backfills the balanced cash ledger once from persisted official facts', async () => {

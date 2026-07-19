@@ -36,15 +36,26 @@ function positiveInteger(config: Record<string, unknown>, keys: string[], fallba
   return fallback;
 }
 
+function cappedRatio(config: Record<string, unknown>, keys: string[], ceiling: number) {
+  return Math.min(ratio(config, keys, ceiling), ceiling);
+}
+
+function reserveRatio(config: Record<string, unknown>, keys: string[], floor: number) {
+  return Math.max(ratio(config, keys, floor), floor);
+}
+
 export function resolveRealRiskLimits(value: unknown): RealRiskLimits {
   const config = record(value);
   return {
-    maxTradePct: ratio(config, ['max_trade_pct', 'maxTradePct', 'max_single_trade_pct', 'maxSingleTradePct'], DEFAULT_REAL_RISK_LIMITS.maxTradePct),
-    maxRiskGroupExposurePct: ratio(config, ['max_market_exposure_pct', 'maxMarketExposurePct', 'max_event_exposure_pct', 'maxEventExposurePct'], DEFAULT_REAL_RISK_LIMITS.maxRiskGroupExposurePct),
-    minCashReservePct: ratio(config, ['min_cash_reserve_pct', 'minCashReservePct'], DEFAULT_REAL_RISK_LIMITS.minCashReservePct),
-    maxDailyLossPct: ratio(config, ['max_daily_loss_pct', 'maxDailyLossPct', 'daily_loss_stop_pct', 'dailyLossStopPct'], DEFAULT_REAL_RISK_LIMITS.maxDailyLossPct),
-    maxDrawdownPct: ratio(config, ['max_drawdown_pct', 'maxDrawdownPct', 'drawdown_stop_pct', 'drawdownStopPct'], DEFAULT_REAL_RISK_LIMITS.maxDrawdownPct),
-    maxDailyBuyTrades: positiveInteger(config, ['max_daily_trades', 'maxDailyTrades', 'max_daily_buy_trades', 'maxDailyBuyTrades'], DEFAULT_REAL_RISK_LIMITS.maxDailyBuyTrades),
+    maxTradePct: cappedRatio(config, ['max_trade_pct', 'maxTradePct', 'max_single_trade_pct', 'maxSingleTradePct'], DEFAULT_REAL_RISK_LIMITS.maxTradePct),
+    maxRiskGroupExposurePct: cappedRatio(config, ['max_market_exposure_pct', 'maxMarketExposurePct', 'max_event_exposure_pct', 'maxEventExposurePct'], DEFAULT_REAL_RISK_LIMITS.maxRiskGroupExposurePct),
+    minCashReservePct: reserveRatio(config, ['min_cash_reserve_pct', 'minCashReservePct'], DEFAULT_REAL_RISK_LIMITS.minCashReservePct),
+    maxDailyLossPct: cappedRatio(config, ['max_daily_loss_pct', 'maxDailyLossPct', 'daily_loss_stop_pct', 'dailyLossStopPct'], DEFAULT_REAL_RISK_LIMITS.maxDailyLossPct),
+    maxDrawdownPct: cappedRatio(config, ['max_drawdown_pct', 'maxDrawdownPct', 'drawdown_stop_pct', 'drawdownStopPct'], DEFAULT_REAL_RISK_LIMITS.maxDrawdownPct),
+    maxDailyBuyTrades: Math.min(
+      positiveInteger(config, ['max_daily_trades', 'maxDailyTrades', 'max_daily_buy_trades', 'maxDailyBuyTrades'], DEFAULT_REAL_RISK_LIMITS.maxDailyBuyTrades),
+      DEFAULT_REAL_RISK_LIMITS.maxDailyBuyTrades,
+    ),
   };
 }
 

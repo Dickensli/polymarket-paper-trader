@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { agentReports, getDb, strategies } from '@/lib/db';
-import { paperTradeOrders, realTradeOrders, strategyRuns } from '@/lib/db/schema';
+import { paperTradeOrders, paperTrades, realTradeOrders, strategyRuns } from '@/lib/db/schema';
 import { getPortfolio } from '@/lib/trading-engine';
 import { getOfficialPortfolioSnapshot } from '@/lib/official-trading';
 import { runPriceRefresh } from '@/worker/jobs/price-refresh';
@@ -214,6 +214,20 @@ export async function POST(request: NextRequest) {
         recent_trades: verifiedOrderRows,
       };
     } else if (strategy.platform === 'kalshi' || strategy.platform === 'polymarket_us') {
+      const competingRealStrategy = await db.query.strategies.findFirst({
+        where: and(
+          eq(strategies.platform, strategy.platform),
+          eq(strategies.agentMode, 'real'),
+          eq(strategies.status, 'active'),
+          ne(strategies.id, strategy.id),
+        ),
+      });
+      if (competingRealStrategy && competingRealStrategy.id !== strategy.id) {
+        return NextResponse.json({
+          error: 'This deployment uses one shared official venue account. Multiple active real strategies cannot be attributed safely.',
+          code: 'SHARED_ACCOUNT_STRATEGY_AMBIGUITY',
+        }, { status: 409 });
+      }
       try {
         const official = await getOfficialPortfolioSnapshot(strategy.platform);
         const verifiedOrderRows = await db.query.realTradeOrders.findMany({
@@ -298,6 +312,20 @@ export async function POST(request: NextRequest) {
       ));
     };
 
+    const linkRunEvidence = async (reportId: string) => {
+      if (!effectiveRunId) return;
+      await Promise.all([
+        db.update(paperTradeOrders).set({ reportId }).where(and(
+          eq(paperTradeOrders.strategyId, strategy.id),
+          eq(paperTradeOrders.runId, effectiveRunId),
+        )),
+        db.update(paperTrades).set({ reportId }).where(and(
+          eq(paperTrades.strategyId, strategy.id),
+          eq(paperTrades.runId, effectiveRunId),
+        )),
+      ]);
+    };
+
     if (existing) {
       const [updated] = await db
         .update(agentReports)
@@ -305,11 +333,13 @@ export async function POST(request: NextRequest) {
         .where(eq(agentReports.id, existing.id))
         .returning();
       await completeRun();
+      await linkRunEvidence(updated.id);
       return NextResponse.json({ data: sanitizeAgentReport(updated), updated: true });
     }
 
     const [created] = await db.insert(agentReports).values(values).returning();
     await completeRun();
+    await linkRunEvidence(created.id);
     return NextResponse.json({ data: sanitizeAgentReport(created), updated: false }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

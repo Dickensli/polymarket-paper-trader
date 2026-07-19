@@ -145,6 +145,24 @@ function createMockDb() {
   };
 }
 
+function proposalFor(price: number, depth: number, navPct: number) {
+  return {
+    thesis: 'A current official source supports a material pricing discrepancy.',
+    rules_verified: true,
+    source_urls: ['https://example.com/source'],
+    fair_probability: Math.min(0.9, price + 0.15),
+    confidence_low: price + 0.1,
+    confidence_high: Math.min(0.95, price + 0.2),
+    quote_observed_at: new Date().toISOString(),
+    observed_price: price,
+    available_depth: depth,
+    net_edge: 0.14,
+    proposed_nav_pct: navPct,
+    exit_condition: 'Exit when the catalyst passes or the edge closes.',
+    invalidation_condition: 'Do not enter if the official source changes.',
+  };
+}
+
 describe('agent route handlers', () => {
   let db: ReturnType<typeof createMockDb>;
 
@@ -216,7 +234,7 @@ describe('agent route handlers', () => {
     });
   });
 
-  it('updates risk controls for an existing strategy without changing its locked venue or mode', async () => {
+  it('keeps risk controls immutable for an existing strategy while syncing its schedule', async () => {
     const { POST } = await import('@/app/api/agent/strategies/register/route');
     const existing = {
       id: 'strategy-1', userId: 'user-1', strategyId: 'arb', agentMode: 'paper',
@@ -240,8 +258,10 @@ describe('agent route handlers', () => {
 
     expect(response.status).toBe(200);
     expect(db.updateSet).toHaveBeenCalledWith(expect.objectContaining({
-      riskConfig: { max_single_trade_pct: 0.05 },
       schedule: '0 */2 * * *',
+    }));
+    expect(db.updateSet).not.toHaveBeenCalledWith(expect.objectContaining({
+      riskConfig: expect.anything(),
     }));
   });
 
@@ -709,14 +729,18 @@ describe('agent route handlers', () => {
 
     const response = await POST(makeRequest({
       headers: { 'x-idempotency-key': 'pmus-depth' },
-      body: { strategy_id: 'hft', slug: 'house-dem', outcome: 'YES', side: 'BUY', amount: 10 },
+      body: {
+        strategy_id: 'hft', slug: 'house-dem', outcome: 'YES', side: 'BUY', amount: 10,
+        proposal: proposalFor(0.272727, 40, 0.001),
+      },
     }) as never);
 
     expect(response.status).toBe(200);
     expect(executeTrade).toHaveBeenCalledWith('user-1', expect.objectContaining({
       riskGroupId: 'house-control',
-      shares: 36.666667,
-      price: 0.272727,
+      shares: expect.any(Number),
+      price: 0.27248,
+      feeRateBps: 100,
     }));
     expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
       fillModel: 'polymarket_us_orderbook_depth_fok',
@@ -753,7 +777,10 @@ describe('agent route handlers', () => {
 
     const response = await POST(makeRequest({
       headers: { 'x-idempotency-key': 'pmus-risk-reject' },
-      body: { strategy_id: 'hft', slug: 'oversized', outcome: 'YES', side: 'BUY', amount: 600 },
+      body: {
+        strategy_id: 'hft', slug: 'oversized', outcome: 'YES', side: 'BUY', amount: 600,
+        proposal: proposalFor(0.5, 2_000, 0.06),
+      },
     }) as never);
 
     expect(response.status).toBe(403);
@@ -826,8 +853,9 @@ describe('agent route handlers', () => {
       tokenId: 'kalshi:KXTEST:YES',
       outcome: 'YES',
       side: 'BUY',
-      shares: 40,
+      shares: 37.383178,
       price: 0.25,
+      feeRateBps: 700,
       total: 10,
       timestamp: '2026-07-03T00:00:00.000Z',
     });
@@ -881,15 +909,16 @@ describe('agent route handlers', () => {
     expect(executeTrade).toHaveBeenCalledWith('user-1', expect.objectContaining({
       marketId: 'KXTEST',
       platform: 'kalshi',
-      shares: 40,
+      shares: 37.383178,
       price: 0.25,
+      feeRateBps: 700,
     }));
     expect(db.update).toHaveBeenCalled();
     expect(db.insert).toHaveBeenCalledTimes(3);
     await expect(response.json()).resolves.toMatchObject({
       data: { marketId: 'KXTEST', tokenId: 'kalshi:KXTEST:YES' },
       paper_order: { platform: 'kalshi', fillModel: 'live_orderbook_depth_fok' },
-      report: { filename: 'run.md' },
+      report: null,
       portfolio: { cash: 9990, total_value: 10000 },
     });
   });

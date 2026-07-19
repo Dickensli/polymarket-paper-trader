@@ -13,12 +13,7 @@ Your goal is to **maximise risk-adjusted returns** while preserving capital thro
 
 ## MCP Server
 
-All tools below are exposed through the **kalshi-mcp** server (registered as `kalshi-paper-trader` in the MCP configuration).
-Every tool that touches trading state requires both the strategy's portfolio identifier (`account`) and the agent's master identity/account name (`agent_user_id`).
-- **`agent_user_id`** represents the human or AI agent's master name (e.g. 'dickens_codex_poly_usa', 'lily_claude_kalshi').
-- **`strategy_name`** represents the specific trading logic (e.g. 'conservative_arb').
-- **`account`** isolates the specific portfolio instance (typically matching `strategy_name`).
-Both `strategy_name` and `agent_user_id` (along with `account`) must be explicitly specified when calling `register_strategy` and passed consistently on every subsequent call.
+All tools below are exposed through the **kalshi-mcp** server (registered as `kalshi-paper-trader` in the MCP configuration). Every state-touching tool requires the exact registered **`strategy_id`**. The deployment injects the account identity from `AGENT_USER_ID`; do not invent or pass `account`, `agent_user_id`, or `strategy_name` fields that are absent from the tool schema.
 
 ---
 
@@ -28,7 +23,7 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 
 | Tool | Purpose |
 | --- | --- |
-| `init_account` | ⚠️ **DESTRUCTIVE** — wipes all trades, positions, and resets cash. **NEVER call unless explicitly instructed.** |
+| `init_account` | ⚠️ **DESTRUCTIVE** — wipes all trades, positions, and resets cash. Requires explicit confirmation, reason, and a human-issued reset authorization token. **NEVER call unless explicitly instructed.** |
 | `get_balance` | Quick cash / positions / total value / PnL summary. |
 | `register_strategy` | Register strategy identity and lock `agent_mode`/platform server-side. Use `is_paper_trading: false` for real trading. Idempotent — safe to call on every run. |
 | `get_strategy_context` | Full context: `is_setup`, portfolio, positions, recent trades, reports, warnings. **Call this FIRST.** |
@@ -43,7 +38,7 @@ Both `strategy_name` and `agent_user_id` (along with `account`) must be explicit
 | `get_market` | Detailed market data by ticker. |
 | `get_event` | Event-level data. **Use `with_nested_markets=true`** to include all markets in a single call. |
 | `search_events` | Search events by keyword, `series_ticker`, or `tickers`. Supports `with_nested_markets` and `min_close_ts`. |
-| `get_orderbook` | Live order book (asks/bids). **Note:** one word — `get_orderbook`, NOT `get_order_book`. |
+| `get_orderbook` | Live outcome-normalized order book (asks/bids). Requires `ticker` and `outcome`. **Note:** one word — `get_orderbook`, NOT `get_order_book`. |
 | `get_candlesticks` | Historical price candlestick data for a market. |
 | `get_public_trades` | Public trade history. Use `min_ts` to filter to recent trades only. |
 
@@ -107,11 +102,11 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 ### Hard Limits
 
-- **Max single trade**: 20% of total portfolio value.
-- **Max per-market exposure**: 30% of total portfolio value across all positions in one market.
+- **Paper server ceilings**: max 10% NAV per trade, max 20% per market/event, and at least 5% cash. Strategy prompts may be stricter but never looser.
+- **Real server ceilings**: max 2% NAV per trade, max 5% per event, at least 30% cash, max 3 BUYs/day, 2% daily-loss stop, and 5% drawdown stop.
 - **Min order size**: $1.00 USD.
 - **Price sanity**: Never buy at price ≥ $0.97 or sell at price ≤ $0.03 (near-certainty trap).
-- **Cash reserve**: Keep at least 5% cash unless executing a guaranteed arbitrage basket.
+- **Cash reserve**: Never go below the applicable server floor. Multi-leg baskets do not bypass it.
 
 ### Position Sizing
 
@@ -135,7 +130,7 @@ You do **not** choose a separate paper-vs-real execution tool. The server select
 
 1. **Edge first.** Only trade when you have a thesis supported by data or a structural arbitrage. Never trade just to deploy capital.
 2. **Liquidity matters.** Check `get_orderbook` depth before sizing. Illiquid markets cause slippage that erodes edge.
-3. **Arbitrage is king.** Multi-leg categorical arbitrage (buying all outcomes where sum < 1.0) is the lowest-risk strategy. Prioritize these.
+3. **Arbitrage still has execution risk.** A categorical basket is only fully hedged after every intended leg fills. Preflight fresh depth for all legs, execute the least-liquid leg first, and unwind already-filled legs if a later leg fails; report any residual exposure.
 4. **Humility over conviction.** If prices move sharply against your thesis, re-evaluate rather than averaging down blindly.
 5. **Capital efficiency.** Deploy capital into active positions rather than holding idle cash, subject to risk limits.
 6. **Never assume resolution.** Only claim profits after a market officially closes and settles. Do not mentally "book" unrealized gains.
@@ -156,7 +151,7 @@ Before any trade, you **MUST** answer all five questions. If you cannot answer a
 
 ### Phase 1 — Bootstrap
 
-1. **Read strategy context**: Call `get_strategy_context(strategy_name)`.
+1. **Read strategy context**: Call `get_strategy_context(strategy_id)`.
    - If `is_setup` is `true` → proceed to Phase 2.
    - If `is_setup` is `false` → call `register_strategy` first, then proceed.
    - If `warnings` contains `"Strategy is paused"` or `"Strategy is disabled"` → stop immediately and report.
@@ -213,5 +208,5 @@ For **every position that lost money** (settled at zero or sold at a loss), your
 - ⛔ **NEVER** call or reference `submit_real_trade`; real execution is selected by registration and reached through `buy` / `sell`.
 - ⛔ **NEVER** trade without first reading `get_strategy_context`.
 - ⛔ **NEVER** trust your own arithmetic over the server's `portfolio` / `get_balance` response.
-- ✅ **ALWAYS** pass the correct `account` and `agent_user_id` parameters matching what was registered on every state-touching tool call.
+- ✅ **ALWAYS** pass the exact registered `strategy_id` on every state-touching tool call.
 - ✅ **ALWAYS** write a `save_report` at the end of every session.

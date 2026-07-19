@@ -65,6 +65,41 @@ describe('paper trading server-side risk guard', () => {
       marketId: 'same-market',
       notional: 101,
       riskConfig: { max_trade_pct: 1, max_market_exposure_pct: 0.2 },
-    })).toContain('Cumulative market exposure');
+    })).toContain('Averaging down');
+  });
+
+  it('allows stricter agent limits but never lets an agent loosen server ceilings', () => {
+    expect(resolvePaperRiskLimits({
+      max_trade_pct: 1,
+      max_market_exposure_pct: 1,
+      min_cash_reserve_pct: 0,
+    })).toEqual({
+      maxTradePct: 0.10,
+      maxMarketExposurePct: 0.20,
+      minCashReservePct: 0.05,
+      maxDailyLossPct: 0.02,
+      maxDrawdownPct: 0.05,
+      maxDailyBuyTrades: 8,
+    });
+    expect(resolvePaperRiskLimits({ max_trade_pct: 0.03 }).maxTradePct).toBe(0.03);
+  });
+
+  it('enforces averaging-down, daily loss, drawdown, and daily trade guards', () => {
+    expect(validatePaperBuyRisk({
+      portfolio: { ...portfolio, positions: [{ ...portfolio.positions[0], currentPrice: 0.4 }] },
+      marketId: 'same-market', notional: 10,
+    })).toContain('Averaging down');
+    expect(validatePaperBuyRisk({
+      portfolio, marketId: 'new-market', notional: 10,
+      dailyStartNav: 1_100, peakNav: 1_000, dailyBuyTrades: 0,
+    })).toContain('Daily loss stop');
+    expect(validatePaperBuyRisk({
+      portfolio, marketId: 'new-market', notional: 10,
+      dailyStartNav: 1_000, peakNav: 1_100, dailyBuyTrades: 0,
+    })).toContain('Drawdown stop');
+    expect(validatePaperBuyRisk({
+      portfolio, marketId: 'new-market', notional: 10,
+      dailyStartNav: 1_000, peakNav: 1_000, dailyBuyTrades: 8,
+    })).toContain('Daily BUY limit');
   });
 });

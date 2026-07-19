@@ -10,7 +10,9 @@ import fs from "fs";
 function log(msg: string) {
   const timestamp = new Date().toISOString();
   console.error(`[${timestamp}] ${msg}`);
-  fs.appendFileSync("/usr/local/google/home/dickensli/mcp-direct.log", `[${timestamp}] ${msg}\n`);
+  try {
+    fs.appendFileSync(process.env.POLYMARKET_US_MCP_LOG_PATH || "/tmp/polymarket-us-mcp-debug.log", `[${timestamp}] ${msg}\n`);
+  } catch {}
 }
 
 const STRATEGY_WHITELIST_RAW = process.env.STRATEGY_WHITELIST;
@@ -83,12 +85,52 @@ const accountProps = {
   strategy_id: { type: "string", description: "Strategy name to isolate Polymarket US paper portfolios." },
 };
 
+const proposalSchema = {
+  type: "object",
+  description: "Structured entry thesis audited against fresh server quotes. Required for BUY orders.",
+  properties: {
+    thesis: { type: "string" },
+    rules_verified: { type: "boolean", const: true },
+    source_urls: { type: "array", items: { type: "string" }, minItems: 1 },
+    fair_probability: { type: "number", minimum: 0.001, maximum: 0.999 },
+    confidence_low: { type: "number", minimum: 0, maximum: 1 },
+    confidence_high: { type: "number", minimum: 0, maximum: 1 },
+    quote_observed_at: { type: "string", description: "Fresh ISO-8601 timestamp." },
+    observed_price: { type: "number", minimum: 0.001, maximum: 0.999 },
+    available_depth: { type: "number", exclusiveMinimum: 0 },
+    net_edge: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+    proposed_nav_pct: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+    exit_condition: { type: "string" },
+    invalidation_condition: { type: "string" },
+  },
+  required: ["thesis", "rules_verified", "source_urls", "fair_probability", "confidence_low", "confidence_high", "quote_observed_at", "observed_price", "available_depth", "net_edge", "proposed_nav_pct", "exit_condition", "invalidation_condition"],
+};
+
+function positionRecord(position: Record<string, unknown>) {
+  const metadata = position.marketMetadata && typeof position.marketMetadata === "object"
+    ? position.marketMetadata as Record<string, unknown>
+    : {};
+  const rawNet = Number(position.netPosition);
+  const quantity = Number(position.qtyAvailable ?? position.shares ?? position.quantity ?? position.position_fp ?? position.position ?? Math.abs(rawNet));
+  const outcome = String(position.outcome ?? position.outcomeSide ?? metadata.outcome ?? (rawNet < 0 ? "NO" : "YES")).toUpperCase();
+  return {
+    id: String(position.id ?? position.positionId ?? ""),
+    slug: String(position.marketId ?? position.marketSlug ?? position.market_slug ?? position.slug ?? metadata.slug ?? ""),
+    outcome: outcome === "NO" ? "NO" as const : "YES" as const,
+    shares: Math.abs(quantity),
+  };
+}
+
 function requireDestructiveResetConfirmation(args: Record<string, unknown>) {
   if (args.confirm_destructive_reset !== true) {
     throw new Error(
       "init_account is destructive and requires confirm_destructive_reset=true. " +
       "Use portfolio/get_balance for normal account inspection.",
     );
+  }
+  const resetSecret = process.env.AGENT_RESET_SECRET;
+  if (!resetSecret || args.reset_authorization !== resetSecret) {
+    throw new Error("init_account requires a valid, human-issued reset_authorization token.");
   }
 }
 
@@ -111,9 +153,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: "Must be true to confirm wiping all paper trades, positions, and ledger entries.",
           },
           reset_reason: { type: "string", description: "Human-readable reason for the destructive reset." },
+          reset_authorization: { type: "string", description: "Short-lived human-issued authorization matching the server reset secret." },
           ...accountProps,
         },
-        required: ["strategy_id", "confirm_destructive_reset"],
+        required: ["strategy_id", "confirm_destructive_reset", "reset_reason", "reset_authorization"],
       },
     },
     {
@@ -128,10 +171,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           query: { type: "string", description: "Search query string." },
-          status: { type: "string", description: "Filter by market status." },
           limit: { type: "number", description: "Max results to return." },
           offset: { type: "number", description: "Pagination offset." },
-          tag_slug: { type: "string", description: "Filter by tag slug." },
+          page: { type: "number", description: "Page number for text search." },
+          active: { type: "boolean", description: "Only active markets when listing." },
+          closed: { type: "boolean", description: "Only closed markets when listing." },
         },
       },
     },
@@ -147,8 +191,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           slug: { type: "string", description: "Market slug." },
+          outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome book to normalize." },
         },
-        required: ["slug"],
+        required: ["slug", "outcome"],
       },
     },
     {
@@ -157,9 +202,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          status: { type: "string", description: "Filter by event status." },
           limit: { type: "number", description: "Max results to return." },
           offset: { type: "number", description: "Pagination offset." },
+          active: { type: "boolean", description: "Only active events." },
+          closed: { type: "boolean", description: "Only closed events." },
+          tag_slug: { type: "string", description: "Filter by SDK tag slug." },
         },
       },
     },
@@ -184,29 +231,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side." },
           amount: { type: "number", description: "Dollar amount to spend." },
           shares: { type: "number", description: "Optional exact shares to buy." },
-          price: { type: "number", description: "DO NOT USE. Market orders only." },
-          proposal: {
-            type: "object",
-            description: "Required for real-mode BUYs: server-validated research, quote, edge, depth, and sizing facts.",
-            properties: {
-              thesis: { type: "string" },
-              rules_verified: { type: "boolean", const: true },
-              source_urls: { type: "array", items: { type: "string", format: "uri" }, minItems: 1 },
-              fair_probability: { type: "number", minimum: 0.001, maximum: 0.999 },
-              confidence_low: { type: "number", minimum: 0, maximum: 1 },
-              confidence_high: { type: "number", minimum: 0, maximum: 1 },
-              quote_observed_at: { type: "string", format: "date-time" },
-              observed_price: { type: "number", minimum: 0.001, maximum: 0.999 },
-              available_depth: { type: "number", exclusiveMinimum: 0 },
-              net_edge: { type: "number", exclusiveMinimum: 0, maximum: 1 },
-              proposed_nav_pct: { type: "number", exclusiveMinimum: 0, maximum: 1 },
-              exit_condition: { type: "string" },
-              invalidation_condition: { type: "string" },
-            },
-          },
+          proposal: proposalSchema,
           ...accountProps,
         },
-        required: ["slug", "strategy_id"],
+        required: ["slug", "strategy_id", "proposal"],
       },
     },
     {
@@ -219,7 +247,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           slug: { type: "string", description: "Market slug." },
           outcome: { type: "string", enum: ["YES", "NO"], description: "Outcome side." },
           quantity: { anyOf: [{ type: "number" }, { type: "string", enum: ["ALL"] }], description: "Number of shares to sell, or 'ALL'." },
-          price: { type: "number", description: "DO NOT USE. Market orders only." },
           ...accountProps,
         },
         required: ["strategy_id"],
@@ -304,7 +331,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           balance: { type: "number", description: "Starting balance (default 10000)" },
           ...accountProps,
         },
-        required: ["trades"],
+        required: ["strategy_id", "trades"],
       },
     },
     // ── Agent Strategy ─────────────────────────────────────────────
@@ -321,7 +348,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           balance: { type: "number", description: "Starting paper balance in USD" },
           risk_config: { type: "object", description: "Server-enforced risk ratios, e.g. max_single_trade_pct, max_market_exposure_pct, min_cash_reserve_pct" },
           schedule: { type: "string", description: "Cron schedule recorded for strategy auditing" },
-          force_enable: { type: "boolean", description: "Administrative override to re-enable a disabled strategy." },
         },
         required: ["strategy_id"],
       },
@@ -346,7 +372,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           order_id: { type: "string", description: "Local real_trade_orders UUID" },
           strategy_id: { type: "string", description: "Registered strategy name" },
         },
-        required: ["order_id"],
+        required: ["order_id", "strategy_id"],
       },
     },
   ],
@@ -388,7 +414,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (query) {
         const params = new URLSearchParams();
         params.set("query", String(query));
-        for (const key of ["status", "limit", "offset", "tag_slug"]) {
+        for (const key of ["limit", "page"]) {
           const value = (args as any)[key];
           if (value !== undefined) params.set(key, String(value));
         }
@@ -398,7 +424,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return json({ ok: true, data });
       } else {
         const params = new URLSearchParams();
-        for (const key of ["status", "limit", "offset", "tag_slug"]) {
+        for (const key of ["limit", "offset", "active", "closed"]) {
           const value = (args as any)[key];
           if (value !== undefined) params.set(key, String(value));
         }
@@ -415,14 +441,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_market_book": {
-      const data = await callPolyTrader(`/polymarket-us/markets/${encodeURIComponent(String((args as any).slug))}/book`, {
+      const data = await callPolyTrader(`/polymarket-us/markets/${encodeURIComponent(String((args as any).slug))}/book?outcome=${encodeURIComponent(String((args as any).outcome))}`, {
         headers: getPublicHeaders(),
       });
       return json({ ok: true, data: data.data ?? data });
     }
     case "get_events": {
       const params = new URLSearchParams();
-      for (const key of ["status", "limit", "offset"]) {
+      for (const key of ["limit", "offset", "active", "closed", "tag_slug"]) {
         const value = (args as any)[key];
         if (value !== undefined) params.set(key, String(value));
       }
@@ -440,6 +466,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     case "buy": {
       const buyArgs = (args ?? {}) as Record<string, unknown>;
+      if (Boolean(buyArgs.amount) === Boolean(buyArgs.shares)) {
+        throw new Error("Provide exactly one of amount or shares");
+      }
       const idempotencyKey = generateIdempotencyKey();
       const data = await callPolyTrader("/agent/trades", {
         method: "POST",
@@ -474,15 +503,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? portfolio.positions.filter((candidate: unknown): candidate is Record<string, unknown> => Boolean(candidate && typeof candidate === "object"))
           : [];
         const position = positions.find((candidate) => {
-          if (sellArgs.positionId) return String(candidate.id ?? candidate.positionId ?? "") === String(sellArgs.positionId);
-          const candidateSlug = String(candidate.marketId ?? candidate.marketSlug ?? candidate.market_slug ?? candidate.slug ?? "");
-          const candidateOutcome = String(candidate.outcome ?? candidate.outcomeSide ?? "YES").toUpperCase();
-          return candidateSlug === String(slug ?? "") && candidateOutcome === outcome;
+          const resolved = positionRecord(candidate);
+          if (sellArgs.positionId) return resolved.id === String(sellArgs.positionId);
+          return resolved.slug === String(slug ?? "") && resolved.outcome === outcome;
         });
         if (!position) throw new Error("No matching open position was found for this sell request");
-        slug = slug || String(position.marketId ?? position.marketSlug ?? position.market_slug ?? position.slug ?? "");
-        outcome = String(position.outcome ?? position.outcomeSide ?? outcome).toUpperCase() as "YES" | "NO";
-        shares = shares ?? Number(position.shares ?? position.quantity ?? position.position_fp ?? position.position);
+        const resolved = positionRecord(position);
+        slug = slug || resolved.slug;
+        outcome = resolved.outcome;
+        shares = shares ?? resolved.shares;
       }
       const resolvedShares = Number(shares);
       if (!slug || !Number.isFinite(resolvedShares) || resolvedShares <= 0) {
@@ -623,11 +652,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main() {
+  log("Starting Polymarket US MCP server...");
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  log("Server connected and running.");
 }
 
 main().catch((err) => {
-  console.error(err);
+  log(`Server Fatal Error: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });

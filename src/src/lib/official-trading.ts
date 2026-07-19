@@ -1,6 +1,7 @@
 import { randomUUID, constants, sign as cryptoSign } from 'crypto';
 import { readFileSync } from 'fs';
-import { getPolymarketUsClient, getPolymarketUsMarket } from '@/lib/polymarket-us';
+import { getPolymarketUsClient, getPolymarketUsOutcomeOrderBook } from '@/lib/polymarket-us';
+import { simulateSellFill } from '@/lib/orderbook-simulator';
 
 type Platform = 'kalshi' | 'polymarket_us';
 type Outcome = 'YES' | 'NO';
@@ -84,6 +85,27 @@ function objectAmount(value: unknown): number {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function resolvePolymarketUsPosition(position: Record<string, unknown>): {
+  slug: string;
+  outcome: Outcome;
+  shares: number;
+  riskGroupId: string;
+} {
+  const metadata = position.marketMetadata && typeof position.marketMetadata === 'object'
+    ? position.marketMetadata as Record<string, unknown>
+    : {};
+  const netPosition = Number(position.netPosition);
+  const rawShares = Number(position.qtyAvailable ?? Math.abs(netPosition));
+  const rawOutcome = String(position.outcome ?? position.outcomeSide ?? metadata.outcome ?? (netPosition < 0 ? 'NO' : 'YES')).toUpperCase();
+  const slug = String(position.marketSlug ?? position.market_slug ?? position.slug ?? metadata.slug ?? '');
+  return {
+    slug,
+    outcome: rawOutcome === 'NO' ? 'NO' : 'YES',
+    shares: Number.isFinite(rawShares) ? Math.abs(rawShares) : 0,
+    riskGroupId: String(position.eventSlug ?? position.event_slug ?? metadata.eventSlug ?? slug),
+  };
 }
 
 function clampPrice(price: number): number {
@@ -210,12 +232,11 @@ function polymarketUsTif(tif: TimeInForce | undefined): string {
   return 'TIME_IN_FORCE_IMMEDIATE_OR_CANCEL';
 }
 
-function polymarketUsOutcomeSide(outcome: Outcome): string {
-  return outcome === 'YES' ? 'OUTCOME_SIDE_YES' : 'OUTCOME_SIDE_NO';
-}
-
-function polymarketUsAction(side: Side): string {
-  return side === 'BUY' ? 'ORDER_ACTION_BUY' : 'ORDER_ACTION_SELL';
+function polymarketUsIntent(outcome: Outcome, side: Side): string {
+  if (outcome === 'YES') {
+    return side === 'BUY' ? 'ORDER_INTENT_BUY_LONG' : 'ORDER_INTENT_SELL_LONG';
+  }
+  return side === 'BUY' ? 'ORDER_INTENT_BUY_SHORT' : 'ORDER_INTENT_SELL_SHORT';
 }
 
 function loadKalshiPrivateKey(): string {
@@ -466,23 +487,11 @@ async function getKalshiSnapshot(window: OfficialSyncWindow = {}): Promise<Offic
 }
 
 async function submitPolymarketUsTrade(intent: OfficialTradeIntent): Promise<OfficialTradeResult> {
-  const price = yesSidePrice(intent.outcome, clampPrice(intent.price ?? NaN));
-  const quantity = resolveQuantity(intent);
-  const clientOrderId = intent.clientOrderId ?? randomUUID();
+  const { request, clientOrderId } = buildPolymarketUsOrderRequest(intent);
   const client = getPolymarketUsClient() as unknown as {
     orders: {
       create(params: Record<string, unknown>): Promise<Record<string, unknown>>;
     };
-  };
-  const request = {
-    marketSlug: intent.slug,
-    type: 'ORDER_TYPE_LIMIT',
-    price: { value: fixed(price, 4), currency: 'USD' },
-    quantity,
-    tif: polymarketUsTif(intent.timeInForce),
-    outcomeSide: polymarketUsOutcomeSide(intent.outcome),
-    action: polymarketUsAction(intent.side),
-    clientOrderId,
   };
   const response = await client.orders.create(request);
   const officialOrderId =
@@ -491,13 +500,42 @@ async function submitPolymarketUsTrade(intent: OfficialTradeIntent): Promise<Off
       : typeof response.orderId === 'string'
         ? response.orderId
         : null;
+  const executions = Array.isArray(response.executions)
+    ? response.executions as Array<Record<string, unknown>>
+    : [];
+  const latestOrder = executions.at(-1)?.order;
+  const status = latestOrder && typeof latestOrder === 'object'
+    ? String((latestOrder as Record<string, unknown>).state ?? 'SUBMITTED')
+    : String(response.state ?? response.status ?? 'SUBMITTED');
 
   return {
     officialOrderId,
     clientOrderId,
-    status: String(response.state ?? response.status ?? 'SUBMITTED'),
+    status,
     request,
     response,
+  };
+}
+
+export function buildPolymarketUsOrderRequest(intent: OfficialTradeIntent): {
+  clientOrderId: string;
+  request: Record<string, unknown>;
+} {
+  const price = yesSidePrice(intent.outcome, clampPrice(intent.price ?? NaN));
+  const quantity = resolveQuantity(intent);
+  const clientOrderId = intent.clientOrderId ?? randomUUID();
+  const request = {
+    marketSlug: intent.slug,
+    intent: polymarketUsIntent(intent.outcome, intent.side),
+    type: 'ORDER_TYPE_LIMIT',
+    price: { value: fixed(price, 4), currency: 'USD' },
+    quantity,
+    tif: polymarketUsTif(intent.timeInForce),
+  };
+
+  return {
+    clientOrderId,
+    request,
   };
 }
 
@@ -552,25 +590,34 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
   const orderRows = Array.isArray(ordersRecord.orders) ? ordersRecord.orders : [];
   const activityRows = Array.isArray(activityRecord.activities) ? activityRecord.activities : [];
   const fillRows = activityRows.filter((row) => row && typeof row === 'object' && String((row as Record<string, unknown>).type) === 'ACTIVITY_TYPE_TRADE');
-  const positionsValue = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).cashValue), 0);
-  const pnl = positionRows.reduce<number>((sum, row) => sum + objectAmount((row as Record<string, unknown>).realized), 0);
   const positionsWithPricingQuality = await Promise.all(positionRows.map(async (row) => {
     const record = row as Record<string, unknown>;
-    const cashValue = (row as Record<string, unknown>).cashValue;
-    const rawValue = cashValue && typeof cashValue === 'object' && 'value' in cashValue
-      ? (cashValue as Record<string, unknown>).value
-      : cashValue;
-    const unpriced = rawValue == null || !Number.isFinite(Number(rawValue));
-    const marketSlug = String(
-      record.marketSlug ?? record.market_slug ?? record.marketId ?? record.market_id ?? record.slug ?? '',
-    );
-    const market = marketSlug ? await getPolymarketUsMarket(marketSlug).catch(() => null) : null;
+    const resolved = resolvePolymarketUsPosition(record);
+    const book = resolved.slug && resolved.shares > 0
+      ? await getPolymarketUsOutcomeOrderBook(resolved.slug, resolved.outcome).catch(() => null)
+      : null;
+    const fill = book ? simulateSellFill(book, resolved.shares, 0, 'FOK') : null;
+    const liquidationValue = fill?.success ? fill.totalAfterFee : 0;
     return {
       ...record,
-      risk_group_id: record.eventSlug ?? record.event_slug ?? market?.eventSlug ?? marketSlug,
-      pricing_status: unpriced ? 'unpriced' : 'priced',
+      market_slug: resolved.slug,
+      outcome: resolved.outcome,
+      shares: resolved.shares,
+      risk_group_id: resolved.riskGroupId,
+      liquidation_value: liquidationValue,
+      pricing_status: fill?.success ? 'priced' : 'unpriced',
     };
   }));
+  const positionsValue = positionsWithPricingQuality.reduce(
+    (sum, row) => sum + Number(row.liquidation_value || 0),
+    0,
+  );
+  const pnl = positionsWithPricingQuality.reduce((sum, row) => {
+    const record = row as Record<string, unknown>;
+    const realized = objectAmount(record.realized);
+    const cost = Math.abs(objectAmount(record.cost));
+    return sum + realized + Number(row.liquidation_value || 0) - cost;
+  }, 0);
   const unpricedPositionsCount = positionsWithPricingQuality
     .filter((row) => row.pricing_status === 'unpriced').length;
   return {
@@ -588,6 +635,7 @@ async function getPolymarketUsSnapshot(): Promise<OfficialPortfolioSnapshot> {
       positions: positionsRecord,
       orders: ordersRecord,
       activity: activityRecord,
+      valuation: { source: 'execution_venue_full_depth_liquidation_bid' },
     },
   };
 }

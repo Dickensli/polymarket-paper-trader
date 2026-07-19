@@ -4,16 +4,16 @@ import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import {
   strategies,
-  agentReports,
   paperTrades,
   paperTradeOrders,
   portfolioSnapshots,
   strategyRuns,
   strategyDecisions,
 } from '@/lib/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, gte, sql } from 'drizzle-orm';
 import { executeTrade, getPortfolio, TradingError } from '@/lib/trading-engine';
 import { validatePaperBuyRisk } from '@/lib/paper-risk';
+import { resolvePaperFeeRateBps } from '@/lib/paper-fees';
 
 // Polymarket helpers
 import { getMarket, getMidpoint } from '@/lib/polymarket';
@@ -193,14 +193,6 @@ export async function POST(request: NextRequest) {
       currentRun = latestRun ?? null;
     }
 
-    const currentReport = await db.query.agentReports.findFirst({
-      where: and(
-        eq(agentReports.strategyId, strategy.id),
-        eq(agentReports.userId, session.user.id),
-      ),
-      orderBy: [desc(agentReports.createdAt)],
-    });
-
     // ── Resolve market data & price per platform ──────────────
     let marketId: string;
     let riskGroupId: string;
@@ -209,6 +201,7 @@ export async function POST(request: NextRequest) {
     let price: number;
     let fillDetails: Record<string, unknown> | null = null;
     let executableDepth = 0;
+    const feeRateBps = resolvePaperFeeRateBps(platform, strategy.riskConfig);
 
     if (platform === 'polymarket') {
       // Polymarket International
@@ -264,10 +257,10 @@ export async function POST(request: NextRequest) {
       executableDepth = (order.side === 'BUY' ? orderBook.asks : orderBook.bids)
         .reduce((sum, level) => sum + level.size, 0);
       const fill = order.side === 'SELL'
-        ? simulateSellFill(orderBook, order.shares ?? 0, 0, 'FOK')
+        ? simulateSellFill(orderBook, order.shares ?? 0, feeRateBps, 'FOK')
         : order.shares
-          ? simulateBuySharesFill(orderBook, order.shares, 0, 'FOK')
-          : simulateBuyFill(orderBook, order.amount ?? 0, 0, 'FOK');
+          ? simulateBuySharesFill(orderBook, order.shares, feeRateBps, 'FOK')
+          : simulateBuyFill(orderBook, order.amount ?? 0, feeRateBps, 'FOK');
       if (!fill.success) {
         return NextResponse.json(
           { error: 'Full order cannot fill against current live Kalshi depth', code: 'SHADOW_FOK_NO_FILL' },
@@ -312,10 +305,10 @@ export async function POST(request: NextRequest) {
       executableDepth = (order.side === 'BUY' ? orderBook.asks : orderBook.bids)
         .reduce((sum, level) => sum + level.size, 0);
       const fill = order.side === 'SELL'
-        ? simulateSellFill(orderBook, order.shares ?? 0, 0, 'FOK')
+        ? simulateSellFill(orderBook, order.shares ?? 0, feeRateBps, 'FOK')
         : order.shares
-          ? simulateBuySharesFill(orderBook, order.shares, 0, 'FOK')
-          : simulateBuyFill(orderBook, order.amount ?? 0, 0, 'FOK');
+          ? simulateBuySharesFill(orderBook, order.shares, feeRateBps, 'FOK')
+          : simulateBuyFill(orderBook, order.amount ?? 0, feeRateBps, 'FOK');
       if (!fill.success) {
         return NextResponse.json(
           { error: 'Full order cannot fill against current Polymarket US depth', code: 'SHADOW_FOK_NO_FILL' },
@@ -355,7 +348,7 @@ export async function POST(request: NextRequest) {
       strategyId: strategy.id,
       userId: session.user.id,
       runId,
-      reportId: currentReport?.id ?? null,
+      reportId: null,
       platform,
       marketId,
       marketSlug: order.slug,
@@ -404,13 +397,38 @@ export async function POST(request: NextRequest) {
     let acceptedDecisionId: string | null = null;
     if (order.side === 'BUY') {
       const portfolioBeforeTrade = await getPortfolio(session.user.id);
-      if (platform === 'kalshi') {
+      const dayStart = new Date();
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const [dailySnapshots, dailyOrders] = await Promise.all([
+        db.query.portfolioSnapshots.findMany({
+          where: and(
+            eq(portfolioSnapshots.strategyId, strategy.id),
+            gte(portfolioSnapshots.capturedAt, dayStart),
+          ),
+          orderBy: [desc(portfolioSnapshots.capturedAt)],
+        }),
+        db.query.paperTradeOrders.findMany({
+          where: and(
+            eq(paperTradeOrders.strategyId, strategy.id),
+            gte(paperTradeOrders.createdAt, dayStart),
+          ),
+        }),
+      ]);
+      const dailyNavs = dailySnapshots.map((snapshot) => Number(snapshot.totalValue)).filter(Number.isFinite);
+      const dailyStartNav = dailyNavs.at(-1) ?? portfolioBeforeTrade.totalValue;
+      const peakNav = Math.max(Number(strategy.startingBalance || 0), portfolioBeforeTrade.totalValue, ...dailyNavs);
+      const dailyBuyTrades = dailyOrders.filter((candidate) => (
+        candidate.side === 'BUY' && candidate.status === 'FILLED'
+      )).length;
+      if (platform === 'kalshi' || platform === 'polymarket_us') {
         const quoteFacts = {
           executable_price: price,
           executable_depth: executableDepth,
           requested_shares: shares,
           requested_notional: shares * price,
-          quote_source: 'kalshi_live_orderbook_depth',
+          quote_source: platform === 'kalshi'
+            ? 'kalshi_live_orderbook_depth'
+            : 'polymarket_us_live_orderbook_depth',
         };
         const validation = order.proposal
           ? validateTradeProposal(order.proposal, {
@@ -419,6 +437,7 @@ export async function POST(request: NextRequest) {
               requestedShares: shares,
               requestedNotional: shares * price,
               portfolioNav: portfolioBeforeTrade.totalValue,
+              minimumNetEdge: 0.02,
             })
           : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
         if (!validation.valid) {
@@ -442,6 +461,9 @@ export async function POST(request: NextRequest) {
         riskGroupId,
         notional: shares * price,
         riskConfig: strategy.riskConfig,
+        dailyStartNav,
+        peakNav,
+        dailyBuyTrades,
       });
       if (riskError) {
         await rejectClaim('SERVER_RISK_REJECTED', riskError);
@@ -479,6 +501,7 @@ export async function POST(request: NextRequest) {
         idempotencyKey,
         platform,
         slippageApplied: fillDetails ? Number(fillDetails.slippageBps ?? 0) / 10_000 : 0,
+        feeRateBps,
       });
     } catch (error) {
       await rejectClaim(
@@ -493,12 +516,12 @@ export async function POST(request: NextRequest) {
       .set({
         strategyId: strategy.id,
         runId,
-        reportId: currentReport?.id ?? null,
+        reportId: null,
         platform,
         metadata: {
           strategy_id: order.strategy_id,
           source: 'agent_paper_trades',
-          report_id: currentReport?.id ?? null,
+          report_id: null,
           run_id: runId,
         },
       })
@@ -540,11 +563,10 @@ export async function POST(request: NextRequest) {
     });
 
     if (currentRun) {
-      const previousCount = Number(currentRun.tradesExecuted ?? 0);
       await db
         .update(strategyRuns)
         .set({
-          tradesExecuted: previousCount + 1,
+          tradesExecuted: sql`${strategyRuns.tradesExecuted} + 1`,
           summary: `Latest paper trade: ${order.side} ${shares.toFixed(6)} ${order.outcome} @ ${price.toFixed(4)} on ${platform}:${order.slug}`,
         })
         .where(eq(strategyRuns.id, currentRun.id));
@@ -553,11 +575,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       data: sanitizeTrade(trade),
       paper_order: sanitizePaperOrder(paperOrder),
-      report: currentReport
-        ? {
-            filename: currentReport.filename,
-          }
-        : null,
+      report: null,
       portfolio: {
         cash: portfolio.balance,
         total_value: portfolio.totalValue,

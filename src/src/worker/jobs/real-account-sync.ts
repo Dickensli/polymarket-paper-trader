@@ -92,7 +92,9 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
         const historicalFills = historicalState?.lastSuccessAt
           ? []
           : await getOfficialKalshiHistoricalFills();
-        const audits = await db.query.realTradeOrders.findMany();
+        const audits = await db.query.realTradeOrders.findMany({
+          where: eq(realTradeOrders.platform, 'kalshi'),
+        });
         const auditByOrderId = new Map(audits
           .filter((audit) => audit.officialOrderId)
           .map((audit) => [audit.officialOrderId!, audit]));
@@ -216,8 +218,37 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
       }
 
       if (platform === 'polymarket_us') {
-        const audits = await db.query.realTradeOrders.findMany();
+        const audits = await db.query.realTradeOrders.findMany({
+          where: eq(realTradeOrders.platform, 'polymarket_us'),
+        });
         const auditByOrderId = new Map(audits.filter((audit) => audit.officialOrderId).map((audit) => [audit.officialOrderId!, audit]));
+        for (const audit of audits) {
+          const response = audit.officialResponse && typeof audit.officialResponse === 'object'
+            ? audit.officialResponse as Record<string, unknown>
+            : {};
+          const executions = Array.isArray(response.executions) ? response.executions : [];
+          for (const raw of executions) {
+            if (!raw || typeof raw !== 'object') continue;
+            try {
+              const fill = normalizePolymarketUsFill(raw as Record<string, unknown>);
+              await db.insert(officialTradeFills).values({
+                ...fill,
+                realTradeOrderId: audit.id,
+                strategyId: audit.strategyId,
+                userId: audit.userId,
+                quantity: fill.quantity.toFixed(6),
+                price: fill.price.toFixed(6),
+                fee: fill.fee.toFixed(6),
+              }).onConflictDoUpdate({
+                target: [officialTradeFills.platform, officialTradeFills.officialFillId],
+                set: { realTradeOrderId: audit.id, strategyId: audit.strategyId, userId: audit.userId },
+              });
+              for (const entry of buildFillCashLedgerEntries({ ...fill, strategyId: audit.strategyId, userId: audit.userId })) {
+                await db.insert(officialCashLedgerEntries).values({ ...entry, amount: entry.amount.toFixed(6) }).onConflictDoNothing();
+              }
+            } catch { /* Preserve the raw official response when an unknown execution shape appears. */ }
+          }
+        }
         for (const raw of snapshot.orders) {
           if (!raw || typeof raw !== 'object') continue;
           try {
@@ -317,6 +348,14 @@ export async function runRealAccountSync(): Promise<RealAccountSyncResult> {
           target: [officialSyncState.platform, officialSyncState.accountScope, officialSyncState.resource],
           set: { lastSuccessAt: new Date(), lastError: null, updatedAt: new Date() },
         });
+      }
+
+      if (platformStrategies.length !== 1) {
+        result.errors.push({
+          platform,
+          message: `Skipped strategy NAV snapshots: ${platformStrategies.length} active real strategies share one official account and cannot be attributed safely.`,
+        });
+        continue;
       }
 
       for (const strategy of platformStrategies) {

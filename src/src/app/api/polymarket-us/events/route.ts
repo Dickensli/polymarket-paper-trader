@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
     if (searchParams.has('offset')) params.offset = Number(searchParams.get('offset'));
     if (searchParams.has('active')) params.active = searchParams.get('active') === 'true';
     if (searchParams.has('closed')) params.closed = searchParams.get('closed') === 'true';
+    if (searchParams.has('tag_slug')) params.tagSlug = searchParams.get('tag_slug');
 
     const data = await getPolymarketUsEvents(params);
     if (!data) {

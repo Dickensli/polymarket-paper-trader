@@ -45,7 +45,14 @@ export async function runPaperAccountSync(): Promise<PaperAccountSyncResult> {
         let positionsValue = 0;
         const currentPositions = openPositions.map((pos) => {
           const shares = Number(pos.shares);
-          const currentPrice = Number(pos.currentPrice ?? 0.5);
+          const storedPrice = Number(pos.currentPrice);
+          const pricingUpdatedAt = pos.updatedAt.toISOString();
+          const pricingStatus = Number.isFinite(storedPrice)
+            && storedPrice > 0
+            && Date.now() - pos.updatedAt.getTime() <= 10 * 60 * 1000
+            ? 'priced' as const
+            : 'unpriced' as const;
+          const currentPrice = pricingStatus === 'priced' ? storedPrice : 0;
           positionsValue += shares * currentPrice;
           return {
             id: pos.id,
@@ -56,6 +63,8 @@ export async function runPaperAccountSync(): Promise<PaperAccountSyncResult> {
             shares,
             avgEntryPrice: Number(pos.avgEntryPrice),
             currentPrice,
+            pricing_status: pricingStatus,
+            pricing_updated_at: pricingUpdatedAt,
             unrealizedPnL: shares * (currentPrice - Number(pos.avgEntryPrice)),
           };
         });

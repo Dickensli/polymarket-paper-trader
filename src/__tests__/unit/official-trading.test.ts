@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildKalshiOrderRequest,
+  buildPolymarketUsOrderRequest,
   normalizeKalshiOrderStatus,
   resolveOfficialOrderQuantity,
   summarizeKalshiPositions,
   validateOfficialPortfolioSnapshot,
   collectKalshiCursorPages,
   resolveKalshiExecutionBaseUrl,
+  resolvePolymarketUsPosition,
 } from '@/lib/official-trading';
 
 describe('official trading helpers', () => {
@@ -83,6 +85,37 @@ describe('official trading helpers', () => {
     })).toThrow('Kalshi real order quantity must be at least 0.01 contracts.');
   });
 
+  it.each([
+    ['YES', 'BUY', 'ORDER_INTENT_BUY_LONG', '0.3500'],
+    ['YES', 'SELL', 'ORDER_INTENT_SELL_LONG', '0.3500'],
+    ['NO', 'BUY', 'ORDER_INTENT_BUY_SHORT', '0.6500'],
+    ['NO', 'SELL', 'ORDER_INTENT_SELL_SHORT', '0.6500'],
+  ] as const)('builds valid Polymarket US %s %s order intents', (outcome, side, intent, price) => {
+    const built = buildPolymarketUsOrderRequest({
+      platform: 'polymarket_us',
+      slug: 'test-market',
+      outcome,
+      side,
+      shares: 5,
+      price: 0.35,
+      timeInForce: 'IOC',
+      clientOrderId: 'audit-only-id',
+    });
+
+    expect(built.clientOrderId).toBe('audit-only-id');
+    expect(built.request).toEqual({
+      marketSlug: 'test-market',
+      intent,
+      type: 'ORDER_TYPE_LIMIT',
+      price: { value: price, currency: 'USD' },
+      quantity: 5,
+      tif: 'TIME_IN_FORCE_IMMEDIATE_OR_CANCEL',
+    });
+    expect(built.request).not.toHaveProperty('outcomeSide');
+    expect(built.request).not.toHaveProperty('action');
+    expect(built.request).not.toHaveProperty('clientOrderId');
+  });
+
   it('derives audit quantity when an amount is used', () => {
     expect(resolveOfficialOrderQuantity({ amount: 100, price: 0.8 })).toBe(125);
   });
@@ -133,5 +166,18 @@ describe('official trading helpers', () => {
     expect(() => validateOfficialPortfolioSnapshot('kalshi', {
       balance: {}, positions: {}, orders: {}, fills: {}, settlements: { error: 'rate limited' },
     })).toThrow('Kalshi official portfolio sync failed: settlements: rate limited');
+  });
+
+  it('resolves official Polymarket US position fields used by SELL ALL and valuation', () => {
+    expect(resolvePolymarketUsPosition({
+      netPosition: '-12.5',
+      qtyAvailable: '10',
+      marketMetadata: { slug: 'us-market', outcome: 'NO', eventSlug: 'us-event' },
+    })).toEqual({
+      slug: 'us-market',
+      outcome: 'NO',
+      shares: 10,
+      riskGroupId: 'us-event',
+    });
   });
 });

@@ -5,6 +5,7 @@ import { getDb } from '@/lib/db';
 import { strategies, users, portfolios } from '@/lib/db/schema';
 import { eq, isNotNull, and } from 'drizzle-orm';
 import crypto from 'crypto';
+import { buildInitialStrategyMetadata, existingStrategyUpdate } from '@/lib/strategy-registration-policy';
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -146,14 +147,15 @@ export async function POST(request: NextRequest) {
             const portfolioBaseline = Number(existingPortfolio?.initialBalance);
             if (Number.isFinite(portfolioBaseline) && portfolioBaseline > 0) repairedStartingBalance = portfolioBaseline;
           }
-          if (risk_config !== undefined || schedule !== undefined || metadata !== undefined || invalidStartingBalance) {
+          const safeUpdate = existingStrategyUpdate(existing, {
+            riskConfig: risk_config,
+            metadata,
+            schedule,
+          });
+          if (schedule !== undefined || invalidStartingBalance) {
             const [updated] = await db.update(strategies).set({
               ...(invalidStartingBalance ? { startingBalance: repairedStartingBalance.toFixed(2) } : {}),
-              ...(risk_config !== undefined ? { riskConfig: risk_config } : {}),
-              ...(schedule !== undefined ? { schedule } : {}),
-              ...(metadata !== undefined ? {
-                metadata: { ...((existing.metadata as Record<string, unknown>) ?? {}), ...metadata },
-              } : {}),
+              ...safeUpdate,
               updatedAt: new Date(),
             }).where(eq(strategies.id, existing.id)).returning();
             current = updated ?? existing;
@@ -163,8 +165,24 @@ export async function POST(request: NextRequest) {
             registered: true,
             is_new: false,
             strategy: sanitizeStrategy(current),
-            message: 'Strategy already registered; mutable configuration synchronized.'
+            message: 'Strategy already registered; schedule synchronized. Risk and security configuration are immutable.'
           });
+        }
+      }
+
+      if (!is_paper_trading) {
+        const competingRealStrategy = await db.query.strategies.findFirst({
+          where: and(
+            eq(strategies.platform, platform),
+            eq(strategies.agentMode, 'real'),
+            eq(strategies.status, 'active'),
+          ),
+        });
+        if (competingRealStrategy) {
+          return NextResponse.json({
+            error: 'A real strategy already owns this deployment\'s shared official venue account.',
+            code: 'SHARED_ACCOUNT_STRATEGY_AMBIGUITY',
+          }, { status: 409 });
         }
       }
 
@@ -216,7 +234,7 @@ export async function POST(request: NextRequest) {
             startingBalance: String(finalBalance),
             riskConfig: risk_config ?? {},
             schedule: schedule ?? null,
-            metadata: metadata ?? { registeredAt: new Date().toISOString() },
+            metadata: buildInitialStrategyMetadata(is_paper_trading ? 'paper' : 'real', metadata),
           }).returning();
         }
 

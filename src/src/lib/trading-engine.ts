@@ -149,16 +149,17 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
     const avgEntryPrice = Number(pos.avgEntryPrice);
     const currentPrice = Number(pos.currentPrice);
     
-    const value = roundTo(shares * currentPrice, 2);
-    const cost = roundTo(shares * avgEntryPrice, 2);
-    const unrealizedPnL = roundTo(value - cost, 2);
-    const unrealizedPnLPercent = cost > 0 ? roundTo((unrealizedPnL / cost) * 100, 2) : 0;
     const pricingUpdatedAt = pos.updatedAt.toISOString();
     const pricingStatus = Number.isFinite(currentPrice)
       && currentPrice > 0
       && Date.now() - pos.updatedAt.getTime() <= 10 * 60 * 1000
       ? 'priced' as const
       : 'unpriced' as const;
+    const valuationPrice = pricingStatus === 'priced' ? currentPrice : 0;
+    const value = roundTo(shares * valuationPrice, 2);
+    const cost = roundTo(shares * avgEntryPrice, 2);
+    const unrealizedPnL = roundTo(value - cost, 2);
+    const unrealizedPnLPercent = cost > 0 ? roundTo((unrealizedPnL / cost) * 100, 2) : 0;
 
     return {
       id: pos.id,
@@ -169,7 +170,7 @@ export async function getPortfolio(userId: string): Promise<Portfolio> {
       outcome: pos.outcome as OutcomeLabel,
       shares,
       avgEntryPrice,
-      currentPrice,
+      currentPrice: valuationPrice,
       unrealizedPnL,
       unrealizedPnLPercent,
       realizedPnL: Number(pos.realizedPnl) || 0,
@@ -526,7 +527,7 @@ export async function executeTrade(
 
       const sellShares = Math.min(shares, heldShares);
       const subtotal = roundTo(sellShares * price, 2);
-      const fee = calculateFee(price, sellShares);
+      const fee = calculateFee(price, sellShares, feeRateBps);
       const receiveAmount = roundTo(subtotal - fee, 2);
       const newBalance = roundTo(currentBalance + receiveAmount, 2);
 
@@ -538,7 +539,7 @@ export async function executeTrade(
 
       // P1 FIX: Track realized PnL on sell
       const avgEntry = Number(existingPosition.avgEntryPrice);
-      const sellPnl = roundTo((price - avgEntry) * sellShares, 6);
+      const sellPnl = roundTo((price - avgEntry) * sellShares - fee, 6);
       const prevRealizedPnl = Number(existingPosition.realizedPnl) || 0;
       const newRealizedPnl = roundTo(prevRealizedPnl + sellPnl, 6);
 

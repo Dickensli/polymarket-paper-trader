@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { and, asc, eq, gte } from 'drizzle-orm';
+import { and, asc, eq, gte, ne } from 'drizzle-orm';
 import { auth, resolveTargetUserId } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { officialOrderEvents, portfolioSnapshots, realTradeOrders, strategies, strategyDecisions } from '@/lib/db/schema';
@@ -110,6 +110,21 @@ export async function POST(request: NextRequest) {
         { error: `Strategy is ${strategy.status}. Trading is suspended.` },
         { status: 403 },
       );
+    }
+
+    const competingRealStrategy = await db.query.strategies.findFirst({
+      where: and(
+        eq(strategies.platform, strategy.platform),
+        eq(strategies.agentMode, 'real'),
+        eq(strategies.status, 'active'),
+        ne(strategies.id, strategy.id),
+      ),
+    });
+    if (competingRealStrategy && competingRealStrategy.id !== strategy.id) {
+      return NextResponse.json({
+        error: 'This deployment uses one shared official venue account. Multiple active real strategies cannot be attributed safely.',
+        code: 'SHARED_ACCOUNT_STRATEGY_AMBIGUITY',
+      }, { status: 409 });
     }
 
     if (strategy.platform === 'polymarket') {
@@ -333,6 +348,7 @@ export async function POST(request: NextRequest) {
             requestedShares: resolvedQuantity,
             requestedNotional: resolvedQuantity * executionPrice,
             portfolioNav: officialSnapshot.totalValue,
+            minimumNetEdge: 0.02,
           })
         : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
       if (!shadowFill) validation.reasons.push('INSUFFICIENT_EXECUTABLE_DEPTH');
@@ -416,8 +432,26 @@ export async function POST(request: NextRequest) {
         })
         .where(eq(realTradeOrders.id, audit.id))
         .returning();
-      const immediateFilled = Number(official.response.fill_count ?? official.response.fill_count_fp ?? official.response.filledQuantity ?? 0);
-      const immediateRemaining = Number(official.response.remaining_count ?? official.response.remaining_count_fp ?? official.response.remainingQuantity ?? Math.max(0, resolvedQuantity - immediateFilled));
+      const executions = Array.isArray(official.response.executions)
+        ? official.response.executions.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object'))
+        : [];
+      const executionFilled = executions.reduce((sum, execution) => sum + Number(execution.lastShares ?? 0), 0);
+      const latestExecutionOrder = executions.at(-1)?.order;
+      const latestLeavesQuantity = latestExecutionOrder && typeof latestExecutionOrder === 'object'
+        ? Number((latestExecutionOrder as Record<string, unknown>).leavesQuantity)
+        : NaN;
+      const immediateFilled = Number(
+        official.response.fill_count
+        ?? official.response.fill_count_fp
+        ?? official.response.filledQuantity
+        ?? executionFilled,
+      );
+      const immediateRemaining = Number(
+        official.response.remaining_count
+        ?? official.response.remaining_count_fp
+        ?? official.response.remainingQuantity
+        ?? (Number.isFinite(latestLeavesQuantity) ? latestLeavesQuantity : Math.max(0, resolvedQuantity - immediateFilled)),
+      );
       await writeLifecycleEvent(official.status, official.officialOrderId ?? `local:${audit.id}`, {
         ...official.response, submitted_request: official.request,
       }, Number.isFinite(immediateFilled) ? immediateFilled : 0, Number.isFinite(immediateRemaining) ? immediateRemaining : resolvedQuantity);
