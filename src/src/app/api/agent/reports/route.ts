@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, gte, ne } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { agentReports, getDb, strategies } from '@/lib/db';
 import { paperTradeOrders, paperTrades, realTradeOrders, strategyRuns } from '@/lib/db/schema';
 import { getPortfolio } from '@/lib/trading-engine';
 import { getOfficialPortfolioSnapshot } from '@/lib/official-trading';
 import { runPriceRefresh } from '@/worker/jobs/price-refresh';
+import { resolveStrategyReportMemory } from '@/lib/strategy-registration-policy';
 
 const reportSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -53,6 +54,20 @@ export async function GET(request: NextRequest) {
     if (!strategy) {
       return NextResponse.json({ error: `Strategy "${strategyId}" not registered.` }, { status: 404 });
     }
+    const reportMemory = resolveStrategyReportMemory(strategy.metadata);
+
+    if (!reportMemory.ready || !reportMemory.resetAt) {
+      return NextResponse.json({
+        data: [],
+        meta: {
+          count: 0,
+          limit,
+          report_memory_policy: 'awaiting_report_memory_reset',
+          report_memory_generation: reportMemory.generation,
+          report_memory_reset_at: null,
+        },
+      });
+    }
 
     const sanitizeAgentReport = (r: any) => ({
       filename: r.filename,
@@ -73,6 +88,7 @@ export async function GET(request: NextRequest) {
           eq(agentReports.userId, session.user.id),
           eq(agentReports.strategyId, strategy.id),
           eq(agentReports.filename, filename),
+          gte(agentReports.createdAt, reportMemory.resetAt),
         ),
       });
 
@@ -94,12 +110,22 @@ export async function GET(request: NextRequest) {
         and(
           eq(agentReports.userId, session.user.id),
           eq(agentReports.strategyId, strategy.id),
+          gte(agentReports.createdAt, reportMemory.resetAt),
         ),
       )
       .orderBy(desc(agentReports.createdAt))
       .limit(limit);
 
-    return NextResponse.json({ data: reports, meta: { count: reports.length, limit } });
+    return NextResponse.json({
+      data: reports,
+      meta: {
+        count: reports.length,
+        limit,
+        report_memory_policy: 'recent_reports_after_reset',
+        report_memory_generation: reportMemory.generation,
+        report_memory_reset_at: reportMemory.resetAt.toISOString(),
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json(

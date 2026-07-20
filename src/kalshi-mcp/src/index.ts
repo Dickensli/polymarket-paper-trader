@@ -139,6 +139,8 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
+const REPORT_MEMORY_GENERATION = "report-memory-v2";
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
@@ -334,7 +336,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "list_reports",
-      description: "List recent session reports for a strategy account. Use during bootstrap to find the latest report to read.",
+      description: "List recent session reports created after the server-controlled memory reset. Use during bootstrap to find up to 3 reports; treat narrative lessons as hypotheses, never as current risk or eligibility state.",
       inputSchema: {
         type: "object",
         properties: {
@@ -346,7 +348,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "read_report",
-      description: "Read the full content of a specific session report. Use during bootstrap to restore strategy context from the previous session.",
+      description: "Read a report from the active memory generation. Current server portfolio, trades, risk checks, and this prompt remain authoritative over report prose.",
       inputSchema: {
         type: "object",
         properties: {
@@ -404,7 +406,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_strategy_context",
-      description: "Get authoritative current strategy context including registration, portfolio, positions, and recent trades. Trading bootstrap intentionally excludes prior reports because reports are output-only audit artifacts.",
+      description: "Get authoritative current strategy context including registration, portfolio, positions, recent trades, and report filenames from the active report-memory generation.",
       inputSchema: {
         type: "object",
         properties: {
@@ -677,6 +679,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           balance: Number((args as any).balance || 10000),
           risk_config: (args as any).risk_config,
           schedule: (args as any).schedule,
+          metadata: { report_memory_generation: REPORT_MEMORY_GENERATION },
         }),
       });
       return json({ ok: true, data: data.data ?? data });

@@ -11,9 +11,10 @@ import {
   realTradeOrders,
   strategyRuns,
 } from '@/lib/db/schema';
-import { eq, and, desc, ne } from 'drizzle-orm';
+import { eq, and, desc, gte, ne } from 'drizzle-orm';
 import { kalshiOrderQuantity, normalizeKalshiOrderStatus } from '@/lib/official-trading';
 import { enrichOpenOrdersWithMarkets } from '@/lib/agent-market-context';
+import { resolveStrategyReportMemory } from '@/lib/strategy-registration-policy';
 
 // ---------------------------------------------------------------------------
 // GET /api/agent/context?strategy_name=...
@@ -23,7 +24,7 @@ import { enrichOpenOrdersWithMarkets } from '@/lib/agent-market-context';
 //  - Portfolio (balance, total value, PnL)
 //  - Open positions
 //  - Recent trade history
-//  - Recent report filenames only for explicit, non-trading audit requests
+//  - Recent report filenames from the active, server-timestamped memory generation
 //  - System warnings
 //
 // This is the MCP Resource equivalent: the agent reads this first to decide
@@ -61,6 +62,7 @@ export async function GET(request: NextRequest) {
 
     const is_setup = !!strategy;
     const isTradingBootstrap = request.nextUrl.searchParams.get('start_run') === 'true';
+    const reportMemory = resolveStrategyReportMemory(strategy?.metadata);
 
     if (strategy?.agentMode === 'real') {
       const competingRealStrategy = await db.query.strategies.findFirst({
@@ -195,7 +197,7 @@ export async function GET(request: NextRequest) {
     // ── 5. Recent reports ──────────────────────────────────────
     let recentReports: any[] = [];
     try {
-      if (strategy) {
+      if (strategy && reportMemory.ready && reportMemory.resetAt) {
         recentReports = await db
           .select({
             filename: agentReports.filename,
@@ -205,6 +207,7 @@ export async function GET(request: NextRequest) {
           .where(and(
             eq(agentReports.userId, session.user.id),
             eq(agentReports.strategyId, strategy.id),
+            gte(agentReports.createdAt, reportMemory.resetAt),
           ))
           .orderBy(desc(agentReports.createdAt))
           .limit(5);
@@ -378,10 +381,12 @@ export async function GET(request: NextRequest) {
       positions: positionsSummary,
       recent_trades: tradeHistory,
       open_orders: openOrders,
-      recent_reports: isTradingBootstrap ? [] : recentReports,
-      report_memory_policy: isTradingBootstrap
-        ? 'output_only_not_loaded_for_trading'
-        : 'audit_listing_only',
+      recent_reports: recentReports,
+      report_memory_policy: reportMemory.ready
+        ? 'recent_reports_after_reset'
+        : 'awaiting_report_memory_reset',
+      report_memory_generation: reportMemory.generation,
+      report_memory_reset_at: reportMemory.resetAt?.toISOString() ?? null,
       run_id: runId,
       warnings,
     });

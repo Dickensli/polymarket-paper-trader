@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildInitialStrategyMetadata,
+  CURRENT_REPORT_MEMORY_GENERATION,
   existingStrategyUpdate,
+  resolveStrategyReportMemory,
 } from '@/lib/strategy-registration-policy';
 
 describe('strategy registration policy', () => {
@@ -31,5 +33,61 @@ describe('strategy registration policy', () => {
       metadata: { real_trading_enabled: true, owner: 'agent' },
       schedule: 'new',
     })).toEqual({ schedule: 'new' });
+  });
+
+  it('starts a new report-memory generation once while preserving server metadata', () => {
+    const resetAt = new Date('2026-07-20T19:15:00.000Z');
+    expect(buildInitialStrategyMetadata('paper', {
+      report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION,
+      report_memory_reset_at: 'agent-controlled-date',
+    }, resetAt)).toEqual(expect.objectContaining({
+      report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION,
+      report_memory_reset_at: resetAt.toISOString(),
+    }));
+    expect(existingStrategyUpdate({
+      riskConfig: {},
+      metadata: { owner: 'server', real_trading_enabled: false },
+      schedule: 'old',
+    }, {
+      metadata: {
+        report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION,
+        report_memory_reset_at: 'agent-controlled-date',
+      },
+    }, resetAt)).toEqual({
+      metadata: {
+        owner: 'server',
+        real_trading_enabled: false,
+        report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION,
+        report_memory_reset_at: resetAt.toISOString(),
+      },
+    });
+
+    expect(existingStrategyUpdate({
+      riskConfig: {},
+      metadata: {
+        owner: 'server',
+        report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION,
+        report_memory_reset_at: resetAt.toISOString(),
+      },
+      schedule: 'old',
+    }, {
+      metadata: { report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION },
+    }, new Date('2026-07-21T00:00:00.000Z'))).toEqual({});
+  });
+
+  it('exposes report memory only after the current generation has a valid server cutoff', () => {
+    expect(resolveStrategyReportMemory({})).toEqual({
+      ready: false,
+      generation: CURRENT_REPORT_MEMORY_GENERATION,
+      resetAt: null,
+    });
+    expect(resolveStrategyReportMemory({
+      report_memory_generation: CURRENT_REPORT_MEMORY_GENERATION,
+      report_memory_reset_at: '2026-07-20T19:15:00.000Z',
+    })).toEqual({
+      ready: true,
+      generation: CURRENT_REPORT_MEMORY_GENERATION,
+      resetAt: new Date('2026-07-20T19:15:00.000Z'),
+    });
   });
 });

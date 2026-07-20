@@ -46,12 +46,15 @@ evidence gathered by the flywheel above.
 - Structured report summaries are server-verified. Narrative text may explain
   decisions but must not override `portfolio_summary.verified` or
   `trade_summary.verified`.
-- Reports are output-only audit artifacts during trading cycles. MCP bootstrap
-  suppresses prior report listings, and agents must not call report-list/read
-  tools to derive current eligibility, risk, or market evidence.
+- Reports provide bounded cross-session research memory. A server-timestamped
+  memory generation hides legacy reports from agent list/read/context calls
+  without deleting audit evidence; agents read up to three active-generation
+  reports as hypotheses while current server state remains authoritative.
 - Graduation is notification-only for paper strategies. Brier score, historical
   decision counts, policy history, and unmet graduation criteria never pause
-  paper trading or justify manufacturing rejected decisions for volume.
+  paper trading or justify manufacturing rejected decisions for volume. Kalshi
+  paper strategies query graduation only after the cycle's trade/no-trade
+  decision and execution verification are complete.
 
 ## Configuration corrections outside the prompt text
 

@@ -302,7 +302,13 @@ describe('agent route handlers', () => {
     const reportsRoute = await import('@/app/api/agent/reports/route');
     const reportByIdRoute = await import('@/app/api/agent/reports/[id]/route');
 
-    db.query.strategies.findFirst.mockResolvedValue({ id: 'strategy-1', strategyId: 'arb', agentMode: 'paper' });
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'arb', agentMode: 'paper',
+      metadata: {
+        report_memory_generation: 'report-memory-v2',
+        report_memory_reset_at: '2026-07-02T00:00:00.000Z',
+      },
+    });
     db.query.agentReports.findFirst.mockResolvedValueOnce(null);
     db.insertResults.push({
       id: 'report-1',
@@ -348,7 +354,12 @@ describe('agent route handlers', () => {
     }) as never);
     await expect(listed.json()).resolves.toMatchObject({
       data: [{ filename: 'run.md', title: 'Run' }],
-      meta: { count: 1, limit: 5 },
+      meta: {
+        count: 1,
+        limit: 5,
+        report_memory_policy: 'recent_reports_after_reset',
+        report_memory_reset_at: '2026-07-02T00:00:00.000Z',
+      },
     });
 
     db.query.agentReports.findFirst.mockResolvedValueOnce({
@@ -372,6 +383,28 @@ describe('agent route handlers', () => {
     await expect(read.json()).resolves.toMatchObject({
       data: { filename: 'run.md', content: '# Report' },
     });
+  });
+
+  it('keeps legacy reports out of agent list/read until the MCP initializes the memory generation', async () => {
+    const { GET } = await import('@/app/api/agent/reports/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'arb', agentMode: 'paper', metadata: {},
+    });
+
+    const response = await GET(makeRequest({
+      url: 'https://example.test/api/agent/reports?strategy_id=arb&limit=3',
+    }) as never);
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: [],
+      meta: {
+        count: 0,
+        report_memory_policy: 'awaiting_report_memory_reset',
+        report_memory_generation: 'report-memory-v2',
+        report_memory_reset_at: null,
+      },
+    });
+    expect(db.select).not.toHaveBeenCalled();
   });
 
   it('stores official verified portfolio and run-scoped orders for real reports', async () => {
@@ -527,10 +560,17 @@ describe('agent route handlers', () => {
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1', strategyId: 'high_freq_retro', agentMode: 'paper', platform: 'polymarket_us',
       status: 'active', startingBalance: '10000.00', riskConfig: {}, schedule: '*/15 * * * *',
+      metadata: {
+        report_memory_generation: 'report-memory-v2',
+        report_memory_reset_at: '2026-07-20T19:15:00.000Z',
+      },
     });
     db.query.portfolios.findFirst.mockResolvedValue({ balance: '10000.00', initialBalance: '10000.00' });
     db.query.strategyRuns.findFirst.mockResolvedValue(null);
-    db.selectResults.push([], [], []);
+    db.selectResults.push([], [], [{
+      filename: '2026-07-20T19_30_00.md',
+      createdAt: new Date('2026-07-20T19:30:00.000Z'),
+    }]);
     db.insertResults.push({ id: 'run-1', status: 'running' });
 
     const response = await GET(makeRequest({
@@ -545,8 +585,33 @@ describe('agent route handlers', () => {
     }));
     await expect(response.json()).resolves.toMatchObject({
       run_id: 'run-1',
+      recent_reports: [{ filename: '2026-07-20T19_30_00.md' }],
+      report_memory_policy: 'recent_reports_after_reset',
+      report_memory_reset_at: '2026-07-20T19:15:00.000Z',
+    });
+  });
+
+  it('hides legacy reports until the active prompt initializes the memory generation', async () => {
+    const { GET } = await import('@/app/api/agent/context/route');
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'high_freq_retro', agentMode: 'paper', platform: 'kalshi',
+      status: 'active', startingBalance: '10000.00', riskConfig: {}, schedule: '*/30 * * * *', metadata: {},
+    });
+    db.query.portfolios.findFirst.mockResolvedValue({ balance: '10000.00', initialBalance: '10000.00' });
+    db.query.strategyRuns.findFirst.mockResolvedValue(null);
+    db.selectResults.push([], [], [{
+      filename: 'legacy-halt.md', createdAt: new Date('2026-07-20T18:00:00.000Z'),
+    }]);
+    db.insertResults.push({ id: 'run-1', status: 'running' });
+
+    const response = await GET(makeRequest({
+      url: 'https://example.test/api/agent/context?strategy_id=high_freq_retro&start_run=true',
+    }) as never);
+
+    await expect(response.json()).resolves.toMatchObject({
       recent_reports: [],
-      report_memory_policy: 'output_only_not_loaded_for_trading',
+      report_memory_policy: 'awaiting_report_memory_reset',
+      report_memory_reset_at: null,
     });
   });
 

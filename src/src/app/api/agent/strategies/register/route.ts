@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
             metadata,
             schedule,
           });
-          if (schedule !== undefined || invalidStartingBalance) {
+          if (Object.keys(safeUpdate).length > 0 || invalidStartingBalance) {
             const [updated] = await db.update(strategies).set({
               ...(invalidStartingBalance ? { startingBalance: repairedStartingBalance.toFixed(2) } : {}),
               ...safeUpdate,
