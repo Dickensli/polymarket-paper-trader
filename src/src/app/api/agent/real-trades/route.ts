@@ -155,6 +155,7 @@ export async function POST(request: NextRequest) {
     }
 
     let executionPrice: number | undefined;
+    let submissionLimitPrice: number | undefined;
     let executableDepth = 0;
     let shadowFill: Record<string, unknown> | null = null;
     let riskGroupId = order.slug;
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
               : simulateBuyFill(book, order.amount ?? 0, 0, 'FOK');
             if (fill.success) {
               executionPrice = fill.avgPrice;
+              submissionLimitPrice = Math.max(...fill.levels.map((level) => level.price));
               shadowFill = fill as unknown as Record<string, unknown>;
             }
           }
@@ -214,6 +216,7 @@ export async function POST(request: NextRequest) {
     const auditedOrder = {
       ...order,
       price: executionPrice,
+      submission_limit_price: submissionLimitPrice ?? executionPrice,
       price_source: 'server_executable_quote',
     };
 
@@ -444,9 +447,9 @@ export async function POST(request: NextRequest) {
         slug: order.slug,
         outcome: order.outcome,
         side: order.side,
-        amount: order.amount,
-        shares: order.shares,
-        price: executionPrice,
+        amount: undefined,
+        shares: resolvedQuantity,
+        price: submissionLimitPrice ?? executionPrice,
         clientOrderId: order.client_order_id,
         timeInForce: order.time_in_force,
       });

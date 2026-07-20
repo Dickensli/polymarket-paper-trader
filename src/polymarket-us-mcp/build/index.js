@@ -333,7 +333,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name: "get_strategy_context",
-            description: "Get full strategy context including registration state, portfolio, positions, recent trades, and reports. Use this at the start of every run to check if setup is needed and to restore cross-session state.",
+            description: "Get authoritative current strategy context including registration, portfolio, positions, and recent trades. Trading bootstrap intentionally excludes prior reports because reports are output-only audit artifacts.",
             inputSchema: {
                 type: "object",
                 properties: {

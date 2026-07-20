@@ -57,7 +57,15 @@ export function evaluateStrategyGraduation(
   if (metrics.brierScore === null || metrics.brierScore > criteria.maxBrierScore) unmetRequirements.push('BRIER_SCORE');
   if (metrics.policyViolations > criteria.maxPolicyViolations) unmetRequirements.push('POLICY_VIOLATIONS');
   const graduated = unmetRequirements.length === 0;
-  return { graduated, shouldNotify: graduated, metrics, criteria, unmetRequirements };
+  return {
+    graduated,
+    shouldNotify: graduated,
+    blocksPaperTrading: false,
+    paperTradingAllowed: true,
+    metrics,
+    criteria,
+    unmetRequirements,
+  };
 }
 
 export async function getStrategyGraduation(

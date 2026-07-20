@@ -204,6 +204,18 @@ function yesSidePrice(outcome: Outcome, price: number): number {
   return outcome === 'YES' ? price : 1 - price;
 }
 
+function quantizeKalshiOutcomePrice(price: number, side: Side): number {
+  const scaled = price * 100;
+  const cents = side === 'BUY'
+    ? Math.ceil(scaled - Number.EPSILON * 100)
+    : Math.floor(scaled + Number.EPSILON * 100);
+  const quantized = cents / 100;
+  if (quantized <= 0 || quantized >= 1) {
+    throw new Error('Kalshi real order price must resolve to a valid cent tick between 0 and 1.');
+  }
+  return quantized;
+}
+
 function kalshiBookSide(outcome: Outcome, side: Side): 'bid' | 'ask' {
   if (outcome === 'YES') return side === 'BUY' ? 'bid' : 'ask';
   return side === 'BUY' ? 'ask' : 'bid';
@@ -365,7 +377,11 @@ export function buildKalshiOrderRequest(intent: OfficialTradeIntent): {
   clientOrderId: string;
   request: Record<string, unknown>;
 } {
-  const price = yesSidePrice(intent.outcome, clampPrice(intent.price ?? NaN));
+  const outcomePrice = quantizeKalshiOutcomePrice(
+    clampPrice(intent.price ?? NaN),
+    intent.side,
+  );
+  const price = yesSidePrice(intent.outcome, outcomePrice);
   const quantity = resolveQuantity(intent);
   const clientOrderId = intent.clientOrderId ?? randomUUID();
 
@@ -374,7 +390,7 @@ export function buildKalshiOrderRequest(intent: OfficialTradeIntent): {
     client_order_id: clientOrderId,
     side: kalshiBookSide(intent.outcome, intent.side),
     count: formatKalshiCount(quantity),
-    price: price.toFixed(4),
+    price: price.toFixed(2),
     time_in_force: kalshiTimeInForce(intent.timeInForce),
     self_trade_prevention_type: 'taker_at_cross',
     post_only: false,

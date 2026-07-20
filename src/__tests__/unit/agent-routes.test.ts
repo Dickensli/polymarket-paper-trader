@@ -464,7 +464,7 @@ describe('agent route handlers', () => {
       schedule: '*/15 * * * *',
     });
     db.query.portfolios.findFirst.mockResolvedValue(null);
-    db.selectResults.push([], [], []);
+    db.selectResults.push([], [], [{ filename: 'prior-report.md', createdAt: new Date() }]);
     vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
       cash: 1250,
       positionsValue: 0,
@@ -543,7 +543,11 @@ describe('agent route handlers', () => {
       triggerId: 'smith:high_freq_retro',
       status: 'running',
     }));
-    await expect(response.json()).resolves.toMatchObject({ run_id: 'run-1' });
+    await expect(response.json()).resolves.toMatchObject({
+      run_id: 'run-1',
+      recent_reports: [],
+      report_memory_policy: 'output_only_not_loaded_for_trading',
+    });
   });
 
   it('attaches a report to the active run and marks the run completed', async () => {
@@ -1049,6 +1053,69 @@ describe('agent route handlers', () => {
       data: { status: 'SUBMITTED' },
       portfolio_sync: 'pending_next_context_refresh',
     });
+  });
+
+  it('uses the worst consumed Kalshi ask as the official FOK limit instead of the average fill', async () => {
+    const { submitOfficialRealTrade, getOfficialPortfolioSnapshot } = await import('@/lib/official-trading');
+    const { getKalshiMarket, getKalshiOrderBook } = await import('@/lib/kalshi');
+    const { POST } = await import('@/app/api/agent/real-trades/route');
+
+    db.query.strategies.findFirst.mockResolvedValue({
+      id: 'strategy-1', strategyId: 'real-arb', agentMode: 'real', platform: 'kalshi',
+      status: 'active', startingBalance: '1000.00', metadata: { real_trading_enabled: true },
+      riskConfig: { max_single_trade_pct: 0.05, max_market_exposure_pct: 0.1, min_cash_reserve_pct: 0.3 },
+    });
+    db.insertResults.push({ id: 'decision-1', status: 'ACCEPTED' });
+    db.insertResults.push({ id: 'audit-1', status: 'SUBMITTING' });
+    db.updateResults.push({ id: 'audit-1', status: 'SUBMITTED', request: {}, officialResponse: {} });
+    vi.mocked(getKalshiMarket).mockResolvedValue({ status: 'active' });
+    vi.mocked(getKalshiOrderBook).mockResolvedValue({
+      market: 'KXTEST', assetId: 'kalshi:KXTEST:YES', timestamp: new Date().toISOString(),
+      bids: [{ price: 0.23, size: 100 }],
+      asks: [{ price: 0.24, size: 5 }, { price: 0.25, size: 5 }],
+    });
+    vi.mocked(getOfficialPortfolioSnapshot).mockResolvedValue({
+      cash: 1000, positionsValue: 0, totalValue: 1000, pnl: 0,
+      positions: [], orders: [], fills: [], activity: [], raw: {},
+    });
+    vi.mocked(submitOfficialRealTrade).mockResolvedValue({
+      officialOrderId: 'official-1', clientOrderId: 'client-1', status: 'SUBMITTED',
+      request: { ticker: 'KXTEST', price: '0.25' }, response: { order_id: 'official-1' },
+    });
+
+    const response = await POST(makeRequest({
+      body: {
+        strategy_id: 'real-arb', slug: 'KXTEST', outcome: 'YES', side: 'BUY', amount: 2.45,
+        proposal: {
+          thesis: 'A current official source supports a material pricing discrepancy.',
+          rules_verified: true,
+          source_urls: ['https://example.com/source'],
+          fair_probability: 0.4,
+          confidence_low: 0.35,
+          confidence_high: 0.45,
+          quote_observed_at: new Date().toISOString(),
+          observed_price: 0.245,
+          available_depth: 10,
+          net_edge: 0.155,
+          proposed_nav_pct: 0.00245,
+          exit_condition: 'Exit when the catalyst passes or the edge closes.',
+          invalidation_condition: 'Do not enter if the official source changes.',
+        },
+      },
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(submitOfficialRealTrade).toHaveBeenCalledWith(expect.objectContaining({
+      shares: expect.closeTo(10),
+      amount: undefined,
+      price: 0.25,
+    }));
+    expect(db.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        price: 0.245,
+        submission_limit_price: 0.25,
+      }),
+    }));
   });
 
   it('rejects an enabled real BUY that exceeds the server risk configuration', async () => {

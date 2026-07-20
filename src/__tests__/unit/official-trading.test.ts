@@ -47,7 +47,7 @@ describe('official trading helpers', () => {
       client_order_id: 'client-1',
       side: 'ask',
       count: '0.25',
-      price: '0.7000',
+      price: '0.70',
       time_in_force: 'good_till_canceled',
       reduce_only: false,
     });
@@ -68,9 +68,24 @@ describe('official trading helpers', () => {
     expect(request).toMatchObject({
       side: 'ask',
       count: '1.00',
-      price: '0.6500',
+      price: '0.65',
       time_in_force: 'immediate_or_cancel',
     });
+  });
+
+  it('rounds a Kalshi BUY limit up to the next legal cent tick', () => {
+    const { request } = buildKalshiOrderRequest({
+      platform: 'kalshi',
+      slug: 'KXTEST',
+      outcome: 'YES',
+      side: 'BUY',
+      shares: 10,
+      price: 0.245098,
+      timeInForce: 'FOK',
+      clientOrderId: 'client-tick',
+    });
+
+    expect(request.price).toBe('0.25');
   });
 
   it('rejects Kalshi quantities below the fixed-point minimum before calling the API', () => {

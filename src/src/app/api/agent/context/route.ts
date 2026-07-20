@@ -23,7 +23,7 @@ import { enrichOpenOrdersWithMarkets } from '@/lib/agent-market-context';
 //  - Portfolio (balance, total value, PnL)
 //  - Open positions
 //  - Recent trade history
-//  - Recent reports (for cross-session memory / retro strategies)
+//  - Recent report filenames only for explicit, non-trading audit requests
 //  - System warnings
 //
 // This is the MCP Resource equivalent: the agent reads this first to decide
@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
     });
 
     const is_setup = !!strategy;
+    const isTradingBootstrap = request.nextUrl.searchParams.get('start_run') === 'true';
 
     if (strategy?.agentMode === 'real') {
       const competingRealStrategy = await db.query.strategies.findFirst({
@@ -82,7 +83,7 @@ export async function GET(request: NextRequest) {
     // the strategy row is metadata only; this run ledger is what lets us tell
     // a completed no-trade cycle from an agent that disappeared mid-run.
     let runId: string | null = null;
-    if (strategy && request.nextUrl.searchParams.get('start_run') === 'true') {
+    if (strategy && isTradingBootstrap) {
       const triggerId = (request.nextUrl.searchParams.get('trigger_id') || 'mcp-context-bootstrap').slice(0, 255);
       const running = await db.query.strategyRuns.findFirst({
         where: and(
@@ -377,7 +378,10 @@ export async function GET(request: NextRequest) {
       positions: positionsSummary,
       recent_trades: tradeHistory,
       open_orders: openOrders,
-      recent_reports: recentReports,
+      recent_reports: isTradingBootstrap ? [] : recentReports,
+      report_memory_policy: isTradingBootstrap
+        ? 'output_only_not_loaded_for_trading'
+        : 'audit_listing_only',
       run_id: runId,
       warnings,
     });

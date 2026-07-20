@@ -14,6 +14,8 @@ describe('shadow graduation scorecard', () => {
     });
     expect(result.graduated).toBe(true);
     expect(result.shouldNotify).toBe(true);
+    expect(result.blocksPaperTrading).toBe(false);
+    expect(result.paperTradingAllowed).toBe(true);
     expect(result.unmetRequirements).toEqual([]);
   });
 
@@ -29,6 +31,8 @@ describe('shadow graduation scorecard', () => {
     });
     expect(result.graduated).toBe(false);
     expect(result.shouldNotify).toBe(false);
+    expect(result.blocksPaperTrading).toBe(false);
+    expect(result.paperTradingAllowed).toBe(true);
     expect(result.unmetRequirements).toHaveLength(7);
   });
 
