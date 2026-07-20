@@ -24,6 +24,7 @@ function ratio(config: Record<string, unknown>, keys: string[], fallback: number
   for (const key of keys) {
     const value = Number(config[key]);
     if (Number.isFinite(value) && value >= 0 && value <= 1) return value;
+    if (Number.isFinite(value) && value > 1 && value <= 100) return value / 100;
   }
   return fallback;
 }
@@ -105,6 +106,27 @@ export function calculateOfficialRiskGroupExposure(
   }, 0);
 }
 
+export function isOfficialBuyRiskReducing(
+  positions: unknown[],
+  marketId: string,
+  outcome: 'YES' | 'NO',
+  requestedQuantity: number,
+): boolean {
+  if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) return false;
+  for (const value of positions) {
+    const position = record(value);
+    const identity = String(
+      position.ticker ?? position.market_ticker ?? position.marketId
+      ?? position.market_id ?? position.marketSlug ?? position.market_slug ?? position.slug ?? '',
+    );
+    if (identity !== marketId) continue;
+    const netYes = numberFrom(position.position_fp ?? position.position);
+    if (netYes === null || netYes === 0 || requestedQuantity > Math.abs(netYes) + 1e-9) return false;
+    return (netYes < 0 && outcome === 'YES') || (netYes > 0 && outcome === 'NO');
+  }
+  return false;
+}
+
 export function validateRealBuyRisk(args: {
   nav: number;
   cash: number;
@@ -114,6 +136,9 @@ export function validateRealBuyRisk(args: {
   peakNav: number;
   dailyBuyTrades: number;
   riskConfig?: unknown;
+  maxDailyBuyTrades?: number;
+  runBuyTrades?: number;
+  maxRunBuyTrades?: number;
 }): string | null {
   const limits = resolveRealRiskLimits(args.riskConfig);
   const { nav, cash, notional } = args;
@@ -134,8 +159,12 @@ export function validateRealBuyRisk(args: {
   if (args.peakNav > 0 && (args.peakNav - nav) / args.peakNav >= limits.maxDrawdownPct - 1e-12) {
     return `Drawdown stop of ${(limits.maxDrawdownPct * 100).toFixed(1)}% has been reached`;
   }
-  if (args.dailyBuyTrades >= limits.maxDailyBuyTrades) {
-    return `Daily BUY limit of ${limits.maxDailyBuyTrades} has been reached`;
+  const dailyLimit = Math.min(limits.maxDailyBuyTrades, args.maxDailyBuyTrades ?? limits.maxDailyBuyTrades);
+  if (args.dailyBuyTrades >= dailyLimit) {
+    return `Daily BUY limit of ${dailyLimit} has been reached`;
+  }
+  if (args.maxRunBuyTrades !== undefined && (args.runBuyTrades ?? 0) >= args.maxRunBuyTrades) {
+    return `Strategy per-run BUY limit of ${args.maxRunBuyTrades} has been reached`;
   }
   return null;
 }

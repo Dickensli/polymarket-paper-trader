@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   calculateOfficialRiskGroupExposure,
+  isOfficialBuyRiskReducing,
   resolveRealRiskLimits,
   validateRealBuyRisk,
 } from '@/lib/real-risk';
@@ -57,5 +58,29 @@ describe('real trading server-side risk guard', () => {
       maxDailyBuyTrades: 3,
     });
     expect(resolveRealRiskLimits({ max_single_trade_pct: 0.01 }).maxTradePct).toBe(0.01);
+  });
+
+  it('normalizes legacy whole-number percentage configuration', () => {
+    expect(resolveRealRiskLimits({
+      max_single_trade_pct: 2,
+      max_event_exposure_pct: 5,
+      min_cash_reserve_pct: 30,
+      max_daily_loss_pct: 2,
+      max_drawdown_pct: 5,
+    })).toEqual({
+      maxTradePct: 0.02,
+      maxRiskGroupExposurePct: 0.05,
+      minCashReservePct: 0.30,
+      maxDailyLossPct: 0.02,
+      maxDrawdownPct: 0.05,
+      maxDailyBuyTrades: 3,
+    });
+  });
+
+  it('recognizes a bounded Kalshi BUY that covers an existing short as risk reducing', () => {
+    const positions = [{ ticker: 'CPI', position_fp: '-102.00' }];
+    expect(isOfficialBuyRiskReducing(positions, 'CPI', 'YES', 102)).toBe(true);
+    expect(isOfficialBuyRiskReducing(positions, 'CPI', 'YES', 103)).toBe(false);
+    expect(isOfficialBuyRiskReducing(positions, 'CPI', 'NO', 10)).toBe(false);
   });
 });

@@ -1,3 +1,5 @@
+import { calculateVerifiedMaxDrawdownPct } from '@/lib/strategy-snapshot-quality';
+
 export interface GraduationMetrics {
   totalDecisions: number;
   acceptedTrades: number;
@@ -59,7 +61,7 @@ export function evaluateStrategyGraduation(
 }
 
 export async function getStrategyGraduation(
-  strategy: { id: string; userId: string; startingBalance: string | number },
+  strategy: { id: string; userId: string; startingBalance: string | number; metadata?: unknown },
 ) {
   const [{ getDb }, schema, drizzle] = await Promise.all([
     import('@/lib/db'),
@@ -102,14 +104,14 @@ export async function getStrategyGraduation(
 
   const startingBalance = Number(strategy.startingBalance);
   const currentNav = (await getPortfolio(strategy.userId)).totalValue;
-  let peak = startingBalance;
-  let maxDrawdownPct = 0;
-  for (const snapshot of snapshots) {
-    const nav = Number(snapshot.totalValue);
-    if (!Number.isFinite(nav)) continue;
-    peak = Math.max(peak, nav);
-    if (peak > 0) maxDrawdownPct = Math.max(maxDrawdownPct, (peak - nav) / peak);
-  }
+  const metadata = strategy.metadata && typeof strategy.metadata === 'object'
+    ? strategy.metadata as Record<string, unknown>
+    : {};
+  const baselineCandidates = [metadata.performance_baseline_at, metadata.last_destructive_reset_at]
+    .map((value) => value ? new Date(String(value)).getTime() : Number.NaN)
+    .filter(Number.isFinite);
+  const baselineAt = baselineCandidates.length > 0 ? new Date(Math.max(...baselineCandidates)) : null;
+  const maxDrawdownPct = calculateVerifiedMaxDrawdownPct(snapshots, startingBalance, baselineAt);
 
   return evaluateStrategyGraduation({
     totalDecisions: decisions.length,

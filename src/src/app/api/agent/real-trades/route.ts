@@ -10,7 +10,9 @@ import { getPolymarketUsMarket, getPolymarketUsOutcomeOrderBook, getPolymarketUs
 import { simulateBuyFill, simulateBuySharesFill } from '@/lib/orderbook-simulator';
 import { tradeProposalSchema, validateTradeProposal } from '@/lib/trade-proposal';
 import { getStrategyGraduation } from '@/lib/strategy-graduation';
-import { calculateOfficialRiskGroupExposure, validateRealBuyRisk } from '@/lib/real-risk';
+import { calculateOfficialRiskGroupExposure, isOfficialBuyRiskReducing, validateRealBuyRisk } from '@/lib/real-risk';
+import { isPortfolioSnapshotUsableForPerformance } from '@/lib/strategy-snapshot-quality';
+import { resolveStrategyExecutionPolicy } from '@/lib/strategy-execution-policy';
 
 const realTradeSchema = z.object({
   strategy_id: z.string().min(1).max(255),
@@ -245,7 +247,18 @@ export async function POST(request: NextRequest) {
     }
 
     const metadata = strategyMetadata(strategy.metadata);
-    if (order.side === 'BUY' && metadata.require_shadow_graduation === true) {
+    const executionPolicy = resolveStrategyExecutionPolicy(
+      strategy.platform,
+      strategy.agentMode,
+      strategy.strategyId,
+    );
+    const officialSnapshotForBuy = order.side === 'BUY'
+      ? await getOfficialPortfolioSnapshot(strategy.platform as 'kalshi' | 'polymarket_us')
+      : null;
+    const riskReducingBuy = order.side === 'BUY' && officialSnapshotForBuy
+      ? isOfficialBuyRiskReducing(officialSnapshotForBuy.positions, order.slug, order.outcome, resolvedQuantity)
+      : false;
+    if (order.side === 'BUY' && !riskReducingBuy && metadata.require_shadow_graduation === true) {
       const accountId = request.headers.get('x-agent-account-id');
       const sourceStrategyId = String(metadata.graduation_source_strategy_id ?? '');
       const sourceUserId = accountId && sourceStrategyId
@@ -278,7 +291,7 @@ export async function POST(request: NextRequest) {
 
     let acceptedDecisionId: string | null = null;
     if (order.side === 'BUY') {
-      const officialSnapshot = await getOfficialPortfolioSnapshot(strategy.platform as 'kalshi' | 'polymarket_us');
+      const officialSnapshot = officialSnapshotForBuy!;
       const dayStart = new Date();
       dayStart.setUTCHours(0, 0, 0, 0);
       const [snapshots, dailyOrders] = await Promise.all([
@@ -293,9 +306,12 @@ export async function POST(request: NextRequest) {
           ),
         }),
       ]);
-      const validNavs = snapshots.map((snapshot) => Number(snapshot.totalValue)).filter(Number.isFinite);
+      const validNavs = snapshots
+        .filter(isPortfolioSnapshotUsableForPerformance)
+        .map((snapshot) => Number(snapshot.totalValue))
+        .filter(Number.isFinite);
       const todayNavs = snapshots
-        .filter((snapshot) => snapshot.capturedAt >= dayStart)
+        .filter((snapshot) => snapshot.capturedAt >= dayStart && isPortfolioSnapshotUsableForPerformance(snapshot))
         .map((snapshot) => Number(snapshot.totalValue))
         .filter(Number.isFinite);
       const dailyStartNav = todayNavs[0] ?? officialSnapshot.totalValue;
@@ -304,20 +320,32 @@ export async function POST(request: NextRequest) {
         candidate.side === 'BUY'
         && !['REJECTED', 'ERROR', 'CANCELLED', 'CANCELED'].includes(String(candidate.status).toUpperCase())
       )).length;
-      const riskError = validateRealBuyRisk({
-        nav: officialSnapshot.totalValue,
-        cash: officialSnapshot.cash,
-        notional: resolvedQuantity * executionPrice,
-        existingRiskGroupExposure: calculateOfficialRiskGroupExposure(
-          officialSnapshot.positions,
-          riskGroupId,
-          order.slug,
-        ),
-        dailyStartNav,
-        peakNav,
-        dailyBuyTrades,
-        riskConfig: strategy.riskConfig,
-      });
+      const runBuyTrades = order.run_id ? dailyOrders.filter((candidate) => (
+        candidate.runId === order.run_id
+        && candidate.side === 'BUY'
+        && !['REJECTED', 'ERROR', 'CANCELLED', 'CANCELED'].includes(String(candidate.status).toUpperCase())
+      )).length : 0;
+      const riskError = riskReducingBuy ? null : (
+        (officialSnapshot.unpricedPositionsCount ?? 0) > 0
+          ? 'Cannot add real-money risk while one or more official positions are unpriced'
+          : validateRealBuyRisk({
+              nav: officialSnapshot.totalValue,
+              cash: officialSnapshot.cash,
+              notional: resolvedQuantity * executionPrice,
+              existingRiskGroupExposure: calculateOfficialRiskGroupExposure(
+                officialSnapshot.positions,
+                riskGroupId,
+                order.slug,
+              ),
+              dailyStartNav,
+              peakNav,
+              dailyBuyTrades,
+              riskConfig: strategy.riskConfig,
+              maxDailyBuyTrades: executionPolicy.maxDailyBuyTrades,
+              runBuyTrades,
+              maxRunBuyTrades: executionPolicy.maxBuyTradesPerRun,
+            })
+      );
       if (riskError) {
         const [audit] = await db.insert(realTradeOrders).values({
           strategyId: strategy.id, userId: session.user.id, runId: order.run_id ?? null,
@@ -341,14 +369,16 @@ export async function POST(request: NextRequest) {
         }, { status: 403 });
       }
 
-      const validation = order.proposal
+      const validation = riskReducingBuy
+        ? { valid: true, reasons: [] as string[] }
+        : order.proposal
         ? validateTradeProposal(order.proposal, {
             executablePrice: executionPrice,
             executableDepth,
             requestedShares: resolvedQuantity,
             requestedNotional: resolvedQuantity * executionPrice,
             portfolioNav: officialSnapshot.totalValue,
-            minimumNetEdge: 0.02,
+            minimumNetEdge: executionPolicy.minimumNetEdge,
           })
         : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
       if (!shadowFill) validation.reasons.push('INSUFFICIENT_EXECUTABLE_DEPTH');
@@ -357,7 +387,12 @@ export async function POST(request: NextRequest) {
         strategyId: strategy.id, userId: session.user.id, runId: order.run_id ?? null,
         platform: strategy.platform, agentMode: strategy.agentMode, marketId: order.slug,
         outcome: order.outcome, side: order.side, proposal: order.proposal ?? {},
-        serverQuote: { executable_price: executionPrice, executable_depth: executableDepth, shadow_fill: shadowFill },
+        serverQuote: {
+          executable_price: executionPrice,
+          executable_depth: executableDepth,
+          shadow_fill: shadowFill,
+          risk_reducing_buy: riskReducingBuy,
+        },
         status: validation.valid ? 'ACCEPTED' : 'REJECTED', rejectionReasons: validation.reasons,
       }).returning();
       if (!validation.valid) {

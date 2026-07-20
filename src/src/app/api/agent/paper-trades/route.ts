@@ -14,6 +14,8 @@ import { eq, and, desc, gte, sql } from 'drizzle-orm';
 import { executeTrade, getPortfolio, TradingError } from '@/lib/trading-engine';
 import { validatePaperBuyRisk } from '@/lib/paper-risk';
 import { resolvePaperFeeRateBps } from '@/lib/paper-fees';
+import { isPortfolioSnapshotUsableForPerformance } from '@/lib/strategy-snapshot-quality';
+import { resolveStrategyExecutionPolicy } from '@/lib/strategy-execution-policy';
 
 // Polymarket helpers
 import { getMarket, getMidpoint } from '@/lib/polymarket';
@@ -164,6 +166,11 @@ export async function POST(request: NextRequest) {
     }
 
     const platform = strategy.platform;
+    const executionPolicy = resolveStrategyExecutionPolicy(
+      strategy.platform,
+      strategy.agentMode,
+      strategy.strategyId,
+    );
 
     let runId = order.run_id ?? null;
     let currentRun: typeof strategyRuns.$inferSelect | null = null;
@@ -414,12 +421,18 @@ export async function POST(request: NextRequest) {
           ),
         }),
       ]);
-      const dailyNavs = dailySnapshots.map((snapshot) => Number(snapshot.totalValue)).filter(Number.isFinite);
+      const dailyNavs = dailySnapshots
+        .filter(isPortfolioSnapshotUsableForPerformance)
+        .map((snapshot) => Number(snapshot.totalValue))
+        .filter(Number.isFinite);
       const dailyStartNav = dailyNavs.at(-1) ?? portfolioBeforeTrade.totalValue;
       const peakNav = Math.max(Number(strategy.startingBalance || 0), portfolioBeforeTrade.totalValue, ...dailyNavs);
       const dailyBuyTrades = dailyOrders.filter((candidate) => (
         candidate.side === 'BUY' && candidate.status === 'FILLED'
       )).length;
+      const runBuyTrades = runId ? dailyOrders.filter((candidate) => (
+        candidate.runId === runId && candidate.side === 'BUY' && candidate.status === 'FILLED'
+      )).length : 0;
       if (platform === 'kalshi' || platform === 'polymarket_us') {
         const quoteFacts = {
           executable_price: price,
@@ -437,7 +450,7 @@ export async function POST(request: NextRequest) {
               requestedShares: shares,
               requestedNotional: shares * price,
               portfolioNav: portfolioBeforeTrade.totalValue,
-              minimumNetEdge: 0.02,
+              minimumNetEdge: executionPolicy.minimumNetEdge,
             })
           : { valid: false, reasons: ['MISSING_STRUCTURED_PROPOSAL'] };
         if (!validation.valid) {
@@ -464,6 +477,9 @@ export async function POST(request: NextRequest) {
         dailyStartNav,
         peakNav,
         dailyBuyTrades,
+        maxDailyBuyTrades: executionPolicy.maxDailyBuyTrades,
+        runBuyTrades,
+        maxRunBuyTrades: executionPolicy.maxBuyTradesPerRun,
       });
       if (riskError) {
         await rejectClaim('SERVER_RISK_REJECTED', riskError);
