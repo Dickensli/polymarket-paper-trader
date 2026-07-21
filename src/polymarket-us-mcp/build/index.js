@@ -118,7 +118,7 @@ function requireDestructiveResetConfirmation(args) {
     }
 }
 const server = new Server({ name: "polymarket-us-paper-trader-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
-const REPORT_MEMORY_GENERATION = "report-memory-v2";
+const REPORT_MEMORY_GENERATION = "report-memory-v3";
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
         {
@@ -250,7 +250,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         // ── Agent Reports (Retro) ──────────────────────────────────────
         {
             name: "save_report",
-            description: "Save a trading session report for later retrieval. Use at the end of every session to persist strategy reflections, lessons learned, and next steps.",
+            description: "Save a trading session report for later retrieval. Use at the end of every session and copy the current server risk_config verbatim; never substitute limits inferred from reports or other strategies.",
             inputSchema: {
                 type: "object",
                 properties: {

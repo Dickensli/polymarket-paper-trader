@@ -12,7 +12,7 @@ type RequestedUpdate = {
   schedule?: string;
 };
 
-export const CURRENT_REPORT_MEMORY_GENERATION = 'report-memory-v2';
+export const CURRENT_REPORT_MEMORY_GENERATION = 'report-memory-v3';
 
 function metadataRecord(metadata: unknown): Record<string, unknown> {
   return metadata && typeof metadata === 'object'

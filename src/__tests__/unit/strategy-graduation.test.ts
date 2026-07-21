@@ -16,6 +16,13 @@ describe('shadow graduation scorecard', () => {
     expect(result.shouldNotify).toBe(true);
     expect(result.blocksPaperTrading).toBe(false);
     expect(result.paperTradingAllowed).toBe(true);
+    expect(result.tradingPolicy).toEqual({
+      paperDecisionImpact: 'none',
+      paperDecisionSequence: 'decide_execute_verify_then_query_graduation',
+      manufactureDecisionVolumeAllowed: false,
+      realRiskAddingOrdersRequireGraduation: true,
+      humanApprovalStillRequired: true,
+    });
     expect(result.unmetRequirements).toEqual([]);
   });
 
@@ -33,6 +40,8 @@ describe('shadow graduation scorecard', () => {
     expect(result.shouldNotify).toBe(false);
     expect(result.blocksPaperTrading).toBe(false);
     expect(result.paperTradingAllowed).toBe(true);
+    expect(result.tradingPolicy.paperDecisionImpact).toBe('none');
+    expect(result.tradingPolicy.manufactureDecisionVolumeAllowed).toBe(false);
     expect(result.unmetRequirements).toHaveLength(7);
   });
 

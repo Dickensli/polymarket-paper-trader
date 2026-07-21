@@ -7,6 +7,10 @@ import {
 } from '@/lib/strategy-registration-policy';
 
 describe('strategy registration policy', () => {
+  it('uses a fresh memory generation after quarantining incorrect v2 reports', () => {
+    expect(CURRENT_REPORT_MEMORY_GENERATION).toBe('report-memory-v3');
+  });
+
   it('never lets registration enable real trading or bypass shadow graduation', () => {
     expect(buildInitialStrategyMetadata('real', {
       real_trading_enabled: true,

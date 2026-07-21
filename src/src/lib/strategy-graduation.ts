@@ -62,6 +62,13 @@ export function evaluateStrategyGraduation(
     shouldNotify: graduated,
     blocksPaperTrading: false,
     paperTradingAllowed: true,
+    tradingPolicy: {
+      paperDecisionImpact: 'none',
+      paperDecisionSequence: 'decide_execute_verify_then_query_graduation',
+      manufactureDecisionVolumeAllowed: false,
+      realRiskAddingOrdersRequireGraduation: true,
+      humanApprovalStillRequired: true,
+    },
     metrics,
     criteria,
     unmetRequirements,

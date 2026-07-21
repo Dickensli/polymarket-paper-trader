@@ -45,7 +45,9 @@ evidence gathered by the flywheel above.
   prices, top-of-book walls, and exposure/cost fields are not market value.
 - Structured report summaries are server-verified. Narrative text may explain
   decisions but must not override `portfolio_summary.verified` or
-  `trade_summary.verified`.
+  `trade_summary.verified`. Reports must copy the current
+  `strategy.risk_config` from server context verbatim rather than infer limits
+  from prior reports, graduation history, or another strategy.
 - Reports provide bounded cross-session research memory. A server-timestamped
   memory generation hides legacy reports from agent list/read/context calls
   without deleting audit evidence; agents read up to three active-generation
@@ -54,7 +56,11 @@ evidence gathered by the flywheel above.
   decision counts, policy history, and unmet graduation criteria never pause
   paper trading or justify manufacturing rejected decisions for volume. Kalshi
   paper strategies query graduation only after the cycle's trade/no-trade
-  decision and execution verification are complete.
+  decision and execution verification are complete, and graduation never
+  appears among the reasons for that decision.
+- Bound research to the scheduled run window and always save a completion
+  report, honestly labeling incomplete scan coverage rather than leaving the
+  run without an auditable terminal record.
 
 ## Configuration corrections outside the prompt text
 

@@ -305,7 +305,7 @@ describe('agent route handlers', () => {
     db.query.strategies.findFirst.mockResolvedValue({
       id: 'strategy-1', strategyId: 'arb', agentMode: 'paper',
       metadata: {
-        report_memory_generation: 'report-memory-v2',
+        report_memory_generation: 'report-memory-v3',
         report_memory_reset_at: '2026-07-02T00:00:00.000Z',
       },
     });
@@ -400,7 +400,7 @@ describe('agent route handlers', () => {
       meta: {
         count: 0,
         report_memory_policy: 'awaiting_report_memory_reset',
-        report_memory_generation: 'report-memory-v2',
+        report_memory_generation: 'report-memory-v3',
         report_memory_reset_at: null,
       },
     });
@@ -561,7 +561,7 @@ describe('agent route handlers', () => {
       id: 'strategy-1', strategyId: 'high_freq_retro', agentMode: 'paper', platform: 'polymarket_us',
       status: 'active', startingBalance: '10000.00', riskConfig: {}, schedule: '*/15 * * * *',
       metadata: {
-        report_memory_generation: 'report-memory-v2',
+        report_memory_generation: 'report-memory-v3',
         report_memory_reset_at: '2026-07-20T19:15:00.000Z',
       },
     });

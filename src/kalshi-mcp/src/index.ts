@@ -139,7 +139,7 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-const REPORT_MEMORY_GENERATION = "report-memory-v2";
+const REPORT_MEMORY_GENERATION = "report-memory-v3";
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -323,7 +323,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Agent Reports (Retro) ──────────────────────────────────────
     {
       name: "save_report",
-      description: "Save a trading session report for later retrieval. Use at the end of every session to persist strategy reflections, lessons learned, and next steps.",
+      description: "Save a trading session report for later retrieval. Use at the end of every session and copy the current server risk_config verbatim; never substitute limits inferred from reports or graduation history.",
       inputSchema: {
         type: "object",
         properties: {
@@ -417,7 +417,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_graduation_status",
-      description: "Read the server-computed Kalshi shadow graduation scorecard. This notification-only scorecard never blocks or pauses paper trading and never enables real trading automatically.",
+      description: "Read the server-computed Kalshi shadow graduation scorecard only after the current paper trade/no-trade decision and execution verification. This notification-only scorecard never blocks or pauses paper trading, must not be used as a paper decision reason, never permits manufactured decision volume, and never enables real trading automatically.",
       inputSchema: {
         type: "object",
         properties: {
